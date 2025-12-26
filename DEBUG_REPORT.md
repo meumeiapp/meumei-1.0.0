@@ -2,6 +2,161 @@
 
 Date: 2025-12-22 (local)
 
+## 2025-12-24 - Series edit exige groupId
+
+### Alteracoes
+- [x] "Este e proximos" so aplica em series quando existe installmentGroupId.
+- [x] Sem groupId: aviso no formulario e queda forçada para update single.
+- [x] Log `[series-edit]` com shouldApply=false + candidatesFound quando faltar groupId.
+
+### Checklist
+- [ ] Despesa parcelada sem groupId: selecionar "Este e proximos" aplica apenas no item atual com aviso.
+- [ ] Despesa parcelada com groupId: "Este e proximos" atualiza parcelas futuras.
+- [ ] Entrada parcelada sem groupId: aplicar "Este e proximos" volta para item unico com aviso.
+- [ ] Entrada parcelada com groupId: atualiza parcelas futuras.
+- [ ] Desktop e mobile ok.
+
+### Comandos
+- [x] `npm run build` (dist/assets/index-CRtCP8XD.js + PWA files)
+- [x] `firebase deploy --only hosting:meumeiapp` (https://meumeiapp.web.app)
+
+### Outputs resumidos
+```
+npm run build
+dist/manifest.webmanifest                            0.56 kB
+dist/index.html                                      1.76 kB │ gzip:   0.85 kB
+dist/assets/index-CGolDRlb.css                       0.34 kB │ gzip:   0.23 kB
+dist/assets/workbox-window.prod.es5-BIl4cyR9.js      5.76 kB │ gzip:   2.37 kB
+dist/assets/index-CRtCP8XD.js                    1,148.26 kB │ gzip: 284.35 kB
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+PWA v1.2.0
+precache  16 entries (1191.79 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-6296680e.js
+```
+```
+firebase deploy --only hosting:meumeiapp
+hosting[meumeiapp]: release complete
+Hosting URL: https://meumeiapp.web.app
+```
+
+## 2025-12-24 - Git baseline init
+
+### Alteracoes
+- [x] Repositorio git inicializado dentro da pasta do projeto.
+- [x] .gitignore criado com regras para node_modules, dist, env locais e logs Firebase.
+- [x] Commit baseline criado: 3591ebf
+
+### Diff (git show --stat)
+```
+3591ebf chore: baseline before series-edit + global form labels
+ .env.example                                   |    3 +
+ .firebaserc                                    |   14 +
+ .gitignore                                     |   29 +
+ AUDIT_FIRESTORE_CLEANUP.md                     |   44 +
+ App.tsx                                        | 1866 +++++
+ DEBUG_REPORT.md                                | 1341 ++++
+ README.md                                      |   55 +
+ appVersion.ts                                  |    7 +
+ assets/meumei.png                              |  Bin 0 -> 18148 bytes
+ components/AccountsView.tsx                    |  604 ++
+ components/AuditLogModal.tsx                   |  140 +
+ components/AuthScreen.tsx                      |  216 +
+ components/CalculatorModal.tsx                 |  262 +
+ components/CardTag.tsx                         |   42 +
+ components/CompanyDetailsView.tsx              |  154 +
+ components/CompanySetup.tsx                    |  142 +
+ components/CompoundInterestCalculatorModal.tsx |  493 ++
+ components/Dashboard.tsx                       |   13 +
+ components/DashboardDesktop.tsx                | 1569 ++++
+ components/DashboardMobile.tsx                 | 1537 ++++
+ components/DashboardMobileV2.tsx               | 1532 ++++
+ components/ErrorBoundary.tsx                   |   85 +
+ components/ExpensesView.tsx                    |  983 +++
+ components/FaturasErrorBoundary.tsx            |   26 +
+ components/GlobalHeader.tsx                    |  197 +
+ components/IncomesView.tsx                     |  926 +++
+ components/InstallAppModal.tsx                 |  101 +
+ components/InvoicesView.tsx                    |  652 ++
+ components/Logo.tsx                            |   32 +
+ components/MobileHeader.tsx                    |  218 +
+ components/NewAccountModal.tsx                 |  402 +
+ components/NewCreditCardModal.tsx              |  218 +
+ components/NewExpenseModal.tsx                 |  859 +++
+ components/NewIncomeModal.tsx                  |  724 ++
+ components/NewYieldModal.tsx                   |  271 +
+ components/PayInvoiceModal.tsx                 |  125 +
+ components/ReportsView.tsx                     |  758 ++
+ components/Settings.tsx                        |  601 ++
+ components/VariableExpensesView.tsx            |  258 +
+ components/YieldsMobileV2.tsx                  |  466 ++
+ components/YieldsView.tsx                      | 1367 ++++
+ components/mobile/MobileModalShell.tsx         |   75 +
+ components/mobile/MobileModuleHeader.tsx       |   42 +
+ components/mobile/MobilePageShell.tsx          |   40 +
+ components/mobile/MobileTransactionCard.tsx    |   75 +
+ components/mobile/MobileTransactionDrawer.tsx  |  117 +
+ constants.ts                                   |   52 +
+ contexts/AuthContext.tsx                       |  165 +
+ contexts/GlobalActionsContext.tsx              |   96 +
+ firebase.json                                  |   59 +
+ firestore.rules                                |  103 +
+ functions/.gitignore                           |    2 +
+ functions/package-lock.json                    | 2749 +++++++
+ functions/package.json                         |   20 +
+ functions/src/index.ts                         |    5 +
+ functions/tsconfig.json                        |   13 +
+ hooks/useIsMobile.ts                           |   41 +
+ hooks/useIsMobileLandscape.ts                  |   41 +
+ hooks/useMobileTopOffset.ts                    |  117 +
+ hooks/usePwaInstallPrompt.ts                   |  148 +
+ index.css                                      |   33 +
+ index.html                                     |   49 +
+ index.tsx                                      |  105 +
+ metadata.json                                  |    0
+ package-lock.json                              | 9260 ++++++++++++++++++++++++
+ package.json                                   |   29 +
+ public/apple-touch-icon.png                    |  Bin 0 -> 8936 bytes
+ public/favicon-32x32.png                       |  Bin 0 -> 822 bytes
+ public/pwa-192x192.png                         |  Bin 0 -> 9590 bytes
+ public/pwa-512x512-maskable.png                |  Bin 0 -> 18856 bytes
+ public/pwa-512x512.png                         |  Bin 0 -> 25516 bytes
+ scripts/audit-firestore-cleanup.ts             |  177 +
+ scripts/createEntitlement.js                   |   59 +
+ scripts/generate-pwa-icons.js                  |   51 +
+ scripts/migrate-license-to-email.ts            |  295 +
+ scripts/setRole.js                             |   52 +
+ services/api.ts                                |    0
+ services/auditService.ts                       |   72 +
+ services/cardColorUtils.ts                     |  110 +
+ services/categoryService.ts                    |  333 +
+ services/cryptoService.ts                      |  150 +
+ services/dataService.ts                        | 1217 ++++
+ services/entitlementService.ts                 |   57 +
+ services/exportUtils.ts                        |   83 +
+ services/firebase.ts                           |   60 +
+ services/invoiceUtils.ts                       |   39 +
+ services/preferencesService.ts                 |  210 +
+ services/reportService.ts                      |  232 +
+ services/resetService.ts                       |   78 +
+ services/supportAccessService.ts               |  126 +
+ services/yieldsService.ts                      |  352 +
+ tsconfig.json                                  |   29 +
+ types.ts                                       |  187 +
+ utils/debug.ts                                 |    5 +
+ utils/firestoreLogger.ts                       |   38 +
+ utils/formLabels.ts                            |    4 +
+ utils/installmentSeries.ts                     |  130 +
+ utils/normalizeEmail.ts                        |    7 +
+ utils/stringUtils.ts                           |    7 +
+ vite.config.ts                                 |  135 +
+ 100 files changed, 37063 insertions(+)
+```
+
 ## 2025-12-24 - Labels de formulario + escopo de edicao em series
 
 ### Alteracoes
@@ -1339,3 +1494,100 @@ Hosting URL: https://meumeiapp.web.app
 - [x] `npm run dev` (Vite em http://localhost:3001/).
 - [x] `npm run build` OK (dist/assets/index-B286LRNn.js).
 - [x] `firebase deploy --only hosting:meumeiapp` OK (https://meumeiapp.web.app).
+
+## 2025-12-26 - Crash ao abrir Despesas (TDZ no NewExpenseModal)
+
+### Causa raiz
+- [x] Erro ao navegar para Despesas: `ReferenceError: Cannot access 'ee' before initialization` (nao foi possivel capturar stack trace via browser neste ambiente CLI).
+- [x] Causa: `NewExpenseModal` usava `isEditing` antes de declarar a const (TDZ) e quebrava quando o componente era renderizado na tela de Despesas.
+
+### Mudancas
+- [x] Reordenada a declaracao de `isEditing` para vir antes de `showApplyScope`.
+
+### Repro/observacoes
+- [x] `npm run dev` iniciou em http://localhost:3001 (timeout 5s).
+- [ ] Clique manual em "Despesas" e captura do stack trace (nao disponivel sem browser).
+
+### Madge (ANTES)
+```
+npx madge --circular src/components/ExpensesView.tsx
+✖ Error: ENOENT: no such file or directory, stat '.../src/components/ExpensesView.tsx'
+```
+```
+npx madge --circular src/components/NewExpenseModal.tsx
+✖ Error: ENOENT: no such file or directory, stat '.../src/components/NewExpenseModal.tsx'
+```
+```
+npx madge --circular src/utils/installmentSeries.ts
+✖ Error: ENOENT: no such file or directory, stat '.../src/utils/installmentSeries.ts'
+```
+```
+npx madge --circular src/utils/formLabels.ts
+✖ Error: ENOENT: no such file or directory, stat '.../src/utils/formLabels.ts'
+```
+```
+npx madge --circular src
+✖ Error: ENOENT: no such file or directory, stat '.../src'
+```
+```
+npx madge --circular components/ExpensesView.tsx
+✔ No circular dependency found!
+```
+```
+npx madge --circular components/NewExpenseModal.tsx
+✔ No circular dependency found!
+```
+```
+npx madge --circular utils/installmentSeries.ts
+✔ No circular dependency found!
+```
+```
+npx madge --circular utils/formLabels.ts
+✔ No circular dependency found!
+```
+```
+npx madge --circular .
+✔ No circular dependency found!
+```
+
+### Madge (DEPOIS)
+```
+npx madge --circular components/ExpensesView.tsx
+✔ No circular dependency found!
+```
+
+### Checklist
+- [ ] Dashboard abre e Despesas abre sem crash (validar no browser).
+- [ ] Modal de editar despesa abre com "Salvar alteracoes".
+- [ ] Entradas e Rendimentos abrem normalmente.
+- [x] Build OK.
+- [x] Deploy OK.
+
+### Build/Preview/Deploy
+- [x] `npm run dev` (Vite em http://localhost:3001/, timeout 5s).
+- [x] `npm run build` OK (dist/assets/index-D7GY8nvm.js, manifest + sw gerados).
+- [x] `npm run preview` (http://localhost:4173/, timeout 5s).
+- [x] `firebase deploy --only hosting:meumeiapp` OK (https://meumeiapp.web.app)
+
+### Outputs resumidos
+```
+npm run dev
+VITE v6.4.1  ready in 110 ms
+Local:   http://localhost:3001/
+```
+```
+npm run build
+dist/manifest.webmanifest
+dist/assets/index-D7GY8nvm.js
+PWA v1.2.0
+files generated: dist/sw.js, dist/workbox-6296680e.js
+```
+```
+npm run preview
+Local:   http://localhost:4173/
+```
+```
+firebase deploy --only hosting:meumeiapp
+hosting[meumeiapp]: release complete
+Hosting URL: https://meumeiapp.web.app
+```

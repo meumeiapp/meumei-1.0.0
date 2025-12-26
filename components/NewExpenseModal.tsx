@@ -71,10 +71,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const [installmentCount, setInstallmentCount] = useState(2);
   const [installmentValueType, setInstallmentValueType] = useState<'parcel' | 'total'>('parcel');
   const [applyScope, setApplyScope] = useState<'single' | 'series'>('single');
+  const isEditing = Boolean(initialData);
   const showApplyScope =
       isEditing &&
       Boolean(initialData?.installments) &&
       Boolean((initialData?.totalInstallments ?? 0) > 1);
+  const hasExplicitGroupId = Boolean(initialData?.installmentGroupId);
 
   // Installment Dates Summary
   const [firstInstallmentDate, setFirstInstallmentDate] = useState('');
@@ -109,7 +111,6 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   };
   
   const config = getModalConfig();
-  const isEditing = Boolean(initialData);
   const entityName = config.title.replace(/^Nova\s+/i, '').trim();
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
 
@@ -456,13 +457,15 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
           }
           onSave(expensesToSave); 
       } else {
+          const effectiveApplyScope =
+              showApplyScope && applyScope === 'series' && !hasExplicitGroupId ? 'single' : applyScope;
           const payload = {
               ...baseExpense,
               amount: parseFloat(amount.replace(',', '.')),
               dueDate: (isCredit || paymentMethod === 'Boleto') ? targetDue : date, 
           } as any;
           if (showApplyScope) {
-              payload.applyScope = applyScope;
+              payload.applyScope = effectiveApplyScope;
           }
           onSave(payload);
       }
@@ -809,6 +812,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                     Atualiza as parcelas futuras da mesma série.
                 </p>
+                {!hasExplicitGroupId && applyScope === 'series' && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                        Não foi possível identificar a série com segurança. Esta alteração será aplicada apenas a este item.
+                    </p>
+                )}
             </div>
         )}
 
