@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "meumei-d88be"
+  },
+  "targets": {
+    "meumei-d88be": {
+      "hosting": {
+        "beta": [
+          "meumei-beta-102"
+        ]
+      }
+    }
+  }
+}
