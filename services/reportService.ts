@@ -1,6 +1,7 @@
 import { CreditCard, Expense, Income } from '../types';
 import { getCreditCardInvoiceTotalForMonth } from './invoiceUtils';
 import { getCardColor } from './cardColorUtils';
+import { computeCategoryTotals } from '../utils/categoryTotals';
 
 export type TaxFilter = 'all' | 'PJ' | 'PF';
 export type ViewMode = 'caixa' | 'competencia';
@@ -98,7 +99,7 @@ export const getCategoryBreakdown = (
     filters: ReportFilters
 ) => {
     const summary = getReportSummary(licenseId, startDate, endDate, context, filters);
-    const { filteredIncomes, filteredExpenses, totalReceitas, totalDespesas } = summary;
+    const { filteredIncomes, totalReceitas } = summary;
 
     const incomeMap = filteredIncomes.reduce<Record<string, number>>((acc, inc) => {
         const key = inc.category || 'Outros';
@@ -106,11 +107,16 @@ export const getCategoryBreakdown = (
         return acc;
     }, {});
 
-    const expenseMap = filteredExpenses.reduce<Record<string, number>>((acc, exp) => {
-        const key = exp.category || 'Outros';
-        acc[key] = (acc[key] || 0) + exp.amount;
-        return acc;
-    }, {});
+    const expenseTotals = computeCategoryTotals(context.expenses, {
+        startDate,
+        endDate,
+        statusRule: 'paid+pending',
+        dateField: 'date',
+        topN: undefined,
+        includeOthers: false,
+        source: 'reports',
+        variant: 'reports'
+    });
 
     const entries = [
         ...Object.entries(incomeMap).map(([categoria, total]) => ({
@@ -119,11 +125,11 @@ export const getCategoryBreakdown = (
             total,
             percentual: totalReceitas > 0 ? (total / totalReceitas) * 100 : 0
         })),
-        ...Object.entries(expenseMap).map(([categoria, total]) => ({
-            categoria,
+        ...expenseTotals.items.map(item => ({
+            categoria: item.category,
             tipo: 'expense' as const,
-            total,
-            percentual: totalDespesas > 0 ? (total / totalDespesas) * 100 : 0
+            total: item.total,
+            percentual: item.percent
         }))
     ];
 

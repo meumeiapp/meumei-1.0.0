@@ -24,15 +24,19 @@ import {
   OctagonAlert,
   Lock,
   Search,
-  Download
+  Download,
+  ChevronDown
 } from 'lucide-react';
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
+import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
+import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 
 interface FinancialData {
     balance: number;
+    legacyBalance?: number;
     income: number;
     expenses: number;
     pendingExpenses: number;
@@ -46,46 +50,7 @@ interface ExpenseBreakdown {
     personal: number;
 }
 
-type CategoryTrendPoint = {
-  label: string;
-  values: Record<string, number>;
-};
-
-type TrendTooltipEntry = {
-  category: string;
-  value: number;
-  color: string;
-};
-
-type CategoryTrendMode = 'monthly' | 'accumulated';
-
-interface CategoryTrendTooltipEntry {
-  category: string;
-  mes: string;
-  valor: number;
-  variacaoVsMesAnterior: number;
-  tendencia: 'alta' | 'queda' | 'estavel';
-}
-
-interface CategoryTrendSummary {
-  months: string[];
-  order: string[];
-  monthlySeries: Record<string, number[]>;
-  accumulatedSeries: Record<string, number[]>;
-  variations: Record<string, number[]>;
-  stats: Record<string, { maiorGasto: number; mediaMensal: number; aumentoOuQueda: 'subiu' | 'caiu' | 'estavel' }>;
-  insights: string[];
-  highlights: {
-    categoryMaisPesada?: string;
-    maiorCrescimento?: string;
-    maiorQueda?: string;
-  };
-  tooltip: Record<string, CategoryTrendTooltipEntry[]>;
-  forecasts: Record<string, number>;
-}
-
 const CATEGORY_TREND_COLORS = ['#a855f7', '#38bdf8', '#f97316', '#22c55e', '#ec4899', '#facc15', '#0ea5e9', '#f472b6', '#94a3b8', '#fb923c'];
-const CATEGORY_TREND_LIMIT = 10;
 
 const MONTH_ALIASES: Record<string, string> = {
   jan: '01',
@@ -161,8 +126,9 @@ const parseDateLabel = (value?: string): Date | null => {
 
 const getInlineExpenseStatusMeta = (item: InlineSearchItem) => {
   if (item.entity !== 'expense') return null;
-  if (item.status === 'paid') {
-      return { label: 'Paga', textClass: 'text-emerald-400', dotClass: 'bg-emerald-400' };
+  const normalizedStatus = normalizeExpenseStatus(item.status);
+  if (normalizedStatus === 'paid') {
+      return { label: expenseStatusLabel(normalizedStatus), textClass: 'text-emerald-400', dotClass: 'bg-emerald-400' };
   }
   const dueDate = parseDateLabel(item.sortDate || item.dateLabel);
   const today = new Date();
@@ -197,175 +163,6 @@ const mapMonthAlias = (token: string) => {
   return MONTH_ALIASES[clean as keyof typeof MONTH_ALIASES] || clean;
 };
 
-const formatMonthLabel = (date: Date) =>
-  `${date.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}/${String(date.getFullYear()).slice(-2)}`;
-
-const buildCategoryTrendSummary = (
-  expenses: Expense[],
-  companyStart: Date | null,
-  viewDate: Date
-): CategoryTrendSummary => {
-  const endMonth = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
-  endMonth.setHours(0, 0, 0, 0);
-
-  let startMonth = companyStart ? new Date(companyStart) : new Date(endMonth);
-  startMonth.setDate(1);
-  startMonth.setHours(0, 0, 0, 0);
-  if (startMonth > endMonth) {
-      startMonth = new Date(endMonth);
-  }
-
-  const months: Date[] = [];
-  const labels: string[] = [];
-  const monthIndexByKey = new Map<string, number>();
-  const pointer = new Date(startMonth);
-
-  while (pointer.getTime() <= endMonth.getTime()) {
-      const monthKey = `${pointer.getFullYear()}-${pointer.getMonth()}`;
-      monthIndexByKey.set(monthKey, months.length);
-      months.push(new Date(pointer));
-      labels.push(formatMonthLabel(pointer));
-      pointer.setMonth(pointer.getMonth() + 1);
-  }
-
-  if (months.length === 0) {
-      months.push(new Date(endMonth));
-      labels.push(formatMonthLabel(endMonth));
-      monthIndexByKey.set(`${endMonth.getFullYear()}-${endMonth.getMonth()}`, 0);
-  }
-
-  const totalsByCategory = new Map<string, number[]>();
-
-  expenses.forEach(expense => {
-      if (!expense.category) return;
-      const dateReference = expense.date || expense.dueDate;
-      if (!dateReference) return;
-      const expenseDate = new Date(`${dateReference}T12:00:00`);
-      if (Number.isNaN(expenseDate.getTime())) return;
-      expenseDate.setDate(1);
-      const key = `${expenseDate.getFullYear()}-${expenseDate.getMonth()}`;
-      const index = monthIndexByKey.get(key);
-      if (index === undefined) return;
-
-      if (!totalsByCategory.has(expense.category)) {
-          totalsByCategory.set(expense.category, Array(months.length).fill(0));
-      }
-      const series = totalsByCategory.get(expense.category)!;
-      series[index] += expense.amount;
-  });
-
-  const orderedEntries = Array.from(totalsByCategory.entries())
-      .filter(([, series]) => series.some(value => value !== 0))
-      .sort((a, b) => b[1].reduce((sum, value) => sum + value, 0) - a[1].reduce((sum, value) => sum + value, 0))
-      .slice(0, CATEGORY_TREND_LIMIT);
-
-  const monthlySeries: Record<string, number[]> = {};
-  const accumulatedSeries: Record<string, number[]> = {};
-  const variations: Record<string, number[]> = {};
-  const tooltip: Record<string, CategoryTrendTooltipEntry[]> = {};
-  const forecasts: Record<string, number> = {};
-  const stats: Record<string, { maiorGasto: number; mediaMensal: number; aumentoOuQueda: 'subiu' | 'caiu' | 'estavel' }> = {};
-  const insights: string[] = [];
-
-  let categoryMaisPesada: string | undefined;
-  let maiorCrescimento: string | undefined;
-  let maiorQueda: string | undefined;
-  let maiorValorAtual = -Infinity;
-  let maiorVariacao = -Infinity;
-  let menorVariacao = Infinity;
-
-  orderedEntries.forEach(([category, series]) => {
-      monthlySeries[category] = series.map(value => Number(value.toFixed(2)));
-      accumulatedSeries[category] = series.reduce<number[]>((acc, value, idx) => {
-          const nextValue = (acc[idx - 1] || 0) + value;
-          acc[idx] = Number(nextValue.toFixed(2));
-          return acc;
-      }, []);
-
-      const variationSeries = series.map((value, idx) => {
-          if (idx === 0) return 0;
-          const prev = series[idx - 1];
-          if (prev === 0) {
-              return value === 0 ? 0 : 1;
-          }
-          return Number(((value - prev) / prev).toFixed(4));
-      });
-      variations[category] = variationSeries;
-
-      tooltip[category] = series.map((value, idx) => {
-          const delta = variationSeries[idx] || 0;
-          const tendencia: 'alta' | 'queda' | 'estavel' =
-              delta > 0.05 ? 'alta' : delta < -0.05 ? 'queda' : 'estavel';
-          return {
-              category,
-              mes: labels[idx],
-              valor: Number(value.toFixed(2)),
-              variacaoVsMesAnterior: delta,
-              tendencia
-          };
-      });
-
-      const lastValue = series[series.length - 1];
-      if (lastValue > maiorValorAtual) {
-          maiorValorAtual = lastValue;
-          categoryMaisPesada = category;
-      }
-
-      const lastVariation = variationSeries[variationSeries.length - 1] || 0;
-      if (lastVariation > maiorVariacao) {
-          maiorVariacao = lastVariation;
-          maiorCrescimento = category;
-      }
-      if (lastVariation < menorVariacao) {
-          menorVariacao = lastVariation;
-          maiorQueda = category;
-      }
-
-      const maiorGasto = Math.max(...series);
-      const mediaMensal = series.reduce((acc, value) => acc + value, 0) / series.length;
-      const movimento: 'subiu' | 'caiu' | 'estavel' =
-          lastVariation > 0.05 ? 'subiu' : lastVariation < -0.05 ? 'caiu' : 'estavel';
-      stats[category] = {
-          maiorGasto: Number(maiorGasto.toFixed(2)),
-          mediaMensal: Number(mediaMensal.toFixed(2)),
-          aumentoOuQueda: movimento
-      };
-
-      if (lastVariation >= 0.15) {
-          insights.push(`${category} cresceu ${(lastVariation * 100).toFixed(1)}% em relação ao mês anterior.`);
-      } else if (lastVariation <= -0.15) {
-          insights.push(`${category} caiu ${(Math.abs(lastVariation) * 100).toFixed(1)}% em relação ao mês anterior.`);
-      }
-      if (lastValue === Math.max(...series) && lastValue > 0) {
-          insights.push(`${category} atingiu o maior gasto de todo o período.`);
-      }
-
-      const validVariations = variationSeries.slice(1).filter(v => Number.isFinite(v) && v !== 0);
-      const avgVariation = validVariations.length
-          ? validVariations.reduce((acc, curr) => acc + curr, 0) / validVariations.length
-          : 0;
-      forecasts[category] = Number((lastValue * (1 + avgVariation)).toFixed(2));
-  });
-
-  const uniqueInsights = Array.from(new Set(insights));
-
-  return {
-      months: labels,
-      order: orderedEntries.map(([category]) => category),
-      monthlySeries,
-      accumulatedSeries,
-      variations,
-      stats,
-      insights: uniqueInsights,
-      highlights: {
-          categoryMaisPesada,
-          maiorCrescimento,
-          maiorQueda
-      },
-      tooltip,
-      forecasts
-  };
-};
 
 interface DashboardProps {
   onOpenAccounts: () => void;
@@ -380,6 +177,8 @@ interface DashboardProps {
   creditCards: CreditCardType[];
   expenseBreakdown?: ExpenseBreakdown;
   expenses: Expense[];
+  expensesRevision: number;
+  onRefreshExpenses?: () => void;
   incomes: Income[];
   accounts: Account[];
   viewDate: Date;
@@ -524,10 +323,11 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
     creditCards,
     expenseBreakdown = { fixed: 0, variable: 0, personal: 0 },
     expenses,
+    expensesRevision,
+    onRefreshExpenses,
     incomes,
     accounts,
     viewDate,
-    minDate,
     onOpenInstall,
     isAppInstalled
 }) => {
@@ -538,9 +338,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const canViewReports = true;
   const canManageIncomes = true;
   const canManageExpenses = true;
-  const [trendTooltip, setTrendTooltip] = useState<{ x: number; label: string; entries: TrendTooltipEntry[] } | null>(null);
-  const [categoryTrendMode, setCategoryTrendMode] = useState<CategoryTrendMode>('monthly');
-  const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -726,15 +525,6 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       }
   };
 
-  const companyStartMonth = useMemo(() => {
-      if (!minDate) return null;
-      const base = new Date(`${minDate}T12:00:00`);
-      if (Number.isNaN(base.getTime())) return null;
-      base.setDate(1);
-      base.setHours(0, 0, 0, 0);
-      return base;
-  }, [minDate]);
-
   const getCardStyle = (card: CreditCardType) => {
       const gradient = getCardGradient(card);
       return {
@@ -750,6 +540,124 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           return totals;
       }, {});
   }, [creditCards, expenses, viewDate]);
+
+  const accountNameById = useMemo(() => {
+      return accounts.reduce<Record<string, string>>((acc, account) => {
+          acc[account.id] = account.name;
+          return acc;
+      }, {});
+  }, [accounts]);
+
+  const cardNameById = useMemo(() => {
+      return creditCards.reduce<Record<string, string>>((acc, card) => {
+          acc[card.id] = card.name;
+          return acc;
+      }, {});
+  }, [creditCards]);
+
+  const categoryTotals = useMemo(
+      () =>
+          computeCategoryTotals(expenses, {
+              viewDate,
+              statusRule: 'paid+pending',
+              dateField: 'date',
+              topN: 8,
+              includeOthers: true,
+              source: 'dashboard',
+              variant: 'desktop',
+              expensesRevision,
+              refreshNonce,
+              expandedCategory: expandedCategoryKey
+          }),
+      [expenses, viewDate, expensesRevision, refreshNonce, expandedCategoryKey]
+  );
+
+  const maxCategoryTotal = useMemo(
+      () => Math.max(...categoryTotals.items.map(item => item.total), 0),
+      [categoryTotals.items]
+  );
+
+  const spendInsights = useMemo(() => {
+      if (!categoryTotals.items.length || categoryTotals.totalSum <= 0) return [];
+      const topCategory = categoryTotals.items[0];
+      const top3Total = categoryTotals.items
+          .slice(0, 3)
+          .reduce((sum, item) => sum + item.total, 0);
+      const top3Percent = categoryTotals.totalSum > 0 ? (top3Total / categoryTotals.totalSum) * 100 : 0;
+      return [
+          {
+              label: 'Categoria líder',
+              value: topCategory.category,
+              sub: formatCurrency(topCategory.total)
+          },
+          {
+              label: 'Top 3',
+              value: `${top3Percent.toFixed(1)}% do total`
+          },
+          {
+              label: 'Categorias ativas',
+              value: `${categoryTotals.items.length}`
+          }
+      ];
+  }, [categoryTotals]);
+
+  useEffect(() => {
+      if (!expandedCategoryKey) return;
+      if (!categoryTotals.categoryItems[expandedCategoryKey]) {
+          console.info('[category-totals] expanded_reset', {
+              variant: 'desktop',
+              key: expandedCategoryKey
+          });
+          setExpandedCategoryKey(null);
+      }
+  }, [categoryTotals.categoryItems, expandedCategoryKey]);
+
+  const handleManualRecalc = () => {
+      setRefreshNonce(prev => prev + 1);
+      if (onRefreshExpenses) {
+          onRefreshExpenses();
+      }
+      console.info('[category-totals] manual-recalc', {
+          monthLabel: categoryTotals.monthLabel,
+          variant: 'desktop'
+      });
+  };
+
+  useEffect(() => {
+      const totalSaidasMes = financialData.expenses;
+      const totalRank = categoryTotals.totalSum;
+      const diff = Number((totalSaidasMes - totalRank).toFixed(2));
+      console.info('[category-totals] compare', {
+          variant: 'desktop',
+          totalSaidasMes,
+          totalRank,
+          diff
+      });
+
+      if (Math.abs(diff) > 0.01) {
+          const monthList = categoryTotals.monthExpensesAll;
+          const groupedList = Object.values(categoryTotals.categoryItems).flat();
+          const monthMap = new Map(monthList.map(item => [item.id, item]));
+          const groupedMap = new Map(groupedList.map(item => [item.id, item]));
+          const onlyInMonth = monthList.filter(item => !groupedMap.has(item.id));
+          const onlyInGrouped = groupedList.filter(item => !monthMap.has(item.id));
+          const pickTop = (list: Expense[]) =>
+              [...list]
+                  .sort((a, b) => b.amount - a.amount)
+                  .slice(0, 5)
+                  .map(item => ({
+                      id: item.id,
+                      amount: item.amount,
+                      category: item.category,
+                      date: item.date
+                  }));
+          console.info('[category-totals] diff_items', {
+              variant: 'desktop',
+              onlyInMonth: pickTop(onlyInMonth),
+              onlyInGrouped: pickTop(onlyInGrouped)
+          });
+      }
+  }, [financialData.expenses, categoryTotals.totalSum, categoryTotals.monthExpensesAll, categoryTotals.categoryItems]);
 
   // --- MEI Logic ---
   const meiRevenue = financialData.annualMeiRevenue || 0;
@@ -774,244 +682,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   })();
   const calloutIcon = meiStatus.level === 'over' ? OctagonAlert : meiStatus.level === 'critical' ? Flame : meiStatus.level === 'attention' ? AlertTriangle : CheckCircle2;
 
-  
-  // --- Category Visualization (LINE CHART LOGIC) ---
   const { navigateToResult } = useGlobalActions();
-
-  const categoryTrendSummary = useMemo(
-      () => buildCategoryTrendSummary(expenses, companyStartMonth, viewDate),
-      [expenses, companyStartMonth, viewDate]
-  );
-
-  const selectedTrendSeries = useMemo(
-      () => (categoryTrendMode === 'monthly' ? categoryTrendSummary.monthlySeries : categoryTrendSummary.accumulatedSeries),
-      [categoryTrendMode, categoryTrendSummary]
-  );
-
-  const trendCategoryNames = useMemo(() => categoryTrendSummary.order, [categoryTrendSummary]);
-
-  useEffect(() => {
-      setHiddenCategories((prev) => {
-          const next = new Set<string>();
-          trendCategoryNames.forEach((name) => {
-              if (prev.has(name)) {
-                  next.add(name);
-              }
-          });
-          return next;
-      });
-  }, [trendCategoryNames]);
-
-  const categoryTrendPoints = useMemo<CategoryTrendPoint[]>(() => {
-      if (categoryTrendSummary.months.length === 0 || trendCategoryNames.length === 0) return [];
-      return categoryTrendSummary.months.map((label, index) => {
-          const values: Record<string, number> = {};
-          trendCategoryNames.forEach(category => {
-              values[category] = selectedTrendSeries[category]?.[index] ?? 0;
-          });
-          return { label, values };
-      });
-  }, [categoryTrendSummary, selectedTrendSeries, trendCategoryNames]);
-
-  const categoryTrendColors = useMemo(() => {
-      const colorMap: Record<string, string> = {};
-      trendCategoryNames.forEach((category, index) => {
-          colorMap[category] = CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
-      });
-      return colorMap;
-  }, [trendCategoryNames]);
-  const heavyCategoryForecast = categoryTrendSummary.highlights.categoryMaisPesada
-      ? categoryTrendSummary.forecasts[categoryTrendSummary.highlights.categoryMaisPesada]
-      : undefined;
-
-  const toggleCategoryVisibility = (category: string) => {
-      setHiddenCategories((prev) => {
-          const next = new Set(prev);
-          if (next.has(category)) {
-              next.delete(category);
-          } else {
-              next.add(category);
-          }
-          return next;
-      });
-  };
-
-  const renderCategoryTrendChart = () => {
-      if (categoryTrendPoints.length === 0 || trendCategoryNames.length === 0) return null;
-
-      const width = 900;
-      const height = 260;
-      const leftPadding = 60;
-      const rightPadding = 24;
-      const topPadding = 30;
-      const bottomPadding = 40;
-      const usableWidth = width - leftPadding - rightPadding;
-      const usableHeight = height - topPadding - bottomPadding;
-      const allValues = categoryTrendPoints.flatMap(point => trendCategoryNames.map(category => point.values[category] ?? 0));
-      const maxValue = Math.max(...allValues, 0);
-      const valueRange = maxValue <= 0 ? 1 : maxValue;
-
-      const getX = (index: number) => {
-          if (categoryTrendPoints.length <= 1) return leftPadding + usableWidth / 2;
-          return leftPadding + (usableWidth * index) / (categoryTrendPoints.length - 1);
-      };
-
-      const getY = (value: number) => height - bottomPadding - (value / valueRange) * usableHeight;
-
-      const getPointsAttr = (category: string) =>
-          categoryTrendPoints
-              .map((point, index) => `${getX(index)},${getY(point.values[category] || 0)}`)
-              .join(' ');
-
-      const monthTicks = Array.from({ length: Math.min(6, categoryTrendPoints.length) }, (_, idx) => {
-          if (categoryTrendPoints.length <= 1) return 0;
-          const steps = Math.min(5, categoryTrendPoints.length - 1);
-          return Math.round(((categoryTrendPoints.length - 1) / steps) * idx);
-      });
-
-      const valueTicks = Array.from({ length: 4 }, (_, idx) => (valueRange / 4) * (idx + 1));
-
-      return (
-          <div className="relative">
-              <svg
-                  viewBox={`0 0 ${width} ${height}`}
-                  className="w-full h-64"
-                  onMouseLeave={() => setTrendTooltip(null)}
-              >
-                  {[0.25, 0.5, 0.75, 1].map((ratio) => {
-                      const y = topPadding + usableHeight * ratio;
-                      return (
-                          <line
-                              key={ratio}
-                              x1={leftPadding}
-                              y1={y}
-                              x2={width - rightPadding}
-                              y2={y}
-                              stroke="#27272a"
-                              strokeWidth="1"
-                              strokeDasharray="4"
-                          />
-                      );
-                  })}
-
-                  <line x1={leftPadding} y1={topPadding} x2={leftPadding} y2={height - bottomPadding} stroke="#3f3f46" strokeWidth="1.5" />
-                  <line x1={leftPadding} y1={height - bottomPadding} x2={width - rightPadding} y2={height - bottomPadding} stroke="#3f3f46" strokeWidth="1.5" />
-
-                  {trendCategoryNames.map((category, index) => (
-                      hiddenCategories.has(category) ? null : (
-                          <polyline
-                              key={category}
-                              points={getPointsAttr(category)}
-                              fill="none"
-                              stroke={categoryTrendColors[category]}
-                              strokeWidth={index < 3 ? 3 : 2}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              opacity={index < 3 ? 1 : 0.7}
-                          />
-                      )
-                  ))}
-
-                  {categoryTrendPoints.map((point, index) => {
-                      const xCenter = getX(index);
-                      const widthSegment = categoryTrendPoints.length > 1 ? usableWidth / (categoryTrendPoints.length - 1) : usableWidth;
-                      return (
-                          <rect
-                              key={`hover-${point.label}`}
-                              x={Math.max(leftPadding, xCenter - widthSegment / 2)}
-                              y={topPadding}
-                              width={Math.max(widthSegment, 16)}
-                              height={usableHeight}
-                              fill="transparent"
-                              onMouseEnter={() => {
-                                  const entries = trendCategoryNames
-                                      .filter(category => !hiddenCategories.has(category))
-                                      .map(category => ({
-                                          category,
-                                          value: point.values[category] ?? 0,
-                                          color: categoryTrendColors[category]
-                                      }))
-                                      .sort((a, b) => b.value - a.value)
-                                      .slice(0, 4);
-                                  if (entries.length > 0) {
-                                      setTrendTooltip({ x: xCenter, label: point.label, entries });
-                                  } else {
-                                      setTrendTooltip(null);
-                                  }
-                              }}
-                          />
-                      );
-                  })}
-
-                  {monthTicks.map((tick, idx) => (
-                      <text
-                          key={`tick-${tick}-${idx}`}
-                          x={getX(Math.min(tick, categoryTrendPoints.length - 1))}
-                          y={height - bottomPadding + 18}
-                          textAnchor="middle"
-                          className="text-[10px] fill-zinc-500"
-                      >
-                          {categoryTrendPoints[Math.min(tick, categoryTrendPoints.length - 1)]?.label || ''}
-                      </text>
-                  ))}
-
-                  {valueTicks.map((tick, idx) => (
-                      <text
-                          key={`value-${idx}`}
-                          x={leftPadding - 10}
-                          y={getY(tick)}
-                          textAnchor="end"
-                          className="text-[10px] fill-zinc-500"
-                      >
-                          {formatCurrency(tick).replace('R$', 'R$ ')}
-                      </text>
-                  ))}
-
-                  {trendTooltip && (
-                      <g
-                          transform={`translate(${Math.min(
-                              Math.max(trendTooltip.x - 90, leftPadding),
-                              width - rightPadding - 180
-                          )}, ${topPadding + 8})`}
-                      >
-                          <rect width={180} height={32 + trendTooltip.entries.length * 16} rx={12} fill="rgba(9,9,11,0.85)" stroke="#3f3f46" />
-                          <text x={12} y={16} className="text-[10px] fill-zinc-200 font-semibold">
-                              {trendTooltip.label}
-                          </text>
-                          {trendTooltip.entries.map((entry, idx) => (
-                              <text key={entry.category} x={12} y={32 + idx * 14} className="text-[10px] fill-zinc-400">
-                                  <tspan fill={entry.color}>● </tspan>
-                                  {entry.category}: {formatCurrency(entry.value)}
-                              </text>
-                          ))}
-                      </g>
-                  )}
-              </svg>
-
-              <div className="flex flex-wrap gap-3 justify-center text-[11px] text-zinc-500 mt-4">
-                  {trendCategoryNames.map((category) => {
-                      const isHidden = hiddenCategories.has(category);
-                      return (
-                          <button
-                              key={category}
-                              onClick={() => toggleCategoryVisibility(category)}
-                              className={`flex items-center gap-2 transition-opacity ${isHidden ? 'opacity-40' : 'opacity-100'}`}
-                              type="button"
-                          >
-                              <span
-                                  className="w-3 h-1 rounded-full"
-                                  style={{ backgroundColor: categoryTrendColors[category], opacity: isHidden ? 0.4 : 1 }}
-                              ></span>
-                              <span className="underline-offset-2" style={{ textDecoration: isHidden ? 'line-through' : 'underline' }}>
-                                  {category}
-                              </span>
-                          </button>
-                      );
-                  })}
-              </div>
-          </div>
-      );
-  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pt-8">
@@ -1021,6 +692,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 <div className="flex items-center gap-3 px-6 py-3 rounded-full bg-white/80 dark:bg-white/10 border border-white/50 dark:border-zinc-800 text-sm sm:text-base font-semibold text-indigo-700 dark:text-white shadow-lg shadow-indigo-500/10 focus-within:ring-2 focus-within:ring-indigo-400 transition-all">
                     <Search size={18} className="text-indigo-600 dark:text-indigo-300" />
                     <input
+                        id="dashboard-search-desktop"
+                        name="dashboardSearch"
                         value={searchQuery}
                         onChange={(e) => {
                             setSearchQuery(e.target.value);
@@ -1029,6 +702,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         onFocus={() => setIsSearchActive(true)}
                         onKeyDown={handleSearchKeyDown}
                         placeholder="Pesquisar despesas, entradas, contas e cartões..."
+                        aria-label="Pesquisar despesas, entradas, contas e cartões"
                         className="flex-1 bg-transparent text-sm sm:text-base text-zinc-900 dark:text-white placeholder-zinc-500 outline-none"
                     />
                 </div>
@@ -1296,7 +970,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         </div>
                     </div>
                     <div>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium mb-1">Saldo Atual</p>
+                        <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium mb-1">Saldo atual</p>
                         <h3 className={`text-3xl font-bold tracking-tight mb-2 ${financialData.balance < 0 ? 'text-red-500' : 'text-zinc-900 dark:text-white'}`}>
                             R$ {financialData.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </h3>
@@ -1427,83 +1101,156 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
             </section>
         )}
 
-        {/* Categorized Expense Breakdown - LINE CHART */}
+        {/* Categorized Expense Breakdown - BAR RANKING */}
         {canManageExpenses && (
             <section className="bg-white dark:bg-[#151517] rounded-2xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
-                <div className="flex flex-col gap-3 mb-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                            <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                                <PieChart size={20} className="text-indigo-500" />
-                                Onde foi parar seu dinheiro? <span className="text-xs font-normal text-zinc-500">(Top 10 categorias)</span>
-                            </h2>
-                            <p className="text-xs text-zinc-500 dark:text-zinc-400">Linha do tempo desde o início do sistema até o mês atual.</p>
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+                    <div>
+                        <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                            <PieChart size={20} className="text-indigo-500" />
+                            Onde foi parar seu dinheiro?
+                        </h2>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                            Ranking das despesas do mês ({categoryTotals.monthLabel}).
+                        </p>
+                    </div>
+                    <div className="text-right text-xs text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
+                        <button
+                            type="button"
+                            onClick={handleManualRecalc}
+                            className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                        >
+                            Recalcular
+                        </button>
+                        <span className="uppercase tracking-wide font-semibold">Total do mês</span>
+                        <div className="text-sm font-semibold text-zinc-900 dark:text-white">
+                            {formatCurrency(categoryTotals.totalSum)}
                         </div>
-                        <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-                            <span className="uppercase tracking-wide font-semibold">Modo</span>
-                            <div className="flex rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
-                                {(['monthly', 'accumulated'] as CategoryTrendMode[]).map(mode => (
-                                    <button
-                                        key={mode}
-                                        onClick={() => setCategoryTrendMode(mode)}
-                                        className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                            categoryTrendMode === mode
-                                                ? 'bg-indigo-600 text-white'
-                                                : 'text-zinc-500 dark:text-zinc-400 bg-transparent hover:bg-zinc-100 dark:hover:bg-zinc-800'
-                                        }`}
-                                    >
-                                        {mode === 'monthly' ? 'Mensal' : 'Acumulado'}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
+                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            Pagas: {formatCurrency(categoryTotals.totalPaid)}
+                        </span>
                     </div>
                 </div>
-                {trendCategoryNames.length > 0 && categoryTrendPoints.length > 0 ? (
-                    <>
-                        {renderCategoryTrendChart()}
-                        {(categoryTrendSummary.highlights.categoryMaisPesada ||
-                          categoryTrendSummary.highlights.maiorCrescimento ||
-                          categoryTrendSummary.highlights.maiorQueda) && (
-                            <div className="mt-5 grid gap-3 text-[11px] text-zinc-500 dark:text-zinc-400 md:grid-cols-3">
-                                {categoryTrendSummary.highlights.categoryMaisPesada && (
-                                    <div className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1">
-                                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">Categoria mais pesada</span>
-                                        <span className="font-semibold text-zinc-900 dark:text-white">{categoryTrendSummary.highlights.categoryMaisPesada}</span>
-                                        {typeof heavyCategoryForecast === 'number' && (
-                                            <span className="text-[10px] text-zinc-400">Previsão próxima: {formatCurrency(heavyCategoryForecast)}</span>
+                {categoryTotals.displayItems.length > 0 && categoryTotals.totalSum > 0 ? (
+                    <div className="space-y-4">
+                        <ul className="space-y-3">
+                            {categoryTotals.items.map((item, index) => {
+                                const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
+                                const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
+                                const barColor =
+                                    item.category === 'Outros'
+                                        ? '#94a3b8'
+                                        : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
+                                const isExpanded = expandedCategoryKey === item.key;
+                                const categoryExpenses = categoryTotals.categoryItems[item.key] || [];
+                                const itemsToShow = categoryExpenses.slice(0, CATEGORY_ITEMS_PREVIEW_LIMIT);
+                                const extraCount = Math.max(categoryExpenses.length - itemsToShow.length, 0);
+                                return (
+                                    <li key={item.key} className="space-y-1">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setExpandedCategoryKey(prev => (prev === item.key ? null : item.key))
+                                            }
+                                            aria-expanded={isExpanded}
+                                            className="w-full text-left"
+                                        >
+                                            <div className="flex items-center justify-between gap-3 text-sm">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
+                                                        {item.category}
+                                                    </span>
+                                                    <ChevronDown
+                                                        size={14}
+                                                        className={`text-zinc-400 transition-transform ${
+                                                            isExpanded ? 'rotate-180' : ''
+                                                        }`}
+                                                    />
+                                                </div>
+                                                <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
+                                                    {formatCurrency(item.total)} • {pct.toFixed(1)}%
+                                                </span>
+                                            </div>
+                                            <div className="mt-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                                                <div
+                                                    className="h-full rounded-full"
+                                                    style={{ width: `${barWidth}%`, backgroundColor: barColor }}
+                                                ></div>
+                                            </div>
+                                        </button>
+                                        {isExpanded && (
+                                            <div className="mt-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-2">
+                                                <ul className="space-y-2">
+                                                    {itemsToShow.map(expense => {
+                                                        const meta =
+                                                            (expense.accountId && accountNameById[expense.accountId]) ||
+                                                            (expense.cardId && cardNameById[expense.cardId]) ||
+                                                            expense.paymentMethod ||
+                                                            null;
+                                                        return (
+                                                            <li
+                                                                key={expense.id}
+                                                                className="flex items-start justify-between gap-3 text-xs"
+                                                            >
+                                                                <div className="min-w-0">
+                                                                    <p className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
+                                                                        {expense.description || 'Sem descrição'}
+                                                                    </p>
+                                                                    <div className="flex items-center gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                                                        <span>
+                                                                            {new Date(
+                                                                                `${expense.date}T12:00:00`
+                                                                            ).toLocaleDateString('pt-BR', {
+                                                                                day: '2-digit',
+                                                                                month: '2-digit'
+                                                                            })}
+                                                                        </span>
+                                                                        {meta && <span className="truncate">{meta}</span>}
+                                                                    </div>
+                                                                </div>
+                                                                <span className="text-xs font-semibold text-zinc-900 dark:text-white shrink-0">
+                                                                    {formatCurrency(expense.amount)}
+                                                                </span>
+                                                            </li>
+                                                        );
+                                                    })}
+                                                </ul>
+                                                {extraCount > 0 && (
+                                                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                        + {extraCount} itens
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                        {spendInsights.length > 0 && (
+                            <div className="mt-4 grid gap-3 text-[11px] text-zinc-500 dark:text-zinc-400 md:grid-cols-3">
+                                {spendInsights.map(insight => (
+                                    <div
+                                        key={insight.label}
+                                        className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1"
+                                    >
+                                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                                            {insight.label}
+                                        </span>
+                                        <span className="font-semibold text-zinc-900 dark:text-white">
+                                            {insight.value}
+                                        </span>
+                                        {insight.sub && (
+                                            <span className="text-[10px] text-zinc-400">{insight.sub}</span>
                                         )}
                                     </div>
-                                )}
-                                {categoryTrendSummary.highlights.maiorCrescimento && (
-                                    <div className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1">
-                                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">Maior crescimento</span>
-                                        <span className="font-semibold text-emerald-500">{categoryTrendSummary.highlights.maiorCrescimento}</span>
-                                    </div>
-                                )}
-                                {categoryTrendSummary.highlights.maiorQueda && (
-                                    <div className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1">
-                                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">Maior queda</span>
-                                        <span className="font-semibold text-rose-500">{categoryTrendSummary.highlights.maiorQueda}</span>
-                                    </div>
-                                )}
+                                ))}
                             </div>
                         )}
-                        {categoryTrendSummary.insights.length > 0 && (
-                            <div className="mt-4 bg-zinc-50 dark:bg-[#111113] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
-                                <p className="text-xs font-bold uppercase text-zinc-500 dark:text-zinc-400 mb-2">Insights automáticos</p>
-                                <ul className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1 list-disc list-inside">
-                                    {categoryTrendSummary.insights.slice(0, 3).map(text => (
-                                        <li key={text}>{text}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-                    </>
+                    </div>
                 ) : (
                     <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
                         <PieChart size={40} className="mb-3 opacity-20" />
-                        <p className="text-sm text-center">Dados insuficientes para montar a tendência das categorias.</p>
+                        <p className="text-sm text-center">Nenhuma despesa paga encontrada no mês.</p>
                     </div>
                 )}
             </section>

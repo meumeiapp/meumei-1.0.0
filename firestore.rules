@@ -6,97 +6,33 @@ function isSignedIn() {
   return request.auth != null;
 }
 
-function authEmailLower() {
-  return request.auth.token.email != null ? request.auth.token.email.lower() : '';
+function isOwner(uid) {
+  return isSignedIn() && request.auth.uid == uid;
 }
 
-function isOwner(licenseId) {
-  return isSignedIn() && authEmailLower() == licenseId;
+function hasAuthEmail() {
+  return isSignedIn() && request.auth.token.email != null;
 }
 
-function isUserPreferenceDoc(emailId) {
-  return isSignedIn() && authEmailLower() == emailId.lower();
+match /users/{uid} {
+  allow read, create, update, delete: if isOwner(uid);
+
+  match /{document=**} {
+    allow read, create, update, delete: if isOwner(uid);
+  }
 }
 
-function supportAccessDoc(licenseId) {
-  return /databases/$(database)/documents/licenses/$(licenseId)/supportAccess/$(authEmailLower());
+match /userGoals/{uid} {
+  allow read, create, update, delete: if isOwner(uid);
 }
 
-function hasActiveSupportAccess(licenseId) {
-  return isSignedIn()
-    && exists(supportAccessDoc(licenseId))
-    && get(supportAccessDoc(licenseId)).data.allowed == true
-    && get(supportAccessDoc(licenseId)).data.expiresAt > request.time;
-}
-
-match /userProfiles/{uid} {
-  allow read, write: if isSignedIn() && request.auth.uid == uid;
-}
-
-match /userPreferences/{email} {
-  allow read: if isUserPreferenceDoc(email);
+match /entitlements/{docId} {
+  allow read: if hasAuthEmail() && docId == request.auth.token.email;
   allow write: if false;
 }
 
-match /userLicenseIndex/{document=**} {
+match /{document=**} {
   allow read, write: if false;
-}
-
-match /licenses/{licenseId} {
-  allow read, write: if isOwner(licenseId);
-
-  match /supportAccess/{requestId} {
-    allow read, write: if isOwner(licenseId);
-  }
-
-  match /auditLogs/{logId} {
-    allow read: if isOwner(licenseId);
-    allow create: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-    allow update, delete: if false;
-  }
-
-  match /userPreferences/{prefId} {
-    allow read, write: if isOwner(licenseId) && isUserPreferenceDoc(prefId);
-  }
-
-  match /accounts/{doc=**} {
-    allow read: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-    allow write: if isOwner(licenseId);
-  }
-
-  match /expenses/{doc=**} {
-    allow read: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-    allow write: if isOwner(licenseId);
-  }
-
-  match /incomes/{doc=**} {
-    allow read: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-    allow write: if isOwner(licenseId);
-  }
-
-  match /yields/{doc=**} {
-    allow read: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-    allow write: if isOwner(licenseId);
-  }
-
-  match /credit_cards/{doc=**} {
-    allow read: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-    allow write: if isOwner(licenseId);
-  }
-
-  match /cards/{doc=**} {
-    allow read: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-    allow write: if isOwner(licenseId);
-  }
-
-  match /{document=**} {
-    allow read, write: if isOwner(licenseId);
-  }
-}
-
-match /adminMetrics/{licenseId} {
-  allow read: if isOwner(licenseId) || hasActiveSupportAccess(licenseId);
-  allow write: if isOwner(licenseId);
 }
 
 }

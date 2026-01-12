@@ -62,6 +62,8 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
 
   const isEditing = Boolean(initialData);
   const primaryLabel = getPrimaryActionLabel('Rendimento', isEditing);
+  const fieldIdPrefix = initialData?.date ? `yield-${initialData.date}` : 'yield-new';
+  const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
 
   const handleSave = async () => {
     const uid = authUser?.uid || '';
@@ -145,9 +147,13 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Data do Rendimento</label>
+          <label htmlFor={fieldId('date')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Data do Rendimento
+          </label>
           <div className="relative">
             <input
+              id={fieldId('date')}
+              name="date"
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
@@ -159,8 +165,12 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
         </div>
 
         <div className="space-y-2">
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Conta</label>
+          <label htmlFor={fieldId('account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Conta
+          </label>
           <select
+            id={fieldId('account')}
+            name="accountId"
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
             disabled={isEditing}
@@ -172,10 +182,14 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
       </div>
 
       <div className="space-y-2">
-        <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Valor Rendido (R$)</label>
+        <label htmlFor={fieldId('amount')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+          Valor Rendido (R$)
+        </label>
         <div className="relative">
           <span className="absolute left-4 top-3 text-emerald-500 font-bold">R$</span>
           <input
+            id={fieldId('amount')}
+            name="amount"
             type="number"
             placeholder="0,00"
             value={amount}
@@ -191,8 +205,12 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
       </div>
 
       <div className="space-y-2">
-        <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Observações</label>
+        <label htmlFor={fieldId('notes')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+          Observações
+        </label>
         <textarea
+          id={fieldId('notes')}
+          name="notes"
           rows={3}
           placeholder="Informações adicionais..."
           value={notes}
@@ -250,7 +268,11 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
               <TrendingUp className="text-indigo-600 dark:text-indigo-400" />
               {isEditing ? 'Editar Rendimento' : 'Novo Rendimento'}
             </h2>
-            <button onClick={onClose} className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+            <button
+              onClick={onClose}
+              aria-label="Fechar modal"
+              className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
               <X size={20} />
             </button>
           </div>

@@ -217,6 +217,7 @@ const CalculatorModal: React.FC<CalculatorModalProps> = ({ isOpen, onClose }) =>
           </div>
           <button
             onClick={onClose}
+            aria-label="Fechar calculadora"
             className="p-2 rounded-full hover:bg-white/10 text-white transition-colors"
           >
             <X size={20} />

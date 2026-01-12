@@ -17,10 +17,11 @@ interface NewExpenseModalProps {
   accounts: Account[];
   creditCards: CreditCardType[];
   categories: string[]; 
-  licenseId?: string | null;
+  userId?: string | null;
   categoryType: 'expenses';
   onAddCategory: (name: string) => Promise<void> | void;
   onRemoveCategory: (name: string) => Promise<void> | void;
+  onResetCategories?: () => Promise<void> | void;
   expenseType: ExpenseType; 
   themeColor?: 'indigo' | 'amber' | 'cyan' | 'pink';
   defaultDate?: Date; // New prop
@@ -36,10 +37,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   accounts, 
   creditCards,
   categories,
-  licenseId,
+  userId,
   categoryType,
   onAddCategory,
   onRemoveCategory,
+  onResetCategories,
   expenseType,
   themeColor = 'indigo',
   defaultDate,
@@ -113,6 +115,8 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const config = getModalConfig();
   const entityName = config.title.replace(/^Nova\s+/i, '').trim();
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
+  const fieldIdPrefix = initialData?.id ? `expense-${initialData.id}` : 'expense-new';
+  const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
 
   const clampToMinDate = (value: string) => {
       if (!value) return minDate;
@@ -267,16 +271,16 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         screen: 'NewExpenseModal',
         rawName,
         normalizedName,
-        licenseId,
+        userId,
         type: categoryType,
         uid,
         email
     });
-    if (!licenseId) {
+    if (!userId) {
         console.warn('[categories] UI_add_blocked', {
-            reason: 'license_missing',
+            reason: 'user_missing',
             rawName,
-            licenseId,
+            userId,
             type: categoryType,
             uid,
             email
@@ -287,7 +291,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         console.warn('[categories] UI_add_blocked', {
             reason: 'empty_name',
             rawName,
-            licenseId,
+            userId,
             type: categoryType,
             uid,
             email
@@ -301,7 +305,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         console.warn('[categories] UI_add_blocked', {
             reason: 'duplicate',
             rawName,
-            licenseId,
+            userId,
             type: categoryType,
             uid,
             email
@@ -328,15 +332,15 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         type: categoryType,
         rawName,
         normalized: normalizedName,
-        licenseId,
+        userId,
         uid,
         email
     });
-    if (!licenseId) {
+    if (!userId) {
         console.warn('[categories] UI_remove_blocked', {
-            reason: 'license_missing',
+            reason: 'user_missing',
             rawName,
-            licenseId,
+            userId,
             type: categoryType,
             uid,
             email
@@ -347,23 +351,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         console.warn('[categories] UI_remove_blocked', {
             reason: 'empty_name',
             rawName,
-            licenseId,
+            userId,
             type: categoryType,
             uid,
             email
         });
-        return;
-    }
-    if (categories.length <= 1) {
-        console.warn('[categories] UI_remove_blocked', {
-            reason: 'minimum_one_category',
-            rawName,
-            licenseId,
-            type: categoryType,
-            uid,
-            email
-        });
-        alert("É necessário ter pelo menos uma categoria.");
         return;
     }
     Promise.resolve(onRemoveCategory(catToDelete))
@@ -375,6 +367,22 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         .catch((error: any) => {
             alert(error?.message || 'Falha ao remover categoria.');
         });
+  };
+
+  const handleResetCategories = async () => {
+    if (!onResetCategories) return;
+    if (!userId) {
+        console.warn('[categories] UI_reset_blocked', { reason: 'user_missing', type: categoryType });
+        return;
+    }
+    const confirmed = window.confirm('Tem certeza que deseja zerar todas as categorias? Esta ação é irreversível.');
+    if (!confirmed) return;
+    try {
+        await onResetCategories();
+        setCategory('');
+    } catch (error: any) {
+        alert(error?.message || 'Falha ao zerar categorias.');
+    }
   };
 
   if (!isOpen) return null;
@@ -411,6 +419,10 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
       const targetDue = dueDate || date;
       if (targetDue < minDate) {
           alert('A data de vencimento não pode ser anterior ao mês de abertura da empresa.');
+          return;
+      }
+      if (!category) {
+          alert('Selecione ou crie uma categoria antes de salvar.');
           return;
       }
 
@@ -480,7 +492,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             {config.icon}
             {initialData ? 'Editar Despesa' : config.title}
           </h2>
-          <button onClick={onClose} className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Fechar modal"
+            className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
             <X size={20} />
           </button>
         </div>
@@ -489,8 +505,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
       <div className={`${contentPadding} space-y-6`}>
         
         <div className="space-y-2">
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Fornecedor / Nome</label>
+          <label htmlFor={fieldId('description')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Fornecedor / Nome
+          </label>
           <input 
+            id={fieldId('description')}
+            name="description"
             type="text" 
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -501,8 +521,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Valor (R$)</label>
+                <label htmlFor={fieldId('amount')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                  Valor (R$)
+                </label>
                 <input 
+                    id={fieldId('amount')}
+                    name="amount"
                     type="number" 
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
@@ -514,7 +538,9 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             {/* CATEGORIA - Com Gerenciamento Dinâmico */}
             <div className="space-y-2 relative">
                 <div className="flex justify-between items-center h-4 mb-2">
-                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Categoria</label>
+                    <label htmlFor={fieldId('category')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                      Categoria
+                    </label>
                     <button 
                         type="button"
                         onClick={() => setIsManagingCategories(!isManagingCategories)}
@@ -528,6 +554,8 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                     <div className="absolute top-8 left-0 right-0 z-[60] bg-zinc-50 dark:bg-[#202020] border border-zinc-200 dark:border-zinc-700 rounded-xl p-3 shadow-lg">
                         <div className="flex gap-2 mb-3">
                             <input 
+                                id={fieldId('category-new')}
+                                name="categoryNew"
                                 autoFocus
                                 type="text" 
                                 placeholder="Nova categoria..."
@@ -535,32 +563,63 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                                 onChange={(e) => setNewCategoryName(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
                                 className="flex-1 bg-white dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                aria-label="Nova categoria"
                             />
                             <button
                                 type="button"
                                 onClick={handleAddCategory}
+                                aria-label="Adicionar categoria"
                                 className={`text-white px-3 py-2 rounded-md ${config.btnClass}`}
                             >
                                 <Plus size={16} />
                             </button>
                         </div>
                         <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
-                            {categories.map(cat => (
-                                <div key={cat} className="flex justify-between items-center px-2 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded">
-                                    <span className="text-sm text-zinc-700 dark:text-zinc-300">{cat}</span>
-                                    <button type="button" onClick={() => handleDeleteCategory(cat)} className="text-red-500 p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
-                                        <Trash2 size={12} />
-                                    </button>
+                            {categories.length === 0 ? (
+                                <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
+                                    Sem categorias, crie uma
                                 </div>
-                            ))}
+                            ) : (
+                                categories.map(cat => (
+                                    <div key={cat} className="flex justify-between items-center px-2 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded">
+                                        <span className="text-sm text-zinc-700 dark:text-zinc-300">{cat}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteCategory(cat)}
+                                          aria-label={`Remover categoria ${cat}`}
+                                          className="text-red-500 p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </div>
+                                ))
+                            )}
                         </div>
+                        {onResetCategories && (
+                            <button
+                                type="button"
+                                onClick={handleResetCategories}
+                                className="mt-3 w-full rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
+                            >
+                                Zerar categorias
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <select 
+                        id={fieldId('category')}
+                        name="category"
                         value={category}
                         onChange={(e) => setCategory(e.target.value)}
+                        disabled={categories.length === 0}
                         className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
                     >
+                        {category && !categories.includes(category) && (
+                            <option value={category}>{category}</option>
+                        )}
+                        {categories.length === 0 && (
+                            <option value="" disabled>Sem categorias, crie uma</option>
+                        )}
                         {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                     </select>
                 )}
@@ -570,10 +629,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* NATUREZA FISCAL */}
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
+                <label htmlFor={fieldId('taxStatus')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
                     <Briefcase size={12} /> Natureza Fiscal
                 </label>
                 <select 
+                    id={fieldId('taxStatus')}
+                    name="taxStatus"
                     value={taxStatus}
                     onChange={(e) => setTaxStatus(e.target.value as 'PJ' | 'PF')}
                     className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
@@ -584,9 +645,13 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             </div>
 
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Data de lançamento</label>
+                <label htmlFor={fieldId('date')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                  Data de lançamento
+                </label>
                 <div className="relative">
                     <input 
+                        id={fieldId('date')}
+                        name="date"
                         type="date" 
                         value={date}
                         onChange={(e) => setDate(e.target.value)}
@@ -600,8 +665,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Conta de Pagamento</label>
+                <label htmlFor={fieldId('payment-account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                  Conta de Pagamento
+                </label>
                 <select 
+                    id={fieldId('payment-account')}
+                    name="paymentAccount"
                     value={isCredit ? selectedCardId : selectedAccountId}
                     onChange={(e) => isCredit ? setSelectedCardId(e.target.value) : setSelectedAccountId(e.target.value)}
                     className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
@@ -629,8 +698,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             </div>
 
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Forma de Pagamento</label>
+                <label htmlFor={fieldId('payment-method')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                  Forma de Pagamento
+                </label>
                 <select 
+                    id={fieldId('payment-method')}
+                    name="paymentMethod"
                     value={paymentMethod}
                     onChange={handlePaymentMethodChange}
                     className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
@@ -653,7 +726,8 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                     <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-colors ${status === 'paid' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500 dark:border-emerald-500/50' : 'border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}>
                         <input 
                             type="radio" 
-                            name="status" 
+                            id={fieldId('status-paid')}
+                            name={fieldId('status')} 
                             value="paid" 
                             checked={status === 'paid'}
                             onChange={() => setStatus('paid')}
@@ -670,7 +744,8 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                     <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-colors ${status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-500 dark:border-amber-500/50' : 'border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}>
                         <input 
                             type="radio" 
-                            name="status" 
+                            id={fieldId('status-pending')}
+                            name={fieldId('status')} 
                             value="pending" 
                             checked={status === 'pending'}
                             onChange={() => setStatus('pending')}
@@ -686,9 +761,13 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             </div>
             
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Data de Vencimento</label>
+                <label htmlFor={fieldId('dueDate')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                  Data de Vencimento
+                </label>
                 <div className="relative">
                     <input 
+                        id={fieldId('dueDate')}
+                        name="dueDate"
                         type="date" 
                         value={dueDate}
                         onChange={(e) => setDueDate(e.target.value)}
@@ -708,12 +787,13 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <div className="flex items-center gap-2">
                     <input 
                         type="checkbox" 
-                        id="installments" 
+                        id={fieldId('installments')}
+                        name="installments"
                         checked={isInstallment} 
                         onChange={(e) => setIsInstallment(e.target.checked)}
                         className={`w-4 h-4 rounded border-zinc-600 bg-transparent focus:ring-2 ${isCredit ? 'text-blue-600 focus:ring-blue-500' : 'text-zinc-600 focus:ring-zinc-500'}`}
                     />
-                    <label htmlFor="installments" className="text-sm font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+                    <label htmlFor={fieldId('installments')} className="text-sm font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
                         {isCredit ? 'Compra parcelada?' : 'Boleto Parcelado?'}
                         {paymentMethod === 'Boleto' && <Barcode size={16} />}
                     </label>
@@ -722,8 +802,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 {isInstallment && (
                     <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
                         <div className="space-y-2">
-                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Número de parcelas</label>
+                            <label htmlFor={fieldId('installment-count')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                              Número de parcelas
+                            </label>
                             <input 
+                                id={fieldId('installment-count')}
+                                name="installmentCount"
                                 type="number" 
                                 min="2"
                                 max="99"
@@ -739,24 +823,24 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                                 <div className="flex items-center gap-2">
                                     <input 
                                         type="radio" 
-                                        id="val_parcel" 
-                                        name="val_type"
+                                        id={fieldId('value-parcel')}
+                                        name={fieldId('value-type')}
                                         checked={installmentValueType === 'parcel'}
                                         onChange={() => setInstallmentValueType('parcel')}
                                         className="text-blue-600 focus:ring-blue-500"
                                     />
-                                    <label htmlFor="val_parcel" className="text-sm text-zinc-700 dark:text-zinc-300">Valor da parcela</label>
+                                    <label htmlFor={fieldId('value-parcel')} className="text-sm text-zinc-700 dark:text-zinc-300">Valor da parcela</label>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <input 
                                         type="radio" 
-                                        id="val_total" 
-                                        name="val_type"
+                                        id={fieldId('value-total')}
+                                        name={fieldId('value-type')}
                                         checked={installmentValueType === 'total'}
                                         onChange={() => setInstallmentValueType('total')}
                                         className="text-blue-600 focus:ring-blue-500"
                                     />
-                                    <label htmlFor="val_total" className="text-sm text-zinc-700 dark:text-zinc-300">Valor total</label>
+                                    <label htmlFor={fieldId('value-total')} className="text-sm text-zinc-700 dark:text-zinc-300">Valor total</label>
                                 </div>
                             </div>
                         </div>
@@ -789,7 +873,8 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                     <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${applyScope === 'single' ? 'border-zinc-400 text-zinc-900 dark:text-white' : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'}`}>
                         <input
                             type="radio"
-                            name="edit_scope"
+                            id={fieldId('edit-scope-single')}
+                            name={fieldId('edit-scope')}
                             value="single"
                             checked={applyScope === 'single'}
                             onChange={() => setApplyScope('single')}
@@ -800,7 +885,8 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                     <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${applyScope === 'series' ? 'border-zinc-400 text-zinc-900 dark:text-white' : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'}`}>
                         <input
                             type="radio"
-                            name="edit_scope"
+                            id={fieldId('edit-scope-series')}
+                            name={fieldId('edit-scope')}
                             value="series"
                             checked={applyScope === 'series'}
                             onChange={() => setApplyScope('series')}
@@ -821,8 +907,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         )}
 
         <div className="space-y-2">
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Observações</label>
+          <label htmlFor={fieldId('notes')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Observações
+          </label>
           <textarea 
+            id={fieldId('notes')}
+            name="notes"
             rows={3}
             placeholder="Informações adicionais..."
             value={notes}

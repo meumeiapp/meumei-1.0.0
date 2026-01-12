@@ -12,6 +12,7 @@ const CompanySetup: React.FC<CompanySetupProps> = ({ onConfirm }) => {
   const [startDate, setStartDate] = useState(COMPANY_DATA.monthStartISO);
   const [companyName, setCompanyName] = useState('');
   const [error, setError] = useState('');
+  const fieldId = (suffix: string) => `company-setup-${suffix}`;
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = e.target.value;
@@ -79,11 +80,13 @@ const CompanySetup: React.FC<CompanySetupProps> = ({ onConfirm }) => {
                 
                 {/* Company Name Input */}
                 <div className="space-y-3">
-                    <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wide ml-1 flex items-center gap-2">
+                    <label htmlFor={fieldId('name')} className="text-xs font-semibold text-zinc-400 uppercase tracking-wide ml-1 flex items-center gap-2">
                         <Building2 size={14} />
                         Nome da Empresa
                     </label>
                     <input
+                        id={fieldId('name')}
+                        name="companyName"
                         type="text"
                         placeholder="Ex: Consultoria Silva, Doces da Maria..."
                         value={companyName}
@@ -94,11 +97,13 @@ const CompanySetup: React.FC<CompanySetupProps> = ({ onConfirm }) => {
 
                 {/* Date Input */}
                 <div className="space-y-3">
-                    <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wide ml-1">
+                    <label htmlFor={fieldId('start-date')} className="text-xs font-semibold text-zinc-400 uppercase tracking-wide ml-1">
                         Data de Abertura / Início dos Lançamentos
                     </label>
                     <div className="relative group">
                         <input
+                            id={fieldId('start-date')}
+                            name="startDate"
                             type="date"
                             value={startDate}
                             min={COMPANY_DATA.monthStartISO}

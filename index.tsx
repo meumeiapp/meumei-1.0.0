@@ -4,6 +4,39 @@ import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 import { registerSW } from 'virtual:pwa-register';
 
+const THEME_STORAGE_KEY = 'meumei_theme';
+
+const resolveInitialTheme = () => {
+  let source = 'system';
+  let theme: 'light' | 'dark' = 'light';
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'light' || stored === 'dark') {
+      theme = stored;
+      source = 'localStorage';
+    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      theme = 'dark';
+      source = 'system';
+    }
+  } catch {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      theme = 'dark';
+      source = 'system';
+    }
+  }
+  return { theme, source };
+};
+
+const applyThemeClass = (theme: 'light' | 'dark') => {
+  const root = window.document.documentElement;
+  root.classList.remove('dark', 'light');
+  root.classList.add(theme);
+};
+
+const initialTheme = resolveInitialTheme();
+applyThemeClass(initialTheme.theme);
+console.info('[theme] init', { theme: initialTheme.theme, source: initialTheme.source });
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");
@@ -23,11 +56,14 @@ if (swSupported) {
   };
   let registration: ServiceWorkerRegistration | undefined;
   let reloading = false;
+  let updateListenerAttached = false;
 
   const reloadOnce = (reason: string) => {
     if (reloading) return;
     reloading = true;
-    console.info('[pwa][sw] reload', { reason });
+    if (reason !== 'controller_change') {
+      console.info('[pwa][sw] reload', { reason });
+    }
     window.location.reload();
   };
 
@@ -46,6 +82,24 @@ if (swSupported) {
     onRegisteredSW(swUrl, reg) {
       registration = reg;
       console.info('[pwa][sw] registered', { swUrl });
+      if (reg && !updateListenerAttached) {
+        updateListenerAttached = true;
+        reg.addEventListener('updatefound', () => {
+          try {
+            console.info('[pwa] updatefound');
+            const installing = reg.installing;
+            if (!installing) return;
+            const onStateChange = () => {
+              if (installing.state === 'installed') {
+                console.info('[pwa] installed', { hasWaiting: Boolean(reg.waiting) });
+              }
+            };
+            installing.addEventListener('statechange', onStateChange);
+          } catch (error) {
+            console.warn('[pwa] updatefound_log_failed', error);
+          }
+        });
+      }
       void checkForUpdate('registration');
       window.setInterval(() => void checkForUpdate('interval'), 60_000);
       document.addEventListener('visibilitychange', () => {
@@ -78,7 +132,7 @@ if (swSupported) {
   });
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    console.info('[pwa][sw] controller_changed_reload');
+    console.info('[pwa] controllerchange');
     broadcast('update_applied');
     reloadOnce('controller_change');
   });

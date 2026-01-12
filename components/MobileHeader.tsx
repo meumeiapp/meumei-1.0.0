@@ -63,6 +63,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
           <button
             type="button"
             onClick={closeMenu}
+            aria-label="Fechar menu"
             className="h-9 w-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center"
             title="Fechar"
           >
@@ -187,6 +188,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
+            aria-label="Abrir menu"
             className="h-10 w-10 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 text-white flex items-center justify-center"
             title="Menu"
           >

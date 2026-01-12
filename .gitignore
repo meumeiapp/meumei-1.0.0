@@ -18,6 +18,7 @@ ui-debug.log
 
 # secrets
 serviceAccountKey*.json
+secrets/
 
 # misc
 .DS_Store

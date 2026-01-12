@@ -26,6 +26,8 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [error, setError] = useState('');
   const availableAccounts = accounts.filter(acc => !acc.locked);
+  const fieldIdPrefix = selectedCard?.id ? `invoice-pay-${selectedCard.id}` : 'invoice-pay';
+  const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
 
   if (!isOpen) return null;
 
@@ -48,6 +50,7 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
       <div className="w-full max-w-md bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 p-6 relative">
         <button 
             onClick={onClose}
+            aria-label="Fechar modal"
             className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
         >
             <X size={20} />
@@ -76,10 +79,12 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
 
         <div className="space-y-4">
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
+                <label htmlFor={fieldId('account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
                     <Wallet size={12} /> Debitar da Conta
                 </label>
                 <select 
+                    id={fieldId('account')}
+                    name="accountId"
                     value={selectedAccountId}
                     onChange={(e) => { setSelectedAccountId(e.target.value); setError(''); }}
                     className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all appearance-none"
@@ -94,8 +99,12 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
             </div>
 
             <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Data do Pagamento</label>
+                <label htmlFor={fieldId('payment-date')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                  Data do Pagamento
+                </label>
                 <input 
+                    id={fieldId('payment-date')}
+                    name="paymentDate"
                     type="date" 
                     value={paymentDate}
                     onChange={(e) => setPaymentDate(e.target.value)}

@@ -11,6 +11,8 @@ import MobileTransactionCard from './mobile/MobileTransactionCard';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import MobilePageShell from './mobile/MobilePageShell';
 import { buildInstallmentDescription, getExpenseInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
+import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
+import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 
 interface ExpensesViewProps {
   onBack: () => void;
@@ -26,9 +28,10 @@ interface ExpensesViewProps {
   expenseType: ExpenseType;
   themeColor: 'indigo' | 'amber' | 'cyan' | 'pink'; 
   categories: string[];
-  licenseId?: string | null;
+  userId?: string | null;
   onAddCategory: (name: string) => Promise<void> | void;
   onRemoveCategory: (name: string) => Promise<void> | void;
+  onResetCategories: () => Promise<void> | void;
   minDate: string;
 }
 
@@ -45,9 +48,10 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   expenseType,
   themeColor,
   categories,
-  licenseId,
+  userId,
   onAddCategory,
   onRemoveCategory,
+  onResetCategories,
   minDate
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -157,16 +161,38 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       if (previous && previous.status === 'paid' && previous.accountId) {
           const accIdx = newAccounts.findIndex(a => a.id === previous.accountId);
           if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-              newAccounts[accIdx].currentBalance += previous.amount;
-              accountsChanged = true;
+              const mutationId = `expense:revert:${previous.id}:${previous.accountId}:${previous.amount}:${previous.status}`;
+              const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                  source: 'expenses_view',
+                  action: 'revert_paid',
+                  accountId: previous.accountId,
+                  entityId: previous.id,
+                  amount: previous.amount,
+                  status: previous.status
+              });
+              if (shouldApply) {
+                  newAccounts[accIdx].currentBalance += previous.amount;
+                  accountsChanged = true;
+              }
           }
       }
 
       if (next && next.status === 'paid' && next.accountId) {
           const accIdx = newAccounts.findIndex(a => a.id === next.accountId);
           if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-              newAccounts[accIdx].currentBalance -= next.amount;
-              accountsChanged = true;
+              const mutationId = `expense:apply:${next.id}:${next.accountId}:${next.amount}:${next.status}`;
+              const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                  source: 'expenses_view',
+                  action: 'apply_paid',
+                  accountId: next.accountId,
+                  entityId: next.id,
+                  amount: next.amount,
+                  status: next.status
+              });
+              if (shouldApply) {
+                  newAccounts[accIdx].currentBalance -= next.amount;
+                  accountsChanged = true;
+              }
           }
       }
 
@@ -193,7 +219,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       } else {
           const { applyScope, ...payload } = expenseData || {};
           const isEditing = payload.id && expenses.some(e => e.id === payload.id);
-
+          
           if (isEditing) {
               const previousExpense = expenses.find(e => e.id === payload.id) || null;
               const updatedExpense: Expense = { ...(previousExpense as Expense), ...payload, type: (previousExpense?.type || expenseType) };
@@ -292,8 +318,19 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
               if (exp.accountId && exp.status === 'paid') {
                   const accIdx = newAccounts.findIndex(a => a.id === exp.accountId);
                   if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                      newAccounts[accIdx].currentBalance -= exp.amount;
-                      accountsChanged = true;
+                      const mutationId = `expense:new:${exp.id}:${exp.accountId}:${exp.amount}:${exp.status}`;
+                      const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                          source: 'expenses_view',
+                          action: 'create_paid',
+                          accountId: exp.accountId,
+                          entityId: exp.id,
+                          amount: exp.amount,
+                          status: exp.status
+                      });
+                      if (shouldApply) {
+                          newAccounts[accIdx].currentBalance -= exp.amount;
+                          accountsChanged = true;
+                      }
                   }
               }
           };
@@ -328,12 +365,23 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           if (exp.accountId) {
               const accIdx = newAccounts.findIndex(a => a.id === exp.accountId);
               if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                  if (newStatus === 'paid') {
-                      newAccounts[accIdx].currentBalance -= exp.amount;
-                  } else {
-                      newAccounts[accIdx].currentBalance += exp.amount;
+                  const mutationId = `expense:bulk_status:${exp.id}:${exp.accountId}:${exp.amount}:${newStatus}`;
+                  const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                      source: 'expenses_view',
+                      action: 'bulk_status',
+                      accountId: exp.accountId,
+                      entityId: exp.id,
+                      amount: exp.amount,
+                      status: newStatus
+                  });
+                  if (shouldApply) {
+                      if (newStatus === 'paid') {
+                          newAccounts[accIdx].currentBalance -= exp.amount;
+                      } else {
+                          newAccounts[accIdx].currentBalance += exp.amount;
+                      }
+                      accountsChanged = true;
                   }
-                  accountsChanged = true;
               }
           }
 
@@ -354,8 +402,19 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           if (exp.status === 'paid' && exp.accountId) {
               const accIdx = newAccounts.findIndex(a => a.id === exp.accountId);
               if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                  newAccounts[accIdx].currentBalance += exp.amount;
-                  accountsChanged = true;
+                  const mutationId = `expense:bulk_delete:${exp.id}:${exp.accountId}:${exp.amount}:${exp.status}`;
+                  const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                      source: 'expenses_view',
+                      action: 'bulk_delete',
+                      accountId: exp.accountId,
+                      entityId: exp.id,
+                      amount: exp.amount,
+                      status: exp.status
+                  });
+                  if (shouldApply) {
+                      newAccounts[accIdx].currentBalance += exp.amount;
+                      accountsChanged = true;
+                  }
               }
           }
       });
@@ -439,11 +498,18 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           setEditingExpense(null);
           console.info('[mobile-ui] expenses', { screen: 'list', action: 'close', type: expenseType });
       };
+      const drawerStatus = drawerExpense ? normalizeExpenseStatus(drawerExpense.status) : 'pending';
+      const drawerStatusLabel = drawerExpense ? expenseStatusLabel(drawerExpense.status) : '';
+      const drawerStatusClass =
+          drawerStatus === 'paid'
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
+
       const drawerDetails = drawerExpense
           ? [
                 {
                     label: 'Status',
-                    value: drawerExpense.status === 'paid' ? 'Pago' : 'Pendente'
+                    value: drawerStatusLabel
                 },
                 {
                     label: 'Lançamento',
@@ -512,9 +578,10 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               {filteredExpenses.length > 0 ? (
                                   filteredExpenses.map((expense) => {
                                       const isLocked = Boolean(expense.locked);
-                                      const statusLabel = expense.status === 'paid' ? 'Pago' : 'Pendente';
+                                      const normalizedStatus = normalizeExpenseStatus(expense.status);
+                                      const statusLabel = expenseStatusLabel(expense.status);
                                       const statusClass =
-                                          expense.status === 'paid'
+                                          normalizedStatus === 'paid'
                                               ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
                                               : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
                                       const dueLabel = `Vence ${new Date(expense.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}`;
@@ -555,10 +622,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                           accounts={accounts}
                           creditCards={creditCards}
                           categories={categories}
-                          licenseId={licenseId}
+                          userId={userId}
                           categoryType="expenses"
                           onAddCategory={onAddCategory}
                           onRemoveCategory={onRemoveCategory}
+                          onResetCategories={onResetCategories}
                           expenseType={expenseType}
                           themeColor={themeColor}
                           defaultDate={viewDate}
@@ -575,12 +643,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                           ? `R$ ${drawerExpense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
                           : undefined
                   }
-                  statusLabel={drawerExpense?.status === 'paid' ? 'Pago' : 'Pendente'}
-                  statusClassName={
-                      drawerExpense?.status === 'paid'
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                          : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-                  }
+                  statusLabel={drawerStatusLabel}
+                  statusClassName={drawerStatusClass}
                   details={drawerDetails}
                   actionsDisabled={Boolean(drawerExpense?.locked)}
                   onClose={closeDrawer}
@@ -610,6 +674,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                       <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
                           <button 
                               onClick={() => setExpenseToDelete(null)}
+                              aria-label="Fechar confirmação de exclusão"
                               className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
                           >
                               <X size={20} />
@@ -629,7 +694,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-3 rounded-lg flex gap-3 items-start mb-6 text-left">
                                   <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
                                   <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                                      Como esta despesa já foi marcada como <strong>Paga</strong>, o valor será debitado do saldo da conta vinculada.
+                                      Como esta despesa já foi marcada como <strong>Pago</strong>, o valor será debitado do saldo da conta vinculada.
                                   </p>
                               </div>
                           )}
@@ -712,6 +777,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                         </button>
                         <button 
                             onClick={() => setIsBulkDeleteModalOpen(true)}
+                            aria-label="Excluir selecionados"
                             className="flex-none p-1.5 bg-white/10 hover:bg-red-500 text-white rounded-lg transition-colors"
                             title="Excluir Selecionados"
                         >
@@ -732,6 +798,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                 <th className="px-4 py-4 w-12 text-center">
                                     <button 
                                         onClick={toggleSelectAll}
+                                        aria-label="Selecionar todas as despesas"
                                         className="text-zinc-400 hover:text-indigo-600 transition-colors"
                                     >
                                         {selectedIds.length > 0 && selectedIds.length === selectableExpenses.length 
@@ -757,6 +824,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                     const isSelected = selectedIds.includes(expense.id);
                                     const isHighlighted = highlightedId === expense.id;
                                     const isLocked = Boolean(expense.locked);
+                                    const normalizedStatus = normalizeExpenseStatus(expense.status);
+                                    const statusLabel = expenseStatusLabel(expense.status);
 
                                     return (
                                     <tr 
@@ -781,11 +850,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-2">
                                                 <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                                                    expense.status === 'paid' 
+                                                    normalizedStatus === 'paid' 
                                                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' 
                                                     : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
                                                 }`}>
-                                                    {expense.status === 'paid' ? 'Pago' : 'Pendente'}
+                                                    {statusLabel}
                                                 </span>
                                                 {expense.lockedReason === 'epoch_mismatch' && (
                                                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
@@ -835,6 +904,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                                 <div className="flex items-center justify-center gap-2">
                                                     <button
                                                         onClick={() => handleEditExpense(expense)}
+                                                        aria-label={`Editar despesa ${expense.description}`}
                                                         className="p-2 text-zinc-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
                                                         title="Editar Despesa"
                                                     >
@@ -842,6 +912,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                                     </button>
                                                     <button 
                                                         onClick={() => requestDelete(expense)}
+                                                        aria-label={`Excluir despesa ${expense.description}`}
                                                         className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
                                                         title="Excluir Despesa"
                                                     >
@@ -873,10 +944,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
             accounts={accounts}
             creditCards={creditCards}
             categories={categories}
-            licenseId={licenseId}
+            userId={userId}
             categoryType="expenses"
             onAddCategory={onAddCategory}
             onRemoveCategory={onRemoveCategory}
+            onResetCategories={onResetCategories}
             expenseType={expenseType}
             themeColor={themeColor}
             defaultDate={viewDate} // PASS VIEW DATE
@@ -889,6 +961,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                 <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
                     <button 
                         onClick={() => setExpenseToDelete(null)}
+                        aria-label="Fechar confirmação de exclusão"
                         className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
                     >
                         <X size={20} />
@@ -936,6 +1009,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                 <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
                     <button 
                         onClick={() => setIsBulkDeleteModalOpen(false)}
+                        aria-label="Fechar exclusão em lote"
                         className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
                     >
                         <X size={20} />

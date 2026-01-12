@@ -60,6 +60,7 @@ const MobileTransactionDrawer: React.FC<MobileTransactionDrawerProps> = ({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Fechar detalhes"
             className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
           >
             <X size={16} />

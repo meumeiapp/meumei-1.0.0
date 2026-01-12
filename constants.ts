@@ -20,15 +20,15 @@ export const COMPANY_DATA = {
 };
 
 export const DEFAULT_COMPANY_INFO = {
-  name: 'Minha Empresa',
+  name: '',
   cnpj: '',
-  startDate: COMPANY_DATA.monthStartISO,
+  startDate: '',
   address: '',
   zipCode: '',
   phone: '',
   email: '',
   website: '',
-  isConfigured: true // Default true as setup is now in Settings
+  isConfigured: false
 };
 
 // --- CONTAS PADRÃO (LISTA VAZIA PARA PRIMEIRO ACESSO) ---
@@ -43,10 +43,6 @@ export const DEFAULT_ACCOUNT_TYPES = [
     'Dinheiro (Espécie)'
 ];
 
-export const DEFAULT_EXPENSE_CATEGORIES = [
-    'Alimentação', 'Assinatura', 'Cenário', 'Equipamentos', 'Logística', 'Materiais', 'Plantas', 'Revelação', 'Tráfego Pago'
-];
+export const DEFAULT_EXPENSE_CATEGORIES: string[] = [];
 
-export const DEFAULT_INCOME_CATEGORIES = [
-    'Serviço', 'Venda de Produto', 'Salário', 'Rendimento', 'Reembolso', 'Outros'
-];
+export const DEFAULT_INCOME_CATEGORIES: string[] = [];

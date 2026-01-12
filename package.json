@@ -8,19 +8,27 @@
     "build": "vite build",
     "preview": "vite preview",
     "generate:pwa-icons": "node scripts/generate-pwa-icons.js",
-    "migrate:license-to-email": "ts-node --esm scripts/migrate-license-to-email.ts"
+    "migrate:license-to-email": "ts-node --esm scripts/migrate-license-to-email.ts",
+    "purge:dry": "DRY_RUN=true node tools/purge-firestore.js",
+    "purge:legacy": "DRY_RUN=false node tools/purge-firestore.js",
+    "purge:nuclear": "DRY_RUN=false WIPE_ALL_USERS=true node tools/purge-firestore.js"
   },
   "dependencies": {
     "firebase": "^12.6.0",
     "firebase-admin": "^13.0.0",
     "lucide-react": "^0.556.0",
     "react": "^19.2.1",
-    "react-dom": "^19.2.1"
+    "react-dom": "^19.2.1",
+    "reactflow": "^11.11.4"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.21",
+    "madge": "^8.0.0",
+    "postcss": "^8.5.6",
     "sharp": "^0.34.4",
+    "tailwindcss": "^3.4.17",
     "ts-node": "^10.9.2",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",

@@ -102,6 +102,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                     <div className="flex items-center gap-1 rounded-full bg-white/10 backdrop-blur-md border border-white/5 p-1">
                                         <button
                                             onClick={() => onThemeChange('light')}
+                                            aria-label="Ativar tema claro"
                                             className={`p-1.5 md:p-2 rounded-full transition-all ${
                                                 isDark ? 'text-white/60 hover:text-white' : 'bg-white/90 text-zinc-900'
                                             }`}
@@ -111,6 +112,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                         </button>
                                         <button
                                             onClick={() => onThemeChange('dark')}
+                                            aria-label="Ativar tema escuro"
                                             className={`p-1.5 md:p-2 rounded-full transition-all ${
                                                 isDark ? 'bg-white/90 text-zinc-900' : 'text-white/60 hover:text-white'
                                             }`}
@@ -121,6 +123,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                     </div>
                                     <button 
                                         onClick={onOpenAudit}
+                                        aria-label="Abrir auditoria"
                                         className="p-2 md:p-2.5 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
                                         title="Auditoria do dia"
                                     >
@@ -128,6 +131,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                     </button>
                                     <button 
                                         onClick={onOpenCalculator}
+                                        aria-label="Abrir calculadora"
                                         className="p-2 md:p-2.5 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
                                         title="Calculadora"
                                     >
@@ -136,6 +140,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                     {canAccessSettings && (
                                         <button 
                                             onClick={onOpenSettings}
+                                            aria-label="Abrir configurações"
                                             className="p-2 md:p-2.5 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
                                             title="Configurações"
                                         >
@@ -144,6 +149,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                     )}
                                     <button 
                                         onClick={onLogout}
+                                        aria-label="Sair da conta"
                                         className="p-2 md:p-2.5 bg-red-500/20 hover:bg-red-500/30 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
                                         title="Sair"
                                     >

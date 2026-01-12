@@ -114,6 +114,7 @@ export interface Account {
   notes?: string;
   licenseId?: string;
   color?: string;
+  nature?: 'PJ' | 'PF';
   cryptoEpoch?: number;
   locked?: boolean;
   decryptError?: boolean;

@@ -7,8 +7,15 @@
       "hosting": {
         "beta": [
           "meumei-beta-102"
+        ],
+        "meumei-beta": [
+          "meumei-beta"
+        ],
+        "meumei-d88be": [
+          "meumei-d88be"
         ]
       }
     }
-  }
+  },
+  "etags": {}
 }

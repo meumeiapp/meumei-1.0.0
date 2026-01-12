@@ -14,7 +14,8 @@ import {
   X,
   AlertTriangle,
   History,
-  Lock
+  Lock,
+  Info
 } from 'lucide-react';
 import NewAccountModal from './NewAccountModal';
 import { Account } from '../types';
@@ -24,6 +25,8 @@ import { getAccountColor, withAlpha } from '../services/cardColorUtils';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import useIsMobile from '../hooks/useIsMobile';
 import MobilePageShell from './mobile/MobilePageShell';
+import type { BalanceTrailEntry, RealBalanceDebug } from '../services/realBalanceEngine';
+import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -42,6 +45,14 @@ interface AccountsViewProps {
   onUpdateAccountTypes: (types: string[]) => void;
   onAuditLog?: (entry: AuditLogInput) => void;
   onOpenAudit?: () => void;
+  balanceSnapshot?: {
+    byAccountId: Record<string, number>;
+    diffs: Record<string, number>;
+    total: number;
+    legacyTotal: number;
+    cutoff: string;
+    debug?: RealBalanceDebug;
+  };
 }
 
 const AccountsView: React.FC<AccountsViewProps> = ({ 
@@ -52,12 +63,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   accountTypes, 
   onUpdateAccountTypes,
   onAuditLog,
-  onOpenAudit
+  onOpenAudit,
+  balanceSnapshot
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [accountToDelete, setAccountToDelete] = useState<Account | null>(null);
+  const [auditAccountId, setAuditAccountId] = useState<string | null>(null);
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const loggedLockedRef = useRef<Set<string>>(new Set());
@@ -105,12 +118,23 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const unlockedAccounts = accounts.filter(acc => !acc.locked);
   const isSelectionMode = selectedIds.length > 0;
 
+  const resolveRealBalance = (account: Account) => {
+    const computed = balanceSnapshot?.byAccountId?.[account.id];
+    return Number.isFinite(computed) ? computed : account.currentBalance;
+  };
+
   const displayBalance = isSelectionMode
-    ? unlockedAccounts.filter(acc => selectedIds.includes(acc.id)).reduce((acc, curr) => acc + curr.currentBalance, 0)
-    : unlockedAccounts.reduce((acc, curr) => acc + curr.currentBalance, 0);
+    ? unlockedAccounts.filter(acc => selectedIds.includes(acc.id)).reduce((acc, curr) => acc + resolveRealBalance(curr), 0)
+    : unlockedAccounts.reduce((acc, curr) => acc + resolveRealBalance(curr), 0);
 
   const displayCount = isSelectionMode ? selectedIds.length : accounts.length;
   const displayLabel = isSelectionMode ? 'Saldo Parcial (Selecionado)' : 'Saldo Total';
+  const auditAccount = auditAccountId ? accounts.find(acc => acc.id === auditAccountId) || null : null;
+  const auditTrails = auditAccountId ? balanceSnapshot?.debug?.trailsByAccountId?.[auditAccountId] ?? [] : [];
+  const sortedAuditTrails = React.useMemo(() => {
+    if (!auditTrails.length) return [] as BalanceTrailEntry[];
+    return [...auditTrails].sort((a, b) => a.date.localeCompare(b.date));
+  }, [auditTrails]);
 
   const getIconForType = (type: string) => {
     if (type.includes('Carteira') || type.includes('Nubank')) return <Smartphone size={24} className="text-purple-600" />;
@@ -163,7 +187,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
         const nextBalance = Number.isFinite(accountData.currentBalance)
             ? Number(accountData.currentBalance)
             : previousAccount.currentBalance;
-        const balanceChanged = Number.isFinite(accountData.currentBalance) && nextBalance !== previousAccount.currentBalance;
+        let balanceChanged = Number.isFinite(accountData.currentBalance) && nextBalance !== previousAccount.currentBalance;
         let nextBalanceHistory = previousAccount.balanceHistory ? [...previousAccount.balanceHistory] : [];
         let balanceAdjustmentEntry = null as null | {
             date: string;
@@ -173,6 +197,20 @@ const AccountsView: React.FC<AccountsViewProps> = ({
             delta: number;
             source: string;
         };
+
+        if (balanceChanged) {
+            const mutationId = `account:manual:${previousAccount.id}:${previousAccount.currentBalance}->${nextBalance}`;
+            const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                source: 'accounts_view',
+                action: 'manual_balance',
+                accountId: previousAccount.id,
+                entityId: previousAccount.id,
+                amount: nextBalance
+            });
+            if (!shouldApply) {
+                balanceChanged = false;
+            }
+        }
 
         if (balanceChanged) {
             const adjustmentDate = new Date().toISOString().split('T')[0];
@@ -201,6 +239,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
             name: accountData.name,
             type: accountData.type,
             color: accountData.color,
+            nature: accountData.nature ?? previousAccount.nature,
             initialBalance: accountData.balance,
             yieldRate: accountData.yieldRate,
             yieldIndex: accountData.yieldIndex,
@@ -271,7 +310,8 @@ const AccountsView: React.FC<AccountsViewProps> = ({
             yieldRate: accountData.yieldRate,
             yieldIndex: accountData.yieldIndex,
             color: accountData.color,
-            notes: (accountData.notes ?? '').toString()
+            notes: (accountData.notes ?? '').toString(),
+            nature: accountData.nature ?? 'PJ'
         };
         updatedAccounts = [...accounts, newAccount];
         if (onAuditLog) {
@@ -367,12 +407,19 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
               {/* Dynamic Balance Display */}
               <div className={`rounded-full px-6 py-3 shadow-lg border flex items-center gap-3 transition-all duration-300 ${isSelectionMode ? 'bg-indigo-600 border-indigo-500 text-white scale-105' : 'bg-white dark:bg-[#1a1a1a] border-zinc-200 dark:border-zinc-800'}`}>
-                  <span className={`text-sm font-semibold ${isSelectionMode ? 'text-indigo-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
-                      {displayCount} {displayCount === 1 ? 'conta' : 'contas'} • {displayLabel}:
-                  </span>
-                  <span className={`text-lg font-bold ${isSelectionMode ? 'text-white' : 'text-zinc-900 dark:text-white'}`}>
-                      R$ {displayBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
+                  <div className="flex flex-col">
+                      <span className={`text-sm font-semibold ${isSelectionMode ? 'text-indigo-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                          {displayCount} {displayCount === 1 ? 'conta' : 'contas'} • {displayLabel}
+                      </span>
+                      <span className={`text-[10px] uppercase tracking-wide ${isSelectionMode ? 'text-indigo-200' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                          Saldo atual
+                      </span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                      <span className={`text-lg font-bold ${isSelectionMode ? 'text-white' : 'text-zinc-900 dark:text-white'}`}>
+                          R$ {displayBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                  </div>
               </div>
 
               {/* Action Button: Only New Account now */}
@@ -409,6 +456,9 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                   const canEditAccount = isEditableAccount(account);
                   const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
                   const isLocked = Boolean(account.locked || account.decryptError);
+                  const computedBalance = resolveRealBalance(account);
+                  const auditTrails = balanceSnapshot?.debug?.trailsByAccountId?.[account.id] ?? [];
+                  const canShowDetails = auditTrails.length > 0;
 
                   return (
                     <div 
@@ -483,6 +533,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                         <button
                                             type="button"
                                             onClick={(e) => handleEditAccount(e, account)}
+                                            aria-label={`Editar conta ${account.name}`}
                                             className="h-11 w-11 flex items-center justify-center rounded-full text-zinc-500 hover:text-indigo-600 hover:bg-indigo-500/10 transition-colors"
                                             title="Editar conta"
                                         >
@@ -492,6 +543,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                     {!isLocked && (
                                         <button 
                                             onClick={(e) => requestDelete(e, account)}
+                                            aria-label={`Excluir conta ${account.name}`}
                                             className="h-11 w-11 flex items-center justify-center rounded-full text-zinc-500 hover:text-red-500 hover:bg-red-500/10 transition-colors"
                                             title="Excluir Conta"
                                         >
@@ -501,11 +553,27 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                 </div>
 
                                 {!isLocked && (
-                                    <div className="text-right">
-                                        <p className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo Atual</p>
+                                    <div className="text-right space-y-1">
+                                        <div className="flex items-center justify-end gap-2">
+                                            <span className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo atual</span>
+                                        </div>
                                         <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                                            R$ {account.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            R$ {computedBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                         </p>
+                                        {canShowDetails && (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setAuditAccountId(account.id);
+                                                }}
+                                                className="text-[11px] text-zinc-500 dark:text-zinc-400 underline underline-offset-4 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+                                                title="Ver detalhamento do saldo"
+                                                aria-label={`Ver detalhamento do saldo da conta ${account.name}`}
+                                            >
+                                                Ver detalhamento do saldo
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -526,13 +594,81 @@ const AccountsView: React.FC<AccountsViewProps> = ({
             mode={editingAccount ? 'edit' : 'create'}
             accountTypes={accountTypes}
             onUpdateAccountTypes={onUpdateAccountTypes}
+            source="accounts"
           />
+
+          {auditAccount && (
+              <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                  <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-lg w-full p-6 relative animate-in zoom-in-95 duration-200">
+                      <button
+                          onClick={() => setAuditAccountId(null)}
+                          aria-label="Fechar detalhamento do saldo"
+                          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
+                      >
+                          <X size={20} />
+                      </button>
+
+                      <div className="flex items-start gap-3 mb-4">
+                          <div className="h-10 w-10 rounded-xl bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 flex items-center justify-center">
+                              <Info size={18} />
+                          </div>
+                          <div>
+                              <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Detalhamento do saldo • {auditAccount.name}</h3>
+                              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                  Saldo atual: R$ {resolveRealBalance(auditAccount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </p>
+                              {balanceSnapshot?.cutoff && (
+                                  <p className="text-[11px] text-zinc-400 mt-1">Corte: {balanceSnapshot.cutoff}</p>
+                              )}
+                          </div>
+                      </div>
+
+                      {sortedAuditTrails.length === 0 ? (
+                          <div className="text-sm text-zinc-500 dark:text-zinc-400">
+                              Sem eventos para auditoria neste período.
+                          </div>
+                      ) : (
+                          <div className="max-h-72 overflow-auto space-y-2 text-xs">
+                              {sortedAuditTrails.map((entry) => {
+                                  const label =
+                                      entry.type === 'income'
+                                          ? 'Entrada'
+                                          : entry.type === 'expense'
+                                            ? 'Despesa'
+                                            : entry.type === 'yield'
+                                              ? 'Rendimento'
+                                              : 'Base';
+                                  const sign = entry.sign === -1 ? '-' : entry.sign === 1 ? '+' : '';
+                                  const amountLabel = `${sign} R$ ${entry.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+                                  return (
+                                      <div
+                                          key={`${entry.type}-${entry.id}-${entry.date}-${entry.amount}`}
+                                          className="flex items-center justify-between rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-2 text-zinc-600 dark:text-zinc-300"
+                                      >
+                                          <div className="flex flex-col">
+                                              <span className="font-semibold text-zinc-800 dark:text-zinc-100">{label}</span>
+                                              <span className="text-[10px] text-zinc-400">
+                                                  {entry.type === 'base' ? 'Saldo inicial' : entry.date}
+                                              </span>
+                                          </div>
+                                          <div className={`font-semibold ${entry.sign < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                              {amountLabel}
+                                          </div>
+                                      </div>
+                                  );
+                              })}
+                          </div>
+                      )}
+                  </div>
+              </div>
+          )}
 
            {accountToDelete && (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
                         <button 
                             onClick={() => setAccountToDelete(null)}
+                            aria-label="Fechar confirmação de exclusão"
                             className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
                         >
                             <X size={20} />

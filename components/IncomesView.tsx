@@ -11,6 +11,8 @@ import MobileTransactionCard from './mobile/MobileTransactionCard';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import MobilePageShell from './mobile/MobilePageShell';
 import { buildInstallmentDescription, getIncomeInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
+import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
+import { incomeStatusLabel, normalizeIncomeStatus } from '../utils/statusUtils';
 
 interface IncomesViewProps {
   onBack: () => void;
@@ -21,9 +23,10 @@ interface IncomesViewProps {
   onUpdateAccounts: (accounts: Account[]) => void;
   viewDate: Date;
   categories: string[];
-  licenseId?: string | null;
+  userId?: string | null;
   onAddCategory: (name: string) => Promise<void> | void;
   onRemoveCategory: (name: string) => Promise<void> | void;
+  onResetCategories: () => Promise<void> | void;
   minDate: string;
 }
 
@@ -36,9 +39,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   onUpdateAccounts,
   viewDate,
   categories,
-  licenseId,
+  userId,
   onAddCategory,
   onRemoveCategory,
+  onResetCategories,
   minDate
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -129,16 +133,38 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       if (previous && previous.status === 'received' && previous.accountId) {
           const accIdx = newAccounts.findIndex(a => a.id === previous.accountId);
           if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-              newAccounts[accIdx].currentBalance -= previous.amount;
-              accountsChanged = true;
+              const mutationId = `income:revert:${previous.id}:${previous.accountId}:${previous.amount}:${previous.status}`;
+              const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                  source: 'incomes_view',
+                  action: 'revert_received',
+                  accountId: previous.accountId,
+                  entityId: previous.id,
+                  amount: previous.amount,
+                  status: previous.status
+              });
+              if (shouldApply) {
+                  newAccounts[accIdx].currentBalance -= previous.amount;
+                  accountsChanged = true;
+              }
           }
       }
 
       if (next && next.status === 'received' && next.accountId) {
           const accIdx = newAccounts.findIndex(a => a.id === next.accountId);
           if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-              newAccounts[accIdx].currentBalance += next.amount;
-              accountsChanged = true;
+              const mutationId = `income:apply:${next.id}:${next.accountId}:${next.amount}:${next.status}`;
+              const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                  source: 'incomes_view',
+                  action: 'apply_received',
+                  accountId: next.accountId,
+                  entityId: next.id,
+                  amount: next.amount,
+                  status: next.status
+              });
+              if (shouldApply) {
+                  newAccounts[accIdx].currentBalance += next.amount;
+                  accountsChanged = true;
+              }
           }
       }
 
@@ -163,8 +189,19 @@ const IncomesView: React.FC<IncomesViewProps> = ({
              if (inc.accountId && inc.status === 'received') {
                   const accIdx = newAccounts.findIndex(a => a.id === inc.accountId);
                   if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                      newAccounts[accIdx].currentBalance += inc.amount;
-                      accountsChanged = true;
+                      const mutationId = `income:bulk_add:${inc.id}:${inc.accountId}:${inc.amount}:${inc.status}`;
+                      const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                          source: 'incomes_view',
+                          action: 'bulk_add',
+                          accountId: inc.accountId,
+                          entityId: inc.id,
+                          amount: inc.amount,
+                          status: inc.status
+                      });
+                      if (shouldApply) {
+                          newAccounts[accIdx].currentBalance += inc.amount;
+                          accountsChanged = true;
+                      }
                   }
              }
           });
@@ -283,12 +320,23 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           if (inc.accountId) {
               const accIdx = newAccounts.findIndex(a => a.id === inc.accountId);
               if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                  if (newStatus === 'received') {
-                      newAccounts[accIdx].currentBalance += inc.amount;
-                  } else {
-                      newAccounts[accIdx].currentBalance -= inc.amount;
+                  const mutationId = `income:bulk_status:${inc.id}:${inc.accountId}:${inc.amount}:${newStatus}`;
+                  const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                      source: 'incomes_view',
+                      action: 'bulk_status',
+                      accountId: inc.accountId,
+                      entityId: inc.id,
+                      amount: inc.amount,
+                      status: newStatus
+                  });
+                  if (shouldApply) {
+                      if (newStatus === 'received') {
+                          newAccounts[accIdx].currentBalance += inc.amount;
+                      } else {
+                          newAccounts[accIdx].currentBalance -= inc.amount;
+                      }
+                      accountsChanged = true;
                   }
-                  accountsChanged = true;
               }
           }
 
@@ -309,8 +357,19 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           if (inc.status === 'received' && inc.accountId) {
               const accIdx = newAccounts.findIndex(a => a.id === inc.accountId);
               if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                  newAccounts[accIdx].currentBalance -= inc.amount;
-                  accountsChanged = true;
+                  const mutationId = `income:bulk_delete:${inc.id}:${inc.accountId}:${inc.amount}:${inc.status}`;
+                  const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+                      source: 'incomes_view',
+                      action: 'bulk_delete',
+                      accountId: inc.accountId,
+                      entityId: inc.id,
+                      amount: inc.amount,
+                      status: inc.status
+                  });
+                  if (shouldApply) {
+                      newAccounts[accIdx].currentBalance -= inc.amount;
+                      accountsChanged = true;
+                  }
               }
           }
       });
@@ -385,11 +444,18 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           setEditingIncome(null);
           console.info('[mobile-ui] incomes', { screen: 'list', action: 'close' });
       };
+      const drawerStatus = drawerIncome ? normalizeIncomeStatus(drawerIncome.status) : 'pending';
+      const drawerStatusLabel = drawerIncome ? incomeStatusLabel(drawerIncome.status) : '';
+      const drawerStatusClass =
+          drawerStatus === 'received'
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
+
       const drawerDetails = drawerIncome
           ? [
                 {
                     label: 'Status',
-                    value: drawerIncome.status === 'received' ? 'Recebido' : 'Pendente'
+                    value: drawerStatusLabel
                 },
                 {
                     label: 'Data',
@@ -462,9 +528,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               {filteredIncomes.length > 0 ? (
                                   filteredIncomes.map((income) => {
                                       const isLocked = Boolean(income.locked);
-                                      const statusLabel = income.status === 'received' ? 'Recebido' : 'Pendente';
+                                      const normalizedStatus = normalizeIncomeStatus(income.status);
+                                      const statusLabel = incomeStatusLabel(income.status);
                                       const statusClass =
-                                          income.status === 'received'
+                                          normalizedStatus === 'received'
                                               ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
                                               : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
                                       const accountName = getAccountById(income.accountId)?.name || 'Conta Deletada';
@@ -503,10 +570,11 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           initialData={editingIncome}
                           accounts={accounts}
                           categories={categories}
-                          licenseId={licenseId}
+                          userId={userId}
                           categoryType="incomes"
                           onAddCategory={onAddCategory}
                           onRemoveCategory={onRemoveCategory}
+                          onResetCategories={onResetCategories}
                           defaultDate={viewDate}
                           minDate={minDate}
                       />
@@ -521,12 +589,8 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           ? `R$ ${drawerIncome.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
                           : undefined
                   }
-                  statusLabel={drawerIncome?.status === 'received' ? 'Recebido' : 'Pendente'}
-                  statusClassName={
-                      drawerIncome?.status === 'received'
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                          : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-                  }
+                  statusLabel={drawerStatusLabel}
+                  statusClassName={drawerStatusClass}
                   details={drawerDetails}
                   actionsDisabled={Boolean(drawerIncome?.locked)}
                   onClose={closeDrawer}
@@ -556,6 +620,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                       <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
                           <button 
                               onClick={() => setIncomeToDelete(null)}
+                              aria-label="Fechar confirmação de exclusão"
                               className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
                           >
                               <X size={20} />
@@ -661,6 +726,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                         </button>
                         <button 
                             onClick={() => setIsBulkDeleteModalOpen(true)}
+                            aria-label="Excluir selecionados"
                             className="flex-none p-1.5 bg-white/10 hover:bg-red-500 text-white rounded-lg transition-colors"
                             title="Excluir Selecionados"
                         >
@@ -681,6 +747,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                 <th className="px-4 py-4 w-12 text-center">
                                     <button 
                                         onClick={toggleSelectAll}
+                                        aria-label="Selecionar todas as entradas"
                                         className="text-zinc-400 hover:text-emerald-600 transition-colors"
                                     >
                                         {selectedIds.length > 0 && selectedIds.length === selectableIncomes.length 
@@ -704,6 +771,8 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                     const isSelected = selectedIds.includes(income.id);
                                     const isHighlighted = highlightedId === income.id;
                                     const isLocked = Boolean(income.locked);
+                                    const normalizedStatus = normalizeIncomeStatus(income.status);
+                                    const statusLabel = incomeStatusLabel(income.status);
                                     
                                     return (
                                     <tr 
@@ -728,11 +797,11 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-2">
                                                 <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                                                    income.status === 'received' 
+                                                    normalizedStatus === 'received' 
                                                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' 
                                                     : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
                                                 }`}>
-                                                    {income.status === 'received' ? 'Recebido' : 'Pendente'}
+                                                    {statusLabel}
                                                 </span>
                                                 {income.lockedReason === 'epoch_mismatch' && (
                                                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
@@ -781,6 +850,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                                 <div className="flex items-center justify-center gap-2">
                                                     <button
                                                         onClick={() => handleEditIncome(income)}
+                                                        aria-label={`Editar entrada ${income.description}`}
                                                         className="p-2 text-zinc-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
                                                         title="Editar Entrada"
                                                     >
@@ -788,6 +858,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                                     </button>
                                                     <button 
                                                         onClick={() => requestDelete(income)}
+                                                        aria-label={`Excluir entrada ${income.description}`}
                                                         className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
                                                         title="Excluir Entrada"
                                                     >
@@ -818,10 +889,11 @@ const IncomesView: React.FC<IncomesViewProps> = ({
             initialData={editingIncome}
             accounts={accounts}
             categories={categories}
-            licenseId={licenseId}
+            userId={userId}
             categoryType="incomes"
             onAddCategory={onAddCategory}
             onRemoveCategory={onRemoveCategory}
+            onResetCategories={onResetCategories}
             defaultDate={viewDate} // PASS VIEW DATE
             minDate={minDate}
         />
@@ -879,6 +951,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                 <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
                     <button 
                         onClick={() => setIsBulkDeleteModalOpen(false)}
+                        aria-label="Fechar exclusão em lote"
                         className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
                     >
                         <X size={20} />

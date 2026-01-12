@@ -22,6 +22,7 @@ export default class ErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     const payload = {
+      name: error?.name || 'Error',
       message: error?.message || 'unknown',
       stack: error?.stack || null,
       componentStack: errorInfo?.componentStack || null,
@@ -35,6 +36,12 @@ export default class ErrorBoundary extends React.Component<
       console.error('[ErrorBoundary] Storage error', storageError);
     }
     console.error('[ErrorBoundary] Captured', payload);
+    console.error('[error-boundary]', {
+      name: payload.name,
+      message: payload.message,
+      stack: payload.stack,
+      componentStack: payload.componentStack
+    });
   }
 
   handleReload = () => {

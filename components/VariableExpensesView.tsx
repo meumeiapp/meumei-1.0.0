@@ -7,6 +7,7 @@ import CardTag from './CardTag';
 import { getAccountColor } from '../services/cardColorUtils';
 import useIsMobile from '../hooks/useIsMobile';
 import MobilePageShell from './mobile/MobilePageShell';
+import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 
 interface VariableExpensesViewProps {
   onBack: () => void;
@@ -160,15 +161,17 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
                             {filteredExpenses.length > 0 ? (
                                 filteredExpenses.map(expense => {
                                     const source = getSourceInfo(expense);
+                                    const normalizedStatus = normalizeExpenseStatus(expense.status);
+                                    const statusLabel = expenseStatusLabel(expense.status);
                                     return (
                                     <tr key={expense.id} className="hover:bg-zinc-50 dark:hover:bg-[#1a1a1a] transition-colors">
                                         <td className="px-6 py-4">
                                             <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                                                expense.status === 'paid' 
+                                                normalizedStatus === 'paid' 
                                                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' 
                                                 : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
                                             }`}>
-                                                {expense.status === 'paid' ? 'Pago' : 'Pendente'}
+                                                {statusLabel}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-zinc-600 dark:text-zinc-300">

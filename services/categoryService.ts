@@ -1,19 +1,20 @@
 import {
+  deleteDoc,
   doc,
   getDoc,
-  runTransaction,
   serverTimestamp,
   setDoc
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { normalizeEmail } from '../utils/normalizeEmail';
+import { guardUserPath } from '../utils/pathGuard';
 
 export type CategoryType = 'incomes' | 'expenses';
 
 const MAX_CATEGORIES = 50;
 
-const buildCategoryRef = (licenseId: string, type: CategoryType) =>
-  doc(db, 'licenses', licenseId, 'categories', type);
+const buildCategoryRef = (uid: string, type: CategoryType) =>
+  doc(db, 'users', uid, 'categories', type);
 
 const normalizeCategoryName = (name: string): string =>
   name.trim().replace(/\s+/g, ' ');
@@ -62,272 +63,154 @@ const getActorInfo = () => {
 export const categoryService = {
   normalizeCategoryName,
   sanitizeCategoryList,
-
-  async loadCategories(licenseId: string, type: CategoryType): Promise<string[]> {
-    const { uid, emailNormalized } = getActorInfo();
-    const ref = buildCategoryRef(licenseId, type);
-    const path = ref.path;
-    const docId = ref.id;
-    console.info('[categories] load_start', { licenseId, type, uid, emailNormalized, path, docId });
+  async getUserCategories(uid: string): Promise<{ incomes: string[]; expenses: string[] }> {
+    const { emailNormalized } = getActorInfo();
+    const incomesPath = `users/${uid}/categories/incomes`;
+    const expensesPath = `users/${uid}/categories/expenses`;
+    if (!guardUserPath(uid, incomesPath, 'categories_load_incomes')) return { incomes: [], expenses: [] };
+    if (!guardUserPath(uid, expensesPath, 'categories_load_expenses')) return { incomes: [], expenses: [] };
+    const incomesRef = buildCategoryRef(uid, 'incomes');
+    const expensesRef = buildCategoryRef(uid, 'expenses');
     try {
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        console.info('[categories] load_ok', {
-          licenseId,
-          type,
-          uid,
-          emailNormalized,
-          path,
-          docId,
-          status: 'no_doc',
-          count: 0,
-          itemsPreview: []
-        });
-        return [];
-      }
-      const rawItems = (snap.data()?.items as unknown[]) || [];
-      const sanitized = sanitizeCategoryList(rawItems);
-      console.info('[categories] load_ok', {
-        licenseId,
-        type,
+      const [incomesSnap, expensesSnap] = await Promise.all([
+        getDoc(incomesRef),
+        getDoc(expensesRef)
+      ]);
+      const incomesRaw = incomesSnap.exists() ? ((incomesSnap.data()?.items as unknown[]) || []) : [];
+      const expensesRaw = expensesSnap.exists() ? ((expensesSnap.data()?.items as unknown[]) || []) : [];
+      const incomes = sanitizeCategoryList(incomesRaw).items;
+      const expenses = sanitizeCategoryList(expensesRaw).items;
+      console.info('[categories] load', {
         uid,
-        emailNormalized,
-        path,
-        docId,
-        status: 'exists',
-        count: sanitized.items.length,
-        itemsPreview: sanitized.items.slice(0, 5)
-      });
-      return sanitized.items;
-    } catch (error: any) {
-      console.error('[categories] load_err', {
-        licenseId,
-        type,
-        uid,
-        emailNormalized,
-        path,
-        docId,
-        code: error?.code,
-        message: error?.message || error,
-        stack: error?.stack
-      });
-      throw error;
-    }
-  },
-
-  async ensureDefaultCategories(licenseId: string, type: CategoryType, defaults: string[]) {
-    const { uid, emailNormalized } = getActorInfo();
-    const ref = buildCategoryRef(licenseId, type);
-    const path = ref.path;
-    const docId = ref.id;
-    console.info('[categories] ensure_defaults_start', { licenseId, type, uid, emailNormalized, path, docId });
-    try {
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        console.info('[categories] ensure_defaults_ok', {
-          licenseId,
-          type,
-          uid,
-          emailNormalized,
-          path,
-          docId,
-          status: 'skip_existing'
-        });
-        return;
-      }
-      const sanitized = sanitizeCategoryList(defaults);
-      await setDoc(
-        ref,
-        {
-          type,
-          items: sanitized.items,
-          updatedAt: serverTimestamp(),
-          updatedByUid: uid || null,
-          updatedByEmailNormalized: emailNormalized || null
-        },
-        { merge: true }
-      );
-      console.info('[categories] ensure_defaults_ok', {
-        licenseId,
-        type,
-        uid,
-        emailNormalized,
-        path,
-        docId,
-        count: sanitized.items.length
-      });
-    } catch (error: any) {
-      console.error('[categories] ensure_defaults_err', {
-        licenseId,
-        type,
-        uid,
-        emailNormalized,
-        path,
-        docId,
-        code: error?.code,
-        message: error?.message || error,
-        stack: error?.stack
-      });
-      throw error;
-    }
-  },
-
-  async addCategory(licenseId: string, type: CategoryType, name: string) {
-    const { uid, emailNormalized } = getActorInfo();
-    const normalized = normalizeCategoryName(name);
-    if (!licenseId || !type) {
-      console.warn('[categories] add_blocked', {
-        reason: 'license_or_type_missing',
-        licenseId,
-        type,
-        uid,
+        pathIncomes: incomesRef.path,
+        pathExpenses: expensesRef.path,
+        incomesLen: incomes.length,
+        expensesLen: expenses.length,
         emailNormalized
       });
+      return { incomes, expenses };
+    } catch (error: any) {
+      console.error('[categories] error', {
+        uid,
+        action: 'load',
+        error,
+        message: error?.message || error,
+        stack: error?.stack
+      });
+      throw error;
+    }
+  },
+
+  async setUserCategories(uid: string, incomes: string[], expenses: string[]) {
+    const { emailNormalized } = getActorInfo();
+    const incomesPath = `users/${uid}/categories/incomes`;
+    const expensesPath = `users/${uid}/categories/expenses`;
+    if (!guardUserPath(uid, incomesPath, 'categories_save_incomes')) return;
+    if (!guardUserPath(uid, expensesPath, 'categories_save_expenses')) return;
+    const incomesRef = buildCategoryRef(uid, 'incomes');
+    const expensesRef = buildCategoryRef(uid, 'expenses');
+    const incomePayload = {
+      type: 'incomes' as const,
+      items: sanitizeCategoryList(incomes).items,
+      updatedAt: serverTimestamp(),
+      updatedByUid: uid || null,
+      updatedByEmailNormalized: emailNormalized || null
+    };
+    const expensePayload = {
+      type: 'expenses' as const,
+      items: sanitizeCategoryList(expenses).items,
+      updatedAt: serverTimestamp(),
+      updatedByUid: uid || null,
+      updatedByEmailNormalized: emailNormalized || null
+    };
+    try {
+      await Promise.all([
+        setDoc(incomesRef, incomePayload, { merge: true }),
+        setDoc(expensesRef, expensePayload, { merge: true })
+      ]);
+      console.info('[categories] save', {
+        uid,
+        incomesLen: incomePayload.items.length,
+        expensesLen: expensePayload.items.length
+      });
+    } catch (error: any) {
+      console.error('[categories] error', {
+        uid,
+        action: 'save',
+        error,
+        message: error?.message || error,
+        stack: error?.stack
+      });
+      throw error;
+    }
+  },
+
+  async resetUserCategories(uid: string) {
+    const incomesRef = buildCategoryRef(uid, 'incomes');
+    const expensesRef = buildCategoryRef(uid, 'expenses');
+    const incomesPath = `users/${uid}/categories/incomes`;
+    const expensesPath = `users/${uid}/categories/expenses`;
+    console.info('[categories] reset:start', { uid });
+    try {
+      if (!guardUserPath(uid, incomesPath, 'categories_reset_incomes')) return;
+      if (!guardUserPath(uid, expensesPath, 'categories_reset_expenses')) return;
+      await Promise.all([deleteDoc(incomesRef), deleteDoc(expensesRef)]);
+      console.info('[categories] reset:done', { uid, incomesLen: 0, expensesLen: 0 });
+    } catch (error: any) {
+      console.error('[categories] error', {
+        uid,
+        action: 'reset',
+        error,
+        message: error?.message || error,
+        stack: error?.stack
+      });
+      throw error;
+    }
+  },
+
+  async addCategory(uid: string, type: CategoryType, name: string) {
+    const normalized = normalizeCategoryName(name);
+    if (!uid || !type) {
+      console.warn('[categories] add_blocked', { reason: 'uid_or_type_missing', uid, type });
       return;
     }
     if (!normalized) {
-      console.warn('[categories] add_blocked', {
-        reason: 'empty_name',
-        licenseId,
-        type,
-        uid,
-        emailNormalized
-      });
+      console.warn('[categories] add_blocked', { reason: 'empty_name', uid, type });
       return;
     }
-    const ref = buildCategoryRef(licenseId, type);
-    const path = ref.path;
-    const docId = ref.id;
-    console.info('[categories] add_start', { licenseId, type, uid, emailNormalized, path, docId, name: normalized });
-    try {
-      const snap = await getDoc(ref);
-      const current = snap.exists() ? ((snap.data()?.items as unknown[]) || []) : [];
-      const sanitized = sanitizeCategoryList(current);
-      const key = normalizeCategoryKey(normalized);
-      if (sanitized.items.some(item => normalizeCategoryKey(item) === key)) {
-        console.info('[categories] add_ok', { licenseId, type, uid, emailNormalized, path, docId, skipped: 'duplicate' });
-        return;
-      }
-      if (sanitized.items.length >= MAX_CATEGORIES) {
-        console.warn('[categories] add_err', { licenseId, type, uid, emailNormalized, path, docId, reason: 'limit_reached' });
-        throw new Error('Limite de categorias atingido.');
-      }
-      const next = [...sanitized.items, normalized];
-      await setDoc(
-        ref,
-        {
-          type,
-          items: next,
-          updatedAt: serverTimestamp(),
-          updatedByUid: uid || null,
-          updatedByEmailNormalized: emailNormalized || null
-        },
-        { merge: true }
-      );
-      console.info('[categories] add_ok', { licenseId, type, uid, emailNormalized, path, docId, count: next.length });
-    } catch (error: any) {
-      console.error('[categories] add_err', {
-        licenseId,
-        type,
-        uid,
-        emailNormalized,
-        path,
-        docId,
-        code: error?.code,
-        message: error?.message || error,
-        stack: error?.stack
-      });
-      throw error;
+    const current = await categoryService.getUserCategories(uid);
+    const target = type === 'incomes' ? current.incomes : current.expenses;
+    const key = normalizeCategoryKey(normalized);
+    if (target.some(item => normalizeCategoryKey(item) === key)) {
+      console.info('[categories] add_ok', { uid, type, skipped: 'duplicate' });
+      return;
     }
+    if (target.length >= MAX_CATEGORIES) {
+      console.warn('[categories] add_err', { uid, type, reason: 'limit_reached' });
+      throw new Error('Limite de categorias atingido.');
+    }
+    const next = [...target, normalized];
+    const nextIncomes = type === 'incomes' ? next : current.incomes;
+    const nextExpenses = type === 'expenses' ? next : current.expenses;
+    await categoryService.setUserCategories(uid, nextIncomes, nextExpenses);
   },
 
-  async removeCategory(licenseId: string, type: CategoryType, name: string) {
-    const { uid, emailNormalized } = getActorInfo();
+  async removeCategory(uid: string, type: CategoryType, name: string) {
     const normalized = normalizeCategoryName(name);
-    if (!licenseId || !type) {
-      console.warn('[categories] remove_blocked', {
-        reason: 'license_or_type_missing',
-        licenseId,
-        type,
-        uid,
-        emailNormalized
-      });
+    if (!uid || !type) {
+      console.warn('[categories] remove_blocked', { reason: 'uid_or_type_missing', uid, type });
       return;
     }
     if (!normalized) {
-      console.warn('[categories] remove_blocked', {
-        reason: 'empty_name',
-        licenseId,
-        type,
-        uid,
-        emailNormalized
-      });
+      console.warn('[categories] remove_blocked', { reason: 'empty_name', uid, type });
       return;
     }
-    const ref = buildCategoryRef(licenseId, type);
-    const path = ref.path;
-    const docId = ref.id;
-    console.info('[categories] remove_start', {
-      licenseId,
-      type,
-      uid,
-      emailNormalized,
-      path,
-      docId,
-      nameNormalized: normalized
-    });
-    try {
-      let beforeCount = 0;
-      let afterCount = 0;
-      await runTransaction(db, async (tx) => {
-        const snap = await tx.get(ref);
-        if (!snap.exists()) {
-          beforeCount = 0;
-          afterCount = 0;
-          return;
-        }
-        const current = (snap.data()?.items as unknown[]) || [];
-        const sanitized = sanitizeCategoryList(current);
-        const key = normalizeCategoryKey(normalized);
-        beforeCount = sanitized.items.length;
-        const next = sanitized.items.filter(item => normalizeCategoryKey(item) !== key);
-        afterCount = next.length;
-        tx.set(
-          ref,
-          {
-            type,
-            items: next,
-            updatedAt: serverTimestamp(),
-            updatedByUid: uid || null,
-            updatedByEmailNormalized: emailNormalized || null
-          },
-          { merge: true }
-        );
-      });
-      console.info('[categories] remove_ok', {
-        licenseId,
-        type,
-        uid,
-        emailNormalized,
-        path,
-        docId,
-        beforeCount,
-        afterCount,
-        removed: normalized
-      });
-    } catch (error: any) {
-      console.error('[categories] remove_err', {
-        licenseId,
-        type,
-        uid,
-        emailNormalized,
-        path,
-        docId,
-        code: error?.code,
-        message: error?.message || error,
-        stack: error?.stack
-      });
-      throw error;
-    }
+    const current = await categoryService.getUserCategories(uid);
+    const target = type === 'incomes' ? current.incomes : current.expenses;
+    const key = normalizeCategoryKey(normalized);
+    const next = target.filter(item => normalizeCategoryKey(item) !== key);
+    const nextIncomes = type === 'incomes' ? next : current.incomes;
+    const nextExpenses = type === 'expenses' ? next : current.expenses;
+    await categoryService.setUserCategories(uid, nextIncomes, nextExpenses);
   }
 };

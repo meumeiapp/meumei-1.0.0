@@ -109,6 +109,7 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
   const [result, setResult] = useState<CompoundCalculatorResult | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; month: number; invested: number; total: number } | null>(null);
   const [error, setError] = useState('');
+  const fieldId = (suffix: string) => `simulator-${suffix}`;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -302,9 +303,13 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
     <div className={contentWrapperClassName}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Valor Inicial</label>
+          <label htmlFor={fieldId('initial')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Valor Inicial
+          </label>
           <div className="mt-1 flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3">
             <input
+              id={fieldId('initial')}
+              name="initialInvestment"
               type="text"
               inputMode="decimal"
               value={initialInput}
@@ -318,9 +323,13 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
         </div>
 
         <div>
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Valor Mensal (aporte)</label>
+          <label htmlFor={fieldId('monthly')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Valor Mensal (aporte)
+          </label>
           <div className="mt-1 flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3">
             <input
+              id={fieldId('monthly')}
+              name="monthlyContribution"
               type="text"
               inputMode="decimal"
               value={monthlyInput}
@@ -334,10 +343,14 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
         </div>
 
         <div>
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Taxa de Juros</label>
+          <label htmlFor={fieldId('rate')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Taxa de Juros
+          </label>
           <div className="mt-1 flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3">
             <Percent className="text-amber-500" size={18} />
             <input
+              id={fieldId('rate')}
+              name="rate"
               type="text"
               inputMode="decimal"
               value={rateInput}
@@ -348,9 +361,12 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
               placeholder="0,0"
             />
             <select
+              id={fieldId('rate-period')}
+              name="ratePeriod"
               value={ratePeriod}
               onChange={(e) => setRatePeriod(e.target.value as RatePeriod)}
               className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
+              aria-label="Período da taxa"
             >
               <option value="year">a.a.</option>
               <option value="month">a.m.</option>
@@ -359,10 +375,14 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
         </div>
 
         <div>
-          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Período</label>
+          <label htmlFor={fieldId('duration')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            Período
+          </label>
           <div className="mt-1 flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3">
             <RefreshCw className="text-blue-500" size={18} />
             <input
+              id={fieldId('duration')}
+              name="duration"
               type="number"
               min={1}
               value={durationInput}
@@ -372,9 +392,12 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
               placeholder="1"
             />
             <select
+              id={fieldId('duration-unit')}
+              name="durationUnit"
               value={durationUnit}
               onChange={(e) => setDurationUnit(e.target.value as DurationUnit)}
               className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
+              aria-label="Unidade do período"
             >
               <option value="years">anos</option>
               <option value="months">meses</option>
@@ -479,7 +502,11 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
             <h3 className="text-xl font-bold text-zinc-900 dark:text-white">Simule o crescimento do seu patrimônio</h3>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">Preencha os campos abaixo para projetar cenários de longo prazo.</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400">
+          <button
+            onClick={onClose}
+            aria-label="Fechar simulador"
+            className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400"
+          >
             <X size={18} />
           </button>
         </div>

@@ -14,6 +14,7 @@ import { normalizeEmail } from '../utils/normalizeEmail';
 import { supportAccessService } from './supportAccessService';
 import { cryptoService, getCryptoStatus } from './cryptoService';
 import type { LockedReason } from '../types';
+import { guardUserPath } from '../utils/pathGuard';
 
 export type YieldRecord = {
   id: string;
@@ -45,7 +46,7 @@ const buildYieldId = (accountId: string, date: string) =>
   `${sanitizeDocId(accountId)}_${date}`;
 
 const buildYieldRef = (licenseId: string, yieldId: string) =>
-  doc(db, 'licenses', licenseId, 'yields', yieldId);
+  doc(db, 'users', licenseId, 'yields', yieldId);
 
 const resolveDecryptReason = (): LockedReason => {
   const status = getCryptoStatus();
@@ -208,6 +209,7 @@ export const yieldsService = {
     const yieldId = buildYieldId(payload.accountId, payload.date);
     const ref = buildYieldRef(licenseId, yieldId);
     const path = ref.path;
+    if (!guardUserPath(licenseId, path, 'yields_add')) return;
     const amountEncryptedResult = await cryptoService.encryptNumber(licenseId, payload.amount, 'yields.amount');
     if (!amountEncryptedResult.ok) {
       console.warn('[crypto][warn] write blocked', {
@@ -294,8 +296,9 @@ export const yieldsService = {
       console.warn('[yields] load_blocked', { licenseId, reason: 'epoch_missing' });
       return [];
     }
-    const ref = collection(db, 'licenses', licenseId, 'yields');
-    const path = `licenses/${licenseId}/yields`;
+    const ref = collection(db, 'users', licenseId, 'yields');
+    const path = `users/${licenseId}/yields`;
+    if (!guardUserPath(licenseId, path, 'yields_load')) return [];
     console.info('[yields] load_start', { licenseId, path, uid, emailNormalized });
     try {
       const snap = await getDocs(ref);
@@ -329,7 +332,12 @@ export const yieldsService = {
       onData([]);
       return () => {};
     }
-    const ref = collection(db, 'licenses', licenseId, 'yields');
+    const ref = collection(db, 'users', licenseId, 'yields');
+    const path = `users/${licenseId}/yields`;
+    if (!guardUserPath(licenseId, path, 'yields_subscribe')) {
+      onData([]);
+      return () => {};
+    }
     const q = query(ref);
     const unsubscribe = onSnapshot(
       q,

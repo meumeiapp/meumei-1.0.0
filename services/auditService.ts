@@ -7,6 +7,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { guardUserPath } from '../utils/pathGuard';
 
 export type AuditEntityType = 'account' | 'yield' | 'expense' | 'income' | 'system';
 
@@ -46,13 +47,17 @@ export const auditService = {
       metadata: entry.metadata ?? null,
       dateKey
     };
-    await addDoc(collection(db, 'licenses', licenseId, 'auditLogs'), payload);
+    const path = `users/${licenseId}/auditLogs`;
+    if (!guardUserPath(licenseId, path, 'audit_add')) return;
+    await addDoc(collection(db, 'users', licenseId, 'auditLogs'), payload);
   },
 
   async loadLogsForDate(licenseId: string, date: Date): Promise<AuditLog[]> {
     if (!licenseId) return [];
     const dateKey = buildDateKey(date);
-    const ref = collection(db, 'licenses', licenseId, 'auditLogs');
+    const path = `users/${licenseId}/auditLogs`;
+    if (!guardUserPath(licenseId, path, 'audit_load')) return [];
+    const ref = collection(db, 'users', licenseId, 'auditLogs');
     const snap = await getDocs(query(ref, where('dateKey', '==', dateKey)));
     const items = snap.docs
       .map(docSnap => {

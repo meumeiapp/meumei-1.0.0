@@ -76,7 +76,7 @@ const getConfigErrorCopy = (state: ConfigErrorState) => {
 
 interface SettingsProps {
   onBack: () => void;
-  licenseId?: string;
+  userId?: string;
   companyInfo: CompanyInfo;
   onUpdateCompany: (info: CompanyInfo) => Promise<void> | void;
   onSystemReset?: () => Promise<void> | void;
@@ -86,7 +86,7 @@ interface SettingsProps {
 
 const Settings: React.FC<SettingsProps> = ({ 
     onBack, 
-    licenseId,
+    userId,
     companyInfo, 
     onUpdateCompany,
     onSystemReset,
@@ -97,6 +97,8 @@ const Settings: React.FC<SettingsProps> = ({
   // Local state for editing company info
   const [editedInfo, setEditedInfo] = useState<CompanyInfo>(companyInfo);
   const [isSaved, setIsSaved] = useState(false);
+  const companyFieldId = (suffix: string) => `settings-company-${suffix}`;
+  const resetConfirmId = 'settings-reset-confirm';
 
 
   // System Reset State
@@ -148,8 +150,8 @@ const Settings: React.FC<SettingsProps> = ({
   };
 
 useEffect(() => {
-    if (!licenseId) {
-        reportConfigError('entitlement', new Error('Licença não informada. Aguarde o login.'));
+    if (!userId) {
+        reportConfigError('entitlement', new Error('Usuário não informado. Aguarde o login.'));
         return;
     }
 
@@ -184,9 +186,9 @@ useEffect(() => {
         setIsFetchingConfig(true);
         setConfigErrorState(null);
         startLoadingTimeout();
-        debugLog('settings:loading-config', { licenseId });
+        debugLog('settings:loading-config', { userId });
         try {
-            const latest = await dataService.getCompany(licenseId);
+            const latest = await dataService.getCompany(userId);
             if (!isActive) return;
             if (latest) {
                 setEditedInfo(prev => ({
@@ -212,7 +214,7 @@ useEffect(() => {
         isActive = false;
         clearLoadingTimeout();
     };
-}, [licenseId]);
+}, [userId]);
 
   const attemptReload = () => {
       if (typeof window !== 'undefined') {
@@ -367,10 +369,12 @@ useEffect(() => {
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 relative z-10">
                             {/* Company Form Fields */}
                             <div className="md:col-span-7 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('name')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <Building2 size={12} /> Nome da Empresa
                                 </label>
                                 <input 
+                                    id={companyFieldId('name')}
+                                    name="companyName"
                                     type="text" 
                                     value={editedInfo.name}
                                     onChange={(e) => handleInputChange('name', e.target.value)}
@@ -379,11 +383,13 @@ useEffect(() => {
                             </div>
                             
                             <div className="md:col-span-5 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('start-date')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <Calendar size={12} /> Data de Abertura / Início
                                 </label>
                                 <div className="relative">
                                     <input 
+                                        id={companyFieldId('start-date')}
+                                        name="startDate"
                                         type="date" 
                                         value={editedInfo.startDate}
                                         readOnly
@@ -398,10 +404,12 @@ useEffect(() => {
                             </div>
 
                              <div className="md:col-span-5 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('cnpj')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <FileText size={12} /> CNPJ / Documento
                                 </label>
                                 <input 
+                                    id={companyFieldId('cnpj')}
+                                    name="cnpj"
                                     type="text" 
                                     value={editedInfo.cnpj}
                                     onChange={(e) => handleInputChange('cnpj', e.target.value)}
@@ -410,10 +418,12 @@ useEffect(() => {
                                 />
                             </div>
                             <div className="md:col-span-7 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('address')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <MapPin size={12} /> Endereço Completo
                                 </label>
                                 <input 
+                                    id={companyFieldId('address')}
+                                    name="address"
                                     type="text" 
                                     value={editedInfo.address}
                                     onChange={(e) => handleInputChange('address', e.target.value)}
@@ -422,10 +432,12 @@ useEffect(() => {
                                 />
                             </div>
                             <div className="md:col-span-4 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('zip')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <MapPin size={12} /> CEP
                                 </label>
                                 <input 
+                                    id={companyFieldId('zip')}
+                                    name="zipCode"
                                     type="text" 
                                     value={editedInfo.zipCode || ''}
                                     onChange={(e) => handleInputChange('zipCode', e.target.value)}
@@ -434,10 +446,12 @@ useEffect(() => {
                                 />
                             </div>
                             <div className="md:col-span-4 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('phone')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <Phone size={12} /> Telefone / WhatsApp
                                 </label>
                                 <input 
+                                    id={companyFieldId('phone')}
+                                    name="phone"
                                     type="text" 
                                     value={editedInfo.phone}
                                     onChange={(e) => handleInputChange('phone', e.target.value)}
@@ -446,10 +460,12 @@ useEffect(() => {
                                 />
                             </div>
                              <div className="md:col-span-4 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('email')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <Mail size={12} /> E-mail
                                 </label>
                                 <input 
+                                    id={companyFieldId('email')}
+                                    name="email"
                                     type="email" 
                                     value={editedInfo.email}
                                     onChange={(e) => handleInputChange('email', e.target.value)}
@@ -458,10 +474,12 @@ useEffect(() => {
                                 />
                             </div>
                              <div className="md:col-span-12 space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
+                                <label htmlFor={companyFieldId('website')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide ml-1 flex items-center gap-1.5">
                                     <Globe size={12} /> Website
                                 </label>
                                 <input 
+                                    id={companyFieldId('website')}
+                                    name="website"
                                     type="text" 
                                     value={editedInfo.website}
                                     onChange={(e) => handleInputChange('website', e.target.value)}
@@ -554,8 +572,12 @@ useEffect(() => {
                     </div>
 
                     <div className="space-y-2 mb-6">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Digite RESET para confirmar</label>
+                        <label htmlFor={resetConfirmId} className="text-[10px] font-bold text-zinc-500 uppercase ml-1">
+                          Digite RESET para confirmar
+                        </label>
                         <input
+                            id={resetConfirmId}
+                            name="resetConfirm"
                             type="text"
                             value={resetConfirmText}
                             onChange={(e) => setResetConfirmText(e.target.value)}

@@ -16,14 +16,15 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Account, Expense, Income, CreditCard, CompanyInfo, LicenseRecord, LockedReason } from '../types';
-import { normalizeEmail } from '../utils/normalizeEmail';
+import { normalizeExpenseStatus, normalizeIncomeStatus } from '../utils/statusUtils';
 import { logPermissionDenied } from '../utils/firestoreLogger';
+import { guardUserPath } from '../utils/pathGuard';
 import { supportAccessService } from './supportAccessService';
 import { cryptoService, getCryptoStatus } from './cryptoService';
 
 // Nome das coleções no Firestore
 const COLLECTIONS = {
-    LICENSES: 'licenses',
+    LICENSES: 'users',
     ACCOUNTS: 'accounts',
     EXPENSES: 'expenses',
     INCOMES: 'incomes',
@@ -35,14 +36,6 @@ type BalanceHistoryEntry = NonNullable<Account['balanceHistory']>[number];
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
     return Object.prototype.toString.call(value) === '[object Object]';
-};
-
-const safeNormalizeLicenseId = (licenseId: string) => {
-    try {
-        return normalizeEmail(licenseId);
-    } catch {
-        return licenseId;
-    }
 };
 
 const logUsingPath = (path: string, reason: 'primary' | 'fallback_legacy') => {
@@ -114,6 +107,7 @@ const encryptNumberSafe = async (licenseId: string, value: number, fieldName: st
 };
 
 export const getLicenseDocRef = (licenseId: string) => doc(db, COLLECTIONS.LICENSES, licenseId);
+export const getUserDocRef = (uid: string) => doc(db, 'users', uid);
 
 export const getAccountsCollectionRef = (licenseId: string) =>
     collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.ACCOUNTS);
@@ -338,9 +332,11 @@ const decryptExpenseDoc = async (
     if (itemEpoch !== licenseEpoch) {
         logEpochMismatch({ entity: 'expense', id: docSnap.id, itemEpoch, licenseEpoch });
         const { amountEncrypted: _ae, ...rest } = data;
+        const normalizedStatus = normalizeExpenseStatus(rest.status);
         return {
             id: docSnap.id,
             ...(rest as Expense),
+            status: normalizedStatus,
             amount: 0,
             locked: true,
             lockedReason: 'epoch_mismatch'
@@ -380,16 +376,18 @@ const decryptExpenseDoc = async (
     }
 
     const { amountEncrypted: _ae, ...rest } = data;
+    const normalizedStatus = normalizeExpenseStatus(rest.status);
     if (lockedReason) {
         return {
             id: docSnap.id,
             ...(rest as Expense),
+            status: normalizedStatus,
             amount,
             locked: true,
             lockedReason
         };
     }
-    return { id: docSnap.id, ...(rest as Expense), amount };
+    return { id: docSnap.id, ...(rest as Expense), status: normalizedStatus, amount };
 };
 
 const decryptIncomeDoc = async (
@@ -403,9 +401,11 @@ const decryptIncomeDoc = async (
     if (itemEpoch !== licenseEpoch) {
         logEpochMismatch({ entity: 'income', id: docSnap.id, itemEpoch, licenseEpoch });
         const { amountEncrypted: _ae, ...rest } = data;
+        const normalizedStatus = normalizeIncomeStatus(rest.status);
         return {
             id: docSnap.id,
             ...(rest as Income),
+            status: normalizedStatus,
             amount: 0,
             locked: true,
             lockedReason: 'epoch_mismatch'
@@ -445,16 +445,18 @@ const decryptIncomeDoc = async (
     }
 
     const { amountEncrypted: _ae, ...rest } = data;
+    const normalizedStatus = normalizeIncomeStatus(rest.status);
     if (lockedReason) {
         return {
             id: docSnap.id,
             ...(rest as Income),
+            status: normalizedStatus,
             amount,
             locked: true,
             lockedReason
         };
     }
-    return { id: docSnap.id, ...(rest as Income), amount };
+    return { id: docSnap.id, ...(rest as Income), status: normalizedStatus, amount };
 };
 
 const buildAccountPayload = async (licenseId: string, licenseEpoch: number, acc: Account) => {
@@ -535,6 +537,7 @@ const buildExpensePayload = async (licenseId: string, licenseEpoch: number, exp:
     delete payload.locked;
     delete payload.lockedReason;
     payload.cryptoEpoch = licenseEpoch;
+    payload.status = normalizeExpenseStatus(exp.status);
     const amount = toNumber(exp.amount);
     if (amount !== null) {
         const encryptedResult = await encryptNumberSafe(licenseId, amount, 'expenses.amount');
@@ -552,6 +555,7 @@ const buildIncomePayload = async (licenseId: string, licenseEpoch: number, inc: 
     delete payload.locked;
     delete payload.lockedReason;
     payload.cryptoEpoch = licenseEpoch;
+    payload.status = normalizeIncomeStatus(inc.status);
     const amount = toNumber(inc.amount);
     if (amount !== null) {
         const encryptedResult = await encryptNumberSafe(licenseId, amount, 'incomes.amount');
@@ -569,19 +573,13 @@ export const dataService = {
     // --- AUTH & COMPANY ---
 
     async getLicenseRecord(licenseId: string): Promise<LicenseRecord | null> {
-        let currentPath = `licenses/${licenseId}`;
+        let currentPath = `users/${licenseId}`;
         try {
-            const normalizedId = safeNormalizeLicenseId(licenseId);
+            if (!guardUserPath(licenseId, currentPath, 'license_record')) return null;
             logUsingPath(currentPath, 'primary');
-            let docRef = getLicenseDocRef(licenseId);
-            let docSnap = await getDoc(docRef);
-            if (!docSnap.exists() && normalizedId !== licenseId) {
-                currentPath = `licenses/${normalizedId}`;
-                logUsingPath(currentPath, 'fallback_legacy');
-                docRef = getLicenseDocRef(normalizedId);
-                docSnap = await getDoc(docRef);
-            }
-            logReadOk('licenses', docSnap.exists() ? 1 : 0);
+            const docRef = getLicenseDocRef(licenseId);
+            const docSnap = await getDoc(docRef);
+            logReadOk('users', docSnap.exists() ? 1 : 0);
             if (!docSnap.exists()) return null;
 
             const resolvedLicenseId = docRef.id;
@@ -605,14 +603,16 @@ export const dataService = {
                 error,
                 licenseId
             });
-            logReadFailed('licenses', (error as any)?.message || 'Erro ao buscar licença');
+            logReadFailed('users', (error as any)?.message || 'Erro ao buscar usuário');
             return null;
         }
     },
 
     async ensureCryptoEpoch(licenseId: string): Promise<number> {
         const defaultEpoch = 1;
+        const path = `users/${licenseId}`;
         try {
+            if (!guardUserPath(licenseId, path, 'crypto_epoch')) return defaultEpoch;
             const ref = getLicenseDocRef(licenseId);
             const snap = await getDoc(ref);
             if (!snap.exists()) {
@@ -636,7 +636,7 @@ export const dataService = {
         } catch (error) {
             logPermissionDenied({
                 step: 'crypto_epoch_get',
-                path: `licenses/${licenseId}`,
+                path: `users/${licenseId}`,
                 operation: 'getDoc',
                 error,
                 licenseId
@@ -646,22 +646,29 @@ export const dataService = {
         }
     },
 
-    async getCompany(licenseId: string): Promise<CompanyInfo | null> {
+    async getCompany(uid: string): Promise<CompanyInfo | null> {
         try {
-            const license = await this.getLicenseRecord(licenseId);
-            return license?.companyInfo ?? null;
+            if (!uid) return null;
+            const path = `users/${uid}`;
+            if (!guardUserPath(uid, path, 'company_get')) return null;
+            const snap = await getDoc(getUserDocRef(uid));
+            if (!snap.exists()) return null;
+            const data = snap.data() as Record<string, any>;
+            return data?.companyInfo ?? null;
         } catch (error) {
             console.error("Erro ao buscar empresa:", error);
             return null;
         }
     },
 
-    async saveCompany(info: CompanyInfo, licenseId: string): Promise<void> {
+    async saveCompany(info: CompanyInfo, uid: string): Promise<void> {
         try {
+            if (!uid) throw new Error('uid ausente');
+            const path = `users/${uid}`;
+            if (!guardUserPath(uid, path, 'company_save')) return;
             await setDoc(
-                getLicenseDocRef(licenseId),
+                getUserDocRef(uid),
                 sanitizeData({
-                    licenseId,
                     companyInfo: { ...info },
                     updatedAt: new Date().toISOString()
                 }),
@@ -681,58 +688,47 @@ export const dataService = {
         onData: (accounts: Account[]) => void,
         onError?: (error: unknown) => void
     ) {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
-        let hasSwitched = false;
         let hasLoggedSupport = false;
-        let activeUnsub: (() => void) | null = null;
-
-        const start = (targetLicenseId: string, reason: 'primary' | 'fallback_legacy') => {
-            logUsingPath(`licenses/${targetLicenseId}/${COLLECTIONS.ACCOUNTS}`, reason);
-            const q = query(getAccountsCollectionRef(targetLicenseId));
-            const unsubscribe = onSnapshot(
-                q,
-                async (snapshot) => {
-                    if (!hasSwitched && snapshot.empty && normalizedId !== licenseId) {
-                        hasSwitched = true;
-                        unsubscribe();
-                        start(normalizedId, 'fallback_legacy');
-                        return;
+        const path = `users/${licenseId}/${COLLECTIONS.ACCOUNTS}`;
+        if (!guardUserPath(licenseId, path, 'accounts_subscribe')) {
+            onData([]);
+            return () => {};
+        }
+        logUsingPath(path, 'primary');
+        const q = query(getAccountsCollectionRef(licenseId));
+        const unsubscribe = onSnapshot(
+            q,
+            async (snapshot) => {
+                try {
+                    const items = await Promise.all(
+                        snapshot.docs.map(docSnap => decryptAccountDoc(licenseId, params.licenseEpoch, docSnap))
+                    );
+                    onData(items);
+                    if (!hasLoggedSupport) {
+                        hasLoggedSupport = true;
+                        void supportAccessService.logSupportRead(licenseId, {
+                            collection: COLLECTIONS.ACCOUNTS,
+                            count: items.length
+                        });
                     }
-                    try {
-                        const items = await Promise.all(
-                            snapshot.docs.map(docSnap => decryptAccountDoc(targetLicenseId, params.licenseEpoch, docSnap))
-                        );
-                        onData(items);
-                        if (!hasLoggedSupport) {
-                            hasLoggedSupport = true;
-                            void supportAccessService.logSupportRead(targetLicenseId, {
-                                collection: COLLECTIONS.ACCOUNTS,
-                                count: items.length
-                            });
-                        }
-                    } catch (error) {
-                        onError?.(error);
-                    }
-                },
-                (error) => {
-                    logPermissionDenied({
-                        step: 'accounts_subscribe',
-                        path: `licenses/${targetLicenseId}/${COLLECTIONS.ACCOUNTS}`,
-                        operation: 'query',
-                        error,
-                        licenseId: targetLicenseId
-                    });
-                    logReadFailed(COLLECTIONS.ACCOUNTS, (error as any)?.message || 'Erro ao assinar contas');
+                } catch (error) {
                     onError?.(error);
                 }
-            );
-            activeUnsub = unsubscribe;
-            return unsubscribe;
-        };
-
-        start(licenseId, 'primary');
+            },
+            (error) => {
+                logPermissionDenied({
+                    step: 'accounts_subscribe',
+                    path,
+                    operation: 'query',
+                    error,
+                    licenseId
+                });
+                logReadFailed(COLLECTIONS.ACCOUNTS, (error as any)?.message || 'Erro ao assinar contas');
+                onError?.(error);
+            }
+        );
         return () => {
-            activeUnsub?.();
+            unsubscribe();
         };
     },
 
@@ -742,58 +738,47 @@ export const dataService = {
         onData: (expenses: Expense[]) => void,
         onError?: (error: unknown) => void
     ) {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
-        let hasSwitched = false;
         let hasLoggedSupport = false;
-        let activeUnsub: (() => void) | null = null;
-
-        const start = (targetLicenseId: string, reason: 'primary' | 'fallback_legacy') => {
-            logUsingPath(`licenses/${targetLicenseId}/${COLLECTIONS.EXPENSES}`, reason);
-            const q = query(getExpensesCollectionRef(targetLicenseId));
-            const unsubscribe = onSnapshot(
-                q,
-                async (snapshot) => {
-                    if (!hasSwitched && snapshot.empty && normalizedId !== licenseId) {
-                        hasSwitched = true;
-                        unsubscribe();
-                        start(normalizedId, 'fallback_legacy');
-                        return;
+        const path = `users/${licenseId}/${COLLECTIONS.EXPENSES}`;
+        if (!guardUserPath(licenseId, path, 'expenses_subscribe')) {
+            onData([]);
+            return () => {};
+        }
+        logUsingPath(path, 'primary');
+        const q = query(getExpensesCollectionRef(licenseId));
+        const unsubscribe = onSnapshot(
+            q,
+            async (snapshot) => {
+                try {
+                    const items = await Promise.all(
+                        snapshot.docs.map(docSnap => decryptExpenseDoc(licenseId, params.licenseEpoch, docSnap))
+                    );
+                    onData(items);
+                    if (!hasLoggedSupport) {
+                        hasLoggedSupport = true;
+                        void supportAccessService.logSupportRead(licenseId, {
+                            collection: COLLECTIONS.EXPENSES,
+                            count: items.length
+                        });
                     }
-                    try {
-                        const items = await Promise.all(
-                            snapshot.docs.map(docSnap => decryptExpenseDoc(targetLicenseId, params.licenseEpoch, docSnap))
-                        );
-                        onData(items);
-                        if (!hasLoggedSupport) {
-                            hasLoggedSupport = true;
-                            void supportAccessService.logSupportRead(targetLicenseId, {
-                                collection: COLLECTIONS.EXPENSES,
-                                count: items.length
-                            });
-                        }
-                    } catch (error) {
-                        onError?.(error);
-                    }
-                },
-                (error) => {
-                    logPermissionDenied({
-                        step: 'expenses_subscribe',
-                        path: `licenses/${targetLicenseId}/${COLLECTIONS.EXPENSES}`,
-                        operation: 'query',
-                        error,
-                        licenseId: targetLicenseId
-                    });
-                    logReadFailed(COLLECTIONS.EXPENSES, (error as any)?.message || 'Erro ao assinar despesas');
+                } catch (error) {
                     onError?.(error);
                 }
-            );
-            activeUnsub = unsubscribe;
-            return unsubscribe;
-        };
-
-        start(licenseId, 'primary');
+            },
+            (error) => {
+                logPermissionDenied({
+                    step: 'expenses_subscribe',
+                    path,
+                    operation: 'query',
+                    error,
+                    licenseId
+                });
+                logReadFailed(COLLECTIONS.EXPENSES, (error as any)?.message || 'Erro ao assinar despesas');
+                onError?.(error);
+            }
+        );
         return () => {
-            activeUnsub?.();
+            unsubscribe();
         };
     },
 
@@ -803,58 +788,47 @@ export const dataService = {
         onData: (incomes: Income[]) => void,
         onError?: (error: unknown) => void
     ) {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
-        let hasSwitched = false;
         let hasLoggedSupport = false;
-        let activeUnsub: (() => void) | null = null;
-
-        const start = (targetLicenseId: string, reason: 'primary' | 'fallback_legacy') => {
-            logUsingPath(`licenses/${targetLicenseId}/${COLLECTIONS.INCOMES}`, reason);
-            const q = query(getIncomesCollectionRef(targetLicenseId));
-            const unsubscribe = onSnapshot(
-                q,
-                async (snapshot) => {
-                    if (!hasSwitched && snapshot.empty && normalizedId !== licenseId) {
-                        hasSwitched = true;
-                        unsubscribe();
-                        start(normalizedId, 'fallback_legacy');
-                        return;
+        const path = `users/${licenseId}/${COLLECTIONS.INCOMES}`;
+        if (!guardUserPath(licenseId, path, 'incomes_subscribe')) {
+            onData([]);
+            return () => {};
+        }
+        logUsingPath(path, 'primary');
+        const q = query(getIncomesCollectionRef(licenseId));
+        const unsubscribe = onSnapshot(
+            q,
+            async (snapshot) => {
+                try {
+                    const items = await Promise.all(
+                        snapshot.docs.map(docSnap => decryptIncomeDoc(licenseId, params.licenseEpoch, docSnap))
+                    );
+                    onData(items);
+                    if (!hasLoggedSupport) {
+                        hasLoggedSupport = true;
+                        void supportAccessService.logSupportRead(licenseId, {
+                            collection: COLLECTIONS.INCOMES,
+                            count: items.length
+                        });
                     }
-                    try {
-                        const items = await Promise.all(
-                            snapshot.docs.map(docSnap => decryptIncomeDoc(targetLicenseId, params.licenseEpoch, docSnap))
-                        );
-                        onData(items);
-                        if (!hasLoggedSupport) {
-                            hasLoggedSupport = true;
-                            void supportAccessService.logSupportRead(targetLicenseId, {
-                                collection: COLLECTIONS.INCOMES,
-                                count: items.length
-                            });
-                        }
-                    } catch (error) {
-                        onError?.(error);
-                    }
-                },
-                (error) => {
-                    logPermissionDenied({
-                        step: 'incomes_subscribe',
-                        path: `licenses/${targetLicenseId}/${COLLECTIONS.INCOMES}`,
-                        operation: 'query',
-                        error,
-                        licenseId: targetLicenseId
-                    });
-                    logReadFailed(COLLECTIONS.INCOMES, (error as any)?.message || 'Erro ao assinar receitas');
+                } catch (error) {
                     onError?.(error);
                 }
-            );
-            activeUnsub = unsubscribe;
-            return unsubscribe;
-        };
-
-        start(licenseId, 'primary');
+            },
+            (error) => {
+                logPermissionDenied({
+                    step: 'incomes_subscribe',
+                    path,
+                    operation: 'query',
+                    error,
+                    licenseId
+                });
+                logReadFailed(COLLECTIONS.INCOMES, (error as any)?.message || 'Erro ao assinar receitas');
+                onError?.(error);
+            }
+        );
         return () => {
-            activeUnsub?.();
+            unsubscribe();
         };
     },
 
@@ -864,105 +838,80 @@ export const dataService = {
         onData: (cards: CreditCard[]) => void,
         onError?: (error: unknown) => void
     ) {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
-        let hasSwitched = false;
         let hasLoggedSupport = false;
-        let activeUnsub: (() => void) | null = null;
-
-        const start = (targetLicenseId: string, reason: 'primary' | 'fallback_legacy') => {
-            logUsingPath(`licenses/${targetLicenseId}/${COLLECTIONS.CREDIT_CARDS}`, reason);
-            const q = query(getCreditCardsCollectionRef(targetLicenseId));
-            const unsubscribe = onSnapshot(
-                q,
-                (snapshot) => {
-                    if (!hasSwitched && snapshot.empty && normalizedId !== licenseId) {
-                        hasSwitched = true;
-                        unsubscribe();
-                        start(normalizedId, 'fallback_legacy');
-                        return;
+        const path = `users/${licenseId}/${COLLECTIONS.CREDIT_CARDS}`;
+        if (!guardUserPath(licenseId, path, 'credit_cards_subscribe')) {
+            onData([]);
+            return () => {};
+        }
+        logUsingPath(path, 'primary');
+        const q = query(getCreditCardsCollectionRef(licenseId));
+        const unsubscribe = onSnapshot(
+            q,
+            (snapshot) => {
+                try {
+                    const items = snapshot.docs.map(docSnap => ({
+                        id: docSnap.id,
+                        ...(docSnap.data() as CreditCard)
+                    }));
+                    onData(items);
+                    if (!hasLoggedSupport) {
+                        hasLoggedSupport = true;
+                        void supportAccessService.logSupportRead(licenseId, {
+                            collection: COLLECTIONS.CREDIT_CARDS,
+                            count: items.length
+                        });
                     }
-                    try {
-                        const items = snapshot.docs.map(docSnap => ({
-                            id: docSnap.id,
-                            ...(docSnap.data() as CreditCard)
-                        }));
-                        onData(items);
-                        if (!hasLoggedSupport) {
-                            hasLoggedSupport = true;
-                            void supportAccessService.logSupportRead(targetLicenseId, {
-                                collection: COLLECTIONS.CREDIT_CARDS,
-                                count: items.length
-                            });
-                        }
-                    } catch (error) {
-                        onError?.(error);
-                    }
-                },
-                (error) => {
-                    logPermissionDenied({
-                        step: 'credit_cards_subscribe',
-                        path: `licenses/${targetLicenseId}/${COLLECTIONS.CREDIT_CARDS}`,
-                        operation: 'query',
-                        error,
-                        licenseId: targetLicenseId
-                    });
-                    logReadFailed(COLLECTIONS.CREDIT_CARDS, (error as any)?.message || 'Erro ao assinar cartões');
+                } catch (error) {
                     onError?.(error);
                 }
-            );
-            activeUnsub = unsubscribe;
-            return unsubscribe;
-        };
-
-        start(licenseId, 'primary');
+            },
+            (error) => {
+                logPermissionDenied({
+                    step: 'credit_cards_subscribe',
+                    path,
+                    operation: 'query',
+                    error,
+                    licenseId
+                });
+                logReadFailed(COLLECTIONS.CREDIT_CARDS, (error as any)?.message || 'Erro ao assinar cartões');
+                onError?.(error);
+            }
+        );
         return () => {
-            activeUnsub?.();
+            unsubscribe();
         };
     },
 
     // --- ACCOUNTS ---
 
     async getAccounts(licenseId: string, licenseEpoch: number): Promise<Account[]> {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
-        let resolvedLicenseId = licenseId;
         let snapshot;
+        const path = `users/${licenseId}/${COLLECTIONS.ACCOUNTS}`;
+        if (!guardUserPath(licenseId, path, 'accounts_get')) return [];
         try {
-            logUsingPath(`licenses/${licenseId}/${COLLECTIONS.ACCOUNTS}`, 'primary');
+            logUsingPath(path, 'primary');
             snapshot = await getDocs(getAccountsCollectionRef(licenseId));
         } catch (error: any) {
             logPermissionDenied({
                 step: 'accounts_get',
-                path: `licenses/${licenseId}/${COLLECTIONS.ACCOUNTS}`,
+                path,
                 operation: 'getDocs',
                 error,
                 licenseId
             });
             logReadFailed(COLLECTIONS.ACCOUNTS, error?.message || 'Erro ao ler contas');
         }
-        if ((!snapshot || snapshot.empty) && normalizedId !== licenseId) {
-            try {
-                logUsingPath(`licenses/${normalizedId}/${COLLECTIONS.ACCOUNTS}`, 'fallback_legacy');
-                snapshot = await getDocs(getAccountsCollectionRef(normalizedId));
-                resolvedLicenseId = normalizedId;
-            } catch (error: any) {
-                logPermissionDenied({
-                    step: 'accounts_get',
-                    path: `licenses/${normalizedId}/${COLLECTIONS.ACCOUNTS}`,
-                    operation: 'getDocs',
-                    error,
-                    licenseId: normalizedId
-                });
-                logReadFailed(COLLECTIONS.ACCOUNTS, error?.message || 'Erro ao ler contas');
-            }
-        }
         const docs = snapshot?.docs ?? [];
         logReadOk(COLLECTIONS.ACCOUNTS, docs.length);
-        void supportAccessService.logSupportRead(resolvedLicenseId, { collection: COLLECTIONS.ACCOUNTS, count: docs.length });
-        return Promise.all(docs.map(docSnap => decryptAccountDoc(resolvedLicenseId, licenseEpoch, docSnap)));
+        void supportAccessService.logSupportRead(licenseId, { collection: COLLECTIONS.ACCOUNTS, count: docs.length });
+        return Promise.all(docs.map(docSnap => decryptAccountDoc(licenseId, licenseEpoch, docSnap)));
     },
 
     async upsertAccount(acc: Account, licenseId: string, licenseEpoch: number): Promise<void> {
         if (acc.locked) return;
+        const path = `users/${licenseId}/${COLLECTIONS.ACCOUNTS}/${acc.id}`;
+        if (!guardUserPath(licenseId, path, 'account_upsert')) return;
         const payload = await buildAccountPayload(licenseId, licenseEpoch, acc);
         if (!payload) {
             console.warn('[crypto][warn] write blocked', { entity: 'account', id: acc.id });
@@ -976,6 +925,8 @@ export const dataService = {
     },
 
     async upsertAccounts(accs: Account[], licenseId: string, licenseEpoch: number): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.ACCOUNTS}`;
+        if (!guardUserPath(licenseId, path, 'accounts_upsert_batch')) return;
         const batch = writeBatch(db);
         for (const acc of accs) {
             if (acc.locked) continue;
@@ -992,6 +943,8 @@ export const dataService = {
     },
 
     async deleteAccount(id: string, licenseId: string): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.ACCOUNTS}/${id}`;
+        if (!guardUserPath(licenseId, path, 'account_delete')) return;
         await deleteDoc(licenseCollectionDoc(licenseId, COLLECTIONS.ACCOUNTS, id));
         console.info('[sync][write] account ok', { id, licenseId, action: 'delete' });
     },
@@ -999,45 +952,31 @@ export const dataService = {
     // --- EXPENSES ---
 
     async getExpenses(licenseId: string, licenseEpoch: number): Promise<Expense[]> {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
-        let resolvedLicenseId = licenseId;
         let snapshot;
+        const path = `users/${licenseId}/${COLLECTIONS.EXPENSES}`;
+        if (!guardUserPath(licenseId, path, 'expenses_get')) return [];
         try {
-            logUsingPath(`licenses/${licenseId}/${COLLECTIONS.EXPENSES}`, 'primary');
+            logUsingPath(path, 'primary');
             snapshot = await getDocs(getExpensesCollectionRef(licenseId));
         } catch (error: any) {
             logPermissionDenied({
                 step: 'expenses_get',
-                path: `licenses/${licenseId}/${COLLECTIONS.EXPENSES}`,
+                path,
                 operation: 'getDocs',
                 error,
                 licenseId
             });
             logReadFailed(COLLECTIONS.EXPENSES, error?.message || 'Erro ao ler despesas');
         }
-        if ((!snapshot || snapshot.empty) && normalizedId !== licenseId) {
-            try {
-                logUsingPath(`licenses/${normalizedId}/${COLLECTIONS.EXPENSES}`, 'fallback_legacy');
-                snapshot = await getDocs(getExpensesCollectionRef(normalizedId));
-                resolvedLicenseId = normalizedId;
-            } catch (error: any) {
-                logPermissionDenied({
-                    step: 'expenses_get',
-                    path: `licenses/${normalizedId}/${COLLECTIONS.EXPENSES}`,
-                    operation: 'getDocs',
-                    error,
-                    licenseId: normalizedId
-                });
-                logReadFailed(COLLECTIONS.EXPENSES, error?.message || 'Erro ao ler despesas');
-            }
-        }
         const docs = snapshot?.docs ?? [];
         logReadOk(COLLECTIONS.EXPENSES, docs.length);
-        void supportAccessService.logSupportRead(resolvedLicenseId, { collection: COLLECTIONS.EXPENSES, count: docs.length });
-        return Promise.all(docs.map(docSnap => decryptExpenseDoc(resolvedLicenseId, licenseEpoch, docSnap)));
+        void supportAccessService.logSupportRead(licenseId, { collection: COLLECTIONS.EXPENSES, count: docs.length });
+        return Promise.all(docs.map(docSnap => decryptExpenseDoc(licenseId, licenseEpoch, docSnap)));
     },
 
     async upsertExpense(exp: Expense, licenseId: string, licenseEpoch: number): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.EXPENSES}/${exp.id}`;
+        if (!guardUserPath(licenseId, path, 'expense_upsert')) return;
         const payload = await buildExpensePayload(licenseId, licenseEpoch, exp);
         if (!payload) {
             console.warn('[crypto][warn] write blocked', { entity: 'expense', id: exp.id });
@@ -1051,6 +990,8 @@ export const dataService = {
     },
 
     async upsertExpenses(exps: Expense[], licenseId: string, licenseEpoch: number): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.EXPENSES}`;
+        if (!guardUserPath(licenseId, path, 'expenses_upsert_batch')) return;
         const batch = writeBatch(db);
         for (const exp of exps) {
             const ref = licenseCollectionDoc(licenseId, COLLECTIONS.EXPENSES, exp.id);
@@ -1066,6 +1007,8 @@ export const dataService = {
     },
 
     async deleteExpense(id: string, licenseId: string): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.EXPENSES}/${id}`;
+        if (!guardUserPath(licenseId, path, 'expense_delete')) return;
         await deleteDoc(licenseCollectionDoc(licenseId, COLLECTIONS.EXPENSES, id));
         console.info('[sync][write] expense ok', { id, licenseId, action: 'delete' });
     },
@@ -1073,45 +1016,31 @@ export const dataService = {
     // --- INCOMES ---
 
     async getIncomes(licenseId: string, licenseEpoch: number): Promise<Income[]> {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
-        let resolvedLicenseId = licenseId;
         let snapshot;
+        const path = `users/${licenseId}/${COLLECTIONS.INCOMES}`;
+        if (!guardUserPath(licenseId, path, 'incomes_get')) return [];
         try {
-            logUsingPath(`licenses/${licenseId}/${COLLECTIONS.INCOMES}`, 'primary');
+            logUsingPath(path, 'primary');
             snapshot = await getDocs(getIncomesCollectionRef(licenseId));
         } catch (error: any) {
             logPermissionDenied({
                 step: 'incomes_get',
-                path: `licenses/${licenseId}/${COLLECTIONS.INCOMES}`,
+                path,
                 operation: 'getDocs',
                 error,
                 licenseId
             });
             logReadFailed(COLLECTIONS.INCOMES, error?.message || 'Erro ao ler receitas');
         }
-        if ((!snapshot || snapshot.empty) && normalizedId !== licenseId) {
-            try {
-                logUsingPath(`licenses/${normalizedId}/${COLLECTIONS.INCOMES}`, 'fallback_legacy');
-                snapshot = await getDocs(getIncomesCollectionRef(normalizedId));
-                resolvedLicenseId = normalizedId;
-            } catch (error: any) {
-                logPermissionDenied({
-                    step: 'incomes_get',
-                    path: `licenses/${normalizedId}/${COLLECTIONS.INCOMES}`,
-                    operation: 'getDocs',
-                    error,
-                    licenseId: normalizedId
-                });
-                logReadFailed(COLLECTIONS.INCOMES, error?.message || 'Erro ao ler receitas');
-            }
-        }
         const docs = snapshot?.docs ?? [];
         logReadOk(COLLECTIONS.INCOMES, docs.length);
-        void supportAccessService.logSupportRead(resolvedLicenseId, { collection: COLLECTIONS.INCOMES, count: docs.length });
-        return Promise.all(docs.map(docSnap => decryptIncomeDoc(resolvedLicenseId, licenseEpoch, docSnap)));
+        void supportAccessService.logSupportRead(licenseId, { collection: COLLECTIONS.INCOMES, count: docs.length });
+        return Promise.all(docs.map(docSnap => decryptIncomeDoc(licenseId, licenseEpoch, docSnap)));
     },
 
     async upsertIncome(inc: Income, licenseId: string, licenseEpoch: number): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.INCOMES}/${inc.id}`;
+        if (!guardUserPath(licenseId, path, 'income_upsert')) return;
         const payload = await buildIncomePayload(licenseId, licenseEpoch, inc);
         if (!payload) {
             console.warn('[crypto][warn] write blocked', { entity: 'income', id: inc.id });
@@ -1125,6 +1054,8 @@ export const dataService = {
     },
 
     async upsertIncomes(incs: Income[], licenseId: string, licenseEpoch: number): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.INCOMES}`;
+        if (!guardUserPath(licenseId, path, 'incomes_upsert_batch')) return;
         const batch = writeBatch(db);
         for (const inc of incs) {
             const ref = licenseCollectionDoc(licenseId, COLLECTIONS.INCOMES, inc.id);
@@ -1140,6 +1071,8 @@ export const dataService = {
     },
 
     async deleteIncome(id: string, licenseId: string): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.INCOMES}/${id}`;
+        if (!guardUserPath(licenseId, path, 'income_delete')) return;
         await deleteDoc(licenseCollectionDoc(licenseId, COLLECTIONS.INCOMES, id));
         console.info('[sync][write] income ok', { id, licenseId, action: 'delete' });
     },
@@ -1147,35 +1080,21 @@ export const dataService = {
     // --- CREDIT CARDS ---
 
     async getCreditCards(licenseId: string): Promise<CreditCard[]> {
-        const normalizedId = safeNormalizeLicenseId(licenseId);
         let snapshot;
+        const path = `users/${licenseId}/${COLLECTIONS.CREDIT_CARDS}`;
+        if (!guardUserPath(licenseId, path, 'credit_cards_get')) return [];
         try {
-            logUsingPath(`licenses/${licenseId}/${COLLECTIONS.CREDIT_CARDS}`, 'primary');
+            logUsingPath(path, 'primary');
             snapshot = await getDocs(getCreditCardsCollectionRef(licenseId));
         } catch (error: any) {
             logPermissionDenied({
                 step: 'credit_cards_get',
-                path: `licenses/${licenseId}/${COLLECTIONS.CREDIT_CARDS}`,
+                path,
                 operation: 'getDocs',
                 error,
                 licenseId
             });
             logReadFailed(COLLECTIONS.CREDIT_CARDS, error?.message || 'Erro ao ler cartões');
-        }
-        if ((!snapshot || snapshot.empty) && normalizedId !== licenseId) {
-            try {
-                logUsingPath(`licenses/${normalizedId}/${COLLECTIONS.CREDIT_CARDS}`, 'fallback_legacy');
-                snapshot = await getDocs(getCreditCardsCollectionRef(normalizedId));
-            } catch (error: any) {
-                logPermissionDenied({
-                    step: 'credit_cards_get',
-                    path: `licenses/${normalizedId}/${COLLECTIONS.CREDIT_CARDS}`,
-                    operation: 'getDocs',
-                    error,
-                    licenseId: normalizedId
-                });
-                logReadFailed(COLLECTIONS.CREDIT_CARDS, error?.message || 'Erro ao ler cartões');
-            }
         }
         const docs = snapshot?.docs ?? [];
         logReadOk(COLLECTIONS.CREDIT_CARDS, docs.length);
@@ -1185,24 +1104,18 @@ export const dataService = {
 
     async updateAdminMetrics(licenseId: string, metrics: { accountsCount: number; expensesCount: number; incomesCount: number }) {
         if (!licenseId) return;
-        console.info('[metrics] write', {
+        console.info('[metrics] skipped', {
             licenseId,
             accountsCount: metrics.accountsCount,
             expensesCount: metrics.expensesCount,
-            incomesCount: metrics.incomesCount
+            incomesCount: metrics.incomesCount,
+            reason: 'single_user'
         });
-        const ref = doc(db, 'adminMetrics', licenseId);
-        await setDoc(
-            ref,
-            sanitizeData({
-                ...metrics,
-                lastActivityAt: serverTimestamp()
-            }),
-            { merge: true }
-        );
     },
 
     async upsertCreditCard(card: CreditCard, licenseId: string): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.CREDIT_CARDS}/${card.id}`;
+        if (!guardUserPath(licenseId, path, 'credit_card_upsert')) return;
         await setDoc(
             licenseCollectionDoc(licenseId, COLLECTIONS.CREDIT_CARDS, card.id),
             sanitizeData({ ...card, licenseId })
@@ -1211,6 +1124,8 @@ export const dataService = {
     },
 
     async deleteCreditCard(id: string, licenseId: string): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.CREDIT_CARDS}/${id}`;
+        if (!guardUserPath(licenseId, path, 'credit_card_delete')) return;
         await deleteDoc(licenseCollectionDoc(licenseId, COLLECTIONS.CREDIT_CARDS, id));
         console.info('[sync][write] credit_card ok', { id, licenseId, action: 'delete' });
     }

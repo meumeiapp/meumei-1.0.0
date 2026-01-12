@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { 
   X,
   ArrowLeft, 
@@ -24,6 +25,9 @@ import CompoundInterestCalculatorModal, { CompoundCalculatorDefaults, CompoundCa
 import useIsMobile from '../hooks/useIsMobile';
 import YieldsMobileV2 from './YieldsMobileV2';
 import MobileModalShell from './mobile/MobileModalShell';
+import { db } from '../services/firebase';
+import { logPermissionDenied } from '../utils/firestoreLogger';
+import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 
 const MILLION_TARGET_DEFAULT = 1_000_000;
 
@@ -106,6 +110,8 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   const [editingYield, setEditingYield] = useState<{ accountId: string; amount: number; date: string; notes: string } | null>(null);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [goalInput, setGoalInput] = useState('');
+  const goalInputIdMobile = 'yield-goal-input-mobile';
+  const goalInputIdDesktop = 'yield-goal-input-desktop';
   const [targetGoal, setTargetGoal] = useState(MILLION_TARGET_DEFAULT);
   const [goalSavedAt, setGoalSavedAt] = useState<string | null>(null);
   const [firestoreYields, setFirestoreYields] = useState<YieldRecord[]>([]);
@@ -140,23 +146,64 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       durationUnit: 'years'
   }), []);
   const [calculatorSummary, setCalculatorSummary] = useState<CompoundCalculatorResult | null>(null);
-  const goalStorageKey = 'meumei_yields_goal';
+  const toIsoString = (value: unknown): string | null => {
+      if (!value) return null;
+      if (value instanceof Date) return value.toISOString();
+      if (typeof value === 'string') return value;
+      if (typeof value === 'object' && value && 'toDate' in value && typeof (value as { toDate?: () => Date }).toDate === 'function') {
+          return (value as { toDate: () => Date }).toDate().toISOString();
+      }
+      return null;
+  };
 
   useEffect(() => {
-      if (typeof window === 'undefined') return;
-      try {
-          const raw = localStorage.getItem(goalStorageKey);
-          if (raw) {
-              const parsed = JSON.parse(raw);
-              if (parsed?.target) {
-                  setTargetGoal(parsed.target);
-                  setGoalSavedAt(parsed.updatedAt ?? null);
-              }
-          }
-      } catch (error) {
-          console.error('Erro ao carregar meta de patrimônio', error);
+      if (!licenseId) {
+          setTargetGoal(MILLION_TARGET_DEFAULT);
+          setGoalSavedAt(null);
+          console.info('[goals] fallback default', { reason: 'missing_uid' });
+          return;
       }
-  }, []);
+      let cancelled = false;
+      const loadGoal = async () => {
+          const ref = doc(db, 'userGoals', licenseId);
+          const path = `userGoals/${licenseId}`;
+          try {
+              const snap = await getDoc(ref);
+              if (cancelled) return;
+              if (!snap.exists()) {
+                  setTargetGoal(MILLION_TARGET_DEFAULT);
+                  setGoalSavedAt(null);
+                  console.info('[goals] fallback default', { path, reason: 'missing_doc' });
+                  return;
+              }
+              const data = snap.data() as Record<string, unknown>;
+              const goalValue = typeof data.patrimonyGoal === 'number' ? data.patrimonyGoal : MILLION_TARGET_DEFAULT;
+              setTargetGoal(goalValue);
+              setGoalSavedAt(toIsoString(data.updatedAt));
+              if (typeof data.patrimonyGoal !== 'number') {
+                  console.info('[goals] fallback default', { path, reason: 'invalid_value' });
+              } else {
+                  console.info('[goals] loaded', { path, value: goalValue });
+              }
+          } catch (error) {
+              logPermissionDenied({
+                  step: 'goals_load',
+                  path,
+                  operation: 'getDoc',
+                  error,
+                  licenseId
+              });
+              console.error('[goals] error', { step: 'load', message: (error as Error)?.message || error });
+              setTargetGoal(MILLION_TARGET_DEFAULT);
+              setGoalSavedAt(null);
+              console.info('[goals] fallback default', { path, reason: 'error' });
+          }
+      };
+      void loadGoal();
+      return () => {
+          cancelled = true;
+      };
+  }, [licenseId]);
 
   useEffect(() => {
       if (!licenseId || !licenseCryptoEpoch) {
@@ -192,16 +239,32 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       }
   }, [firestoreYields]);
 
-  const persistGoal = (value: number) => {
+  const persistGoal = async (value: number) => {
       setTargetGoal(value);
       const updatedAt = new Date().toISOString();
       setGoalSavedAt(updatedAt);
+      if (!licenseId) {
+          console.error('[goals] error', { step: 'save', message: 'missing_uid' });
+          return;
+      }
+      const ref = doc(db, 'userGoals', licenseId);
+      const path = `userGoals/${licenseId}`;
       try {
-          if (typeof window !== 'undefined') {
-              localStorage.setItem(goalStorageKey, JSON.stringify({ target: value, updatedAt }));
-          }
+          await setDoc(
+              ref,
+              { patrimonyGoal: value, updatedAt: serverTimestamp() },
+              { merge: true }
+          );
+          console.info('[goals] saved', { path, value });
       } catch (error) {
-          console.error('Erro ao salvar meta de patrimônio', error);
+          logPermissionDenied({
+              step: 'goals_save',
+              path,
+              operation: 'setDoc',
+              error,
+              licenseId
+          });
+          console.error('[goals] error', { step: 'save', message: (error as Error)?.message || error });
       }
   };
 
@@ -360,8 +423,22 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       if (targetAccount?.locked) {
           return;
       }
+      const mutationId = isEditing
+          ? `yield:edit:${data.accountId}:${editingYield?.date}:${editingYield?.amount}->${data.amount}`
+          : `yield:add:${data.accountId}:${data.date}:${data.amount}`;
+      const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+          source: 'yields_view',
+          action: isEditing ? 'edit' : 'add',
+          accountId: data.accountId,
+          entityId: yieldId,
+          amount: data.amount,
+          status: 'applied'
+      });
       const updatedAccounts = accounts.map(acc => {
           if (acc.id !== data.accountId) {
+              return acc;
+          }
+          if (!shouldApply) {
               return acc;
           }
 
@@ -905,8 +982,12 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                   >
                       <div className="space-y-4">
                           <div className="space-y-2">
-                              <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Valor alvo (R$)</label>
+                              <label htmlFor={goalInputIdMobile} className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                                Valor alvo (R$)
+                              </label>
                               <input
+                                  id={goalInputIdMobile}
+                                  name="goalAmount"
                                   type="number"
                                   value={goalInput}
                                   onChange={(e) => setGoalInput(e.target.value)}
@@ -926,7 +1007,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                   onClick={() => {
                                       const parsed = parseFloat(goalInput.replace(',', '.'));
                                       if (!Number.isNaN(parsed) && parsed > 0) {
-                                          persistGoal(parsed);
+                                          void persistGoal(parsed);
                                           setIsGoalModalOpen(false);
                                       }
                                   }}
@@ -946,13 +1027,21 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                   <p className="text-xs uppercase tracking-[0.3em] text-indigo-500/80 mb-2">Meta</p>
                                   <h2 className="text-2xl font-semibold text-zinc-900 dark:text-white">Definir meta de patrimônio</h2>
                               </div>
-                              <button onClick={() => setIsGoalModalOpen(false)} className="p-2 rounded-full hover:bg-white/10 text-zinc-400">
+                              <button
+                                onClick={() => setIsGoalModalOpen(false)}
+                                aria-label="Fechar modal"
+                                className="p-2 rounded-full hover:bg-white/10 text-zinc-400"
+                              >
                                   <X size={18} />
                               </button>
                           </div>
                           <div className="space-y-2">
-                              <label className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Valor alvo (R$)</label>
+                              <label htmlFor={goalInputIdDesktop} className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                                Valor alvo (R$)
+                              </label>
                               <input
+                                  id={goalInputIdDesktop}
+                                  name="goalAmount"
                                   type="number"
                                   value={goalInput}
                                   onChange={(e) => setGoalInput(e.target.value)}
@@ -972,7 +1061,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                   onClick={() => {
                                       const parsed = parseFloat(goalInput.replace(',', '.'));
                                       if (!Number.isNaN(parsed) && parsed > 0) {
-                                          persistGoal(parsed);
+                                          void persistGoal(parsed);
                                           setIsGoalModalOpen(false);
                                       }
                                   }}

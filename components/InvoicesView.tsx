@@ -241,6 +241,9 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const mainWrapperClass = isMobile
     ? 'space-y-6'
     : 'max-w-7xl mx-auto px-4 sm:px-6 space-y-6';
+  const cardSelectId = 'invoice-card-select';
+  const editFieldId = (suffix: string) =>
+    `invoice-edit-${editingExpense?.id || 'current'}-${suffix}`;
 
   const headerSection = (
       <div className={headerWrapperClass}>
@@ -267,9 +270,13 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
               {/* Card Selector */}
               <div className="w-full md:w-auto min-w-[250px]">
-                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1 block">Selecione o Cartão</label>
+                  <label htmlFor={cardSelectId} className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1 block">
+                    Selecione o Cartão
+                  </label>
                   <div className="relative">
                       <select 
+                          id={cardSelectId}
+                          name="selectedCardId"
                           value={selectedCardId}
                           onChange={(e) => { setSelectedCardId(e.target.value); setSelectedExpenseIds([]); }}
                           className="w-full appearance-none bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-rose-500 font-medium shadow-sm"
@@ -341,12 +348,14 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => handleEditCard(card)}
+                                    aria-label={`Editar cartão ${card.name}`}
                                     className="p-2 rounded-lg text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/20 transition-colors"
                                 >
                                     <Pencil size={14} />
                                 </button>
                                 <button
                                     onClick={() => handleDeleteCard(card.id)}
+                                    aria-label={`Excluir cartão ${card.name}`}
                                     className="p-2 rounded-lg text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors"
                                 >
                                     <Trash2 size={14} />
@@ -536,6 +545,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
             }}
             onSave={handleSaveCard}
             initialData={editingCard}
+            source="view"
           />
 
           {isEditModalOpen && editingExpense && (
@@ -547,14 +557,22 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                             <Pencil size={20} className="text-rose-500" />
                             Editar Lançamento
                         </h3>
-                        <button onClick={closeEditModal} className="p-2 text-zinc-400 hover:text-zinc-200 rounded-full hover:bg-white/10">
+                        <button
+                          onClick={closeEditModal}
+                          aria-label="Fechar modal"
+                          className="p-2 text-zinc-400 hover:text-zinc-200 rounded-full hover:bg-white/10"
+                        >
                             <X size={18} />
                         </button>
                     </div>
 
                     <div className="space-y-3">
-                        <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Descrição</label>
+                        <label htmlFor={editFieldId('description')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                          Descrição
+                        </label>
                         <input
+                            id={editFieldId('description')}
+                            name="description"
                             type="text"
                             value={editForm.description}
                             onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
@@ -564,8 +582,12 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-3">
-                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Valor (R$)</label>
+                            <label htmlFor={editFieldId('amount')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                              Valor (R$)
+                            </label>
                             <input
+                                id={editFieldId('amount')}
+                                name="amount"
                                 type="number"
                                 value={editForm.amount}
                                 onChange={(e) => setEditForm(prev => ({ ...prev, amount: e.target.value }))}
@@ -573,8 +595,12 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                             />
                         </div>
                         <div className="space-y-3">
-                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Categoria</label>
+                            <label htmlFor={editFieldId('category')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+                              Categoria
+                            </label>
                             <input
+                                id={editFieldId('category')}
+                                name="category"
                                 list="invoice-category-options"
                                 value={editForm.category}
                                 onChange={(e) => setEditForm(prev => ({ ...prev, category: e.target.value }))}
