@@ -18,6 +18,8 @@ const allowedOrigins = new Set([
   "https://meumei-d88be.firebaseapp.com",
   "https://meumeiapp.com.br",
   "https://www.meumeiapp.com.br",
+  "https://meumeibeta.web.app",
+  "https://meumeibeta.firebaseapp.com",
   "http://localhost:5173",
   "http://localhost:3000"
 ]);

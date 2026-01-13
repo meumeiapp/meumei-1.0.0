@@ -24,7 +24,7 @@ export default defineConfig(({ mode, command }) => {
           registerType: 'autoUpdate',
           injectRegister: 'auto',
           devOptions: {
-            enabled: mode === 'development',
+            enabled: false,
             type: 'module'
           },
           includeAssets: [
