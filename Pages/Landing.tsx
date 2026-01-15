@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import type { MouseEvent } from "react";
+import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import metricsPreview from "@/assets/Code_Generated_Image.png";
 
 export default function Landing() {
   const [isLoading, setIsLoading] = useState(false);
@@ -9,7 +11,8 @@ export default function Landing() {
   // --- LÓGICA (MANTIDA) ---
   const checkoutEndpointOverride = (import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || "").trim();
   const functionsBaseUrl = (import.meta.env.VITE_FUNCTIONS_BASE_URL || "").trim();
-  const functionsRegion = (import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION || "us-central1").trim() || "us-central1";
+  const functionsRegion =
+    (import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION || "us-central1").trim() || "us-central1";
   const firebaseProjectId = (import.meta.env.VITE_FIREBASE_PROJECT_ID || "").trim();
 
   const resolveCheckoutEndpoint = () => {
@@ -27,253 +30,416 @@ export default function Landing() {
     const checkoutEndpoint = resolveCheckoutEndpoint();
     if (!checkoutEndpoint) {
       try {
-        const last = localStorage.getItem('meumei_last_checkout_url');
-        if (last) { window.location.href = last; return; }
+        const last = localStorage.getItem("meumei_last_checkout_url");
+        if (last) {
+          window.location.href = last;
+          return;
+        }
       } catch {}
       setSubscribeError("Erro de configuração.");
       return;
     }
     setIsLoading(true);
     try {
-      const payload = { data: { email: leadEmail || undefined, success_url: `${window.location.origin}/?checkout=success`, cancel_url: `${window.location.origin}/?checkout=cancel` } };
-      const res = await fetch(checkoutEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const payload = {
+        data: {
+          email: leadEmail || undefined,
+          success_url: `${window.location.origin}/?checkout=success`,
+          cancel_url: `${window.location.origin}/?checkout=cancel`
+        }
+      };
+      const res = await fetch(checkoutEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
       const body = await res.json().catch(() => ({}));
-      const checkoutUrl = body?.result?.url || body?.data?.url || body?.url || body?.checkoutUrl;
-      if (!checkoutUrl) throw new Error('missing_url');
+      const checkoutUrl =
+        body?.result?.url || body?.data?.url || body?.url || body?.checkoutUrl;
+      if (!checkoutUrl) throw new Error("missing_url");
       window.location.href = checkoutUrl;
     } catch (err) {
-      setSubscribeError('Erro ao iniciar pagamento.');
+      setSubscribeError("Erro ao iniciar pagamento.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const navigate = (path: string) => {
-    if (typeof window === 'undefined') return;
-    window.history.pushState({}, '', path);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    if (typeof window === "undefined") return;
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
   };
 
-  return (
-    <div className="min-h-screen bg-[#020202] text-white font-sans selection:bg-purple-500/30 overflow-x-hidden flex flex-col relative">
-      
-      {/* --- BACKGROUND TÉCNICO --- */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none z-0"></div>
-      
-      {/* GLOW DE FUNDO */}
-      <div className="fixed top-[10%] left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-purple-600/15 blur-[140px] rounded-full pointer-events-none z-0"></div>
+  const year = useMemo(() => new Date().getFullYear(), []);
+  const mockupBarData = [
+    { height: 28, colorClass: "bg-sky-400/90", glowClass: "shadow-[0_0_12px_rgba(56,189,248,0.35)]" },
+    { height: 34, colorClass: "bg-sky-400/90", glowClass: "shadow-[0_0_12px_rgba(56,189,248,0.35)]" },
+    { height: 46, colorClass: "bg-sky-400/90", glowClass: "shadow-[0_0_12px_rgba(56,189,248,0.35)]" },
+    { height: 58, colorClass: "bg-sky-400/90", glowClass: "shadow-[0_0_12px_rgba(56,189,248,0.35)]" },
+    { height: 68, colorClass: "bg-violet-400/90", glowClass: "shadow-[0_0_12px_rgba(167,139,250,0.35)]" },
+    { height: 78, colorClass: "bg-violet-400/90", glowClass: "shadow-[0_0_12px_rgba(167,139,250,0.35)]" },
+    { height: 90, colorClass: "bg-violet-400/90", glowClass: "shadow-[0_0_12px_rgba(167,139,250,0.35)]" },
+    { height: 102, colorClass: "bg-violet-400/90", glowClass: "shadow-[0_0_12px_rgba(167,139,250,0.35)]" },
+    { height: 118, colorClass: "bg-pink-400/90", glowClass: "shadow-[0_0_12px_rgba(244,114,182,0.35)]" },
+    { height: 128, colorClass: "bg-pink-400/90", glowClass: "shadow-[0_0_12px_rgba(244,114,182,0.35)]" },
+    { height: 138, colorClass: "bg-pink-400/90", glowClass: "shadow-[0_0_12px_rgba(244,114,182,0.35)]" },
+    { height: 150, colorClass: "bg-pink-400/90", glowClass: "shadow-[0_0_12px_rgba(244,114,182,0.35)]" },
+  ];
 
-      {/* --- HEADER FIXO --- */}
-      <header className="fixed top-0 left-0 w-full z-50 border-b border-white/5 bg-[#020202]/95 backdrop-blur-xl h-24 flex items-center shadow-2xl">
+  return (
+    <div className="min-h-screen text-white font-sans selection:bg-teal-500/30 overflow-x-hidden flex flex-col relative bg-[#070712]">
+      {/* BACKGROUND */}
+      <div className="absolute inset-0 pointer-events-none z-0">
+        <div className="absolute top-0 left-0 w-full h-[980px] overflow-hidden">
+          <div
+            className="absolute top-[-18%] left-[-10%] w-[720px] h-[720px] rounded-full blur-[150px] opacity-25"
+            style={{ background: "radial-gradient(circle, #14b8a6 0%, transparent 70%)" }}
+          />
+          <div
+            className="absolute top-[6%] right-[-14%] w-[820px] h-[820px] rounded-full blur-[170px] opacity-22"
+            style={{ background: "radial-gradient(circle, #7c3aed 0%, transparent 70%)" }}
+          />
+          <div
+            className="absolute bottom-[-26%] left-[8%] w-[760px] h-[760px] rounded-full blur-[190px] opacity-18"
+            style={{ background: "radial-gradient(circle, #2563eb 0%, transparent 70%)" }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/0 via-black/45 to-black/85" />
+        </div>
+
+        {/* subtle grid */}
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, rgba(255,255,255,0.12) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.12) 1px, transparent 1px)",
+            backgroundSize: "72px 72px",
+          }}
+        />
+      </div>
+
+      {/* HEADER */}
+      <header className="fixed top-0 left-0 w-full z-50 border-b border-white/10 bg-black/35 backdrop-blur-md h-20 flex items-center">
         <div className="max-w-7xl mx-auto px-6 w-full flex items-center justify-between">
-          
-          {/* LOGO */}
-          <button onClick={() => navigate('/')} className="hover:opacity-80 transition flex items-center gap-1 group">
+          <button
+            onClick={() => navigate("/")}
+            className="hover:opacity-90 transition flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/50 rounded-lg px-2 py-1"
+            aria-label="Ir para o início"
+          >
             <span className="text-2xl font-bold tracking-tighter text-white">meumei</span>
+            <span className="hidden sm:inline text-[10px] uppercase tracking-widest text-white/35">controle MEI</span>
           </button>
 
-          <div className="flex items-center gap-6">
-            <button onClick={() => navigate('/login')} className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">
+          <nav className="hidden md:flex items-center gap-6 text-sm text-zinc-300">
+            <a href="#recursos" className="hover:text-white transition-colors">Recursos</a>
+            <a href="#como-funciona" className="hover:text-white transition-colors">Como funciona</a>
+            <a href="#perguntas" className="hover:text-white transition-colors">Perguntas</a>
+          </nav>
+
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate("/login")}
+              className="text-sm font-medium text-zinc-300 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/25 rounded-md px-2 py-1"
+            >
               Login
             </button>
-            
-            {/* BOTÃO: COR FORÇADA VIA STYLE INLINE (INFALÍVEL) */}
-            <button 
-              onClick={() => handleSubscribe()} 
-              style={{ color: '#000000', backgroundColor: '#ffffff' }}
-              className="px-8 py-3 rounded-full text-sm font-bold hover:bg-zinc-200 transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+
+            <button
+              onClick={() => handleSubscribe()}
+              className="px-6 py-2.5 rounded-full text-sm font-bold bg-white text-black hover:text-black hover:bg-zinc-200 transition-all hover:scale-[1.03] shadow-[0_0_24px_rgba(255,255,255,0.16)] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/50"
+              style={{ color: "#000000" }}
             >
-              Começar Agora
+              Começar agora
             </button>
           </div>
         </div>
       </header>
 
-      {/* --- TRAVA DE ESPAÇO --- */}
-      <div className="w-full h-24 block shrink-0"></div> 
+      <div className="w-full h-20 block shrink-0"></div>
 
-      {/* --- HERO SECTION --- */}
-      <main className="relative z-10 mt-12 lg:mt-24 pb-24 max-w-7xl mx-auto px-6 w-full">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-8 items-center">
-          
-          {/* LADO ESQUERDO: Copywriting */}
-          <div className="flex flex-col items-center lg:items-start text-center lg:text-left space-y-8 animate-fade-in-up pt-4">
-            
-            {/* Badge */}
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-md text-zinc-300 text-xs font-medium hover:border-purple-500/50 transition-colors cursor-default shadow-xl">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
-              </span>
-              Nova Dashboard 2.0
-            </div>
-
-            <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-white leading-tight tracking-tight drop-shadow-2xl">
-              Finanças <br />
-              <span className="text-purple-500">descomplicadas</span> <br />
-              para MEIs.
-            </h1>
-
-            <p className="text-lg text-zinc-400 max-w-lg leading-relaxed">
-              Diga adeus às planilhas quebradas. Uma plataforma completa para controlar seu faturamento, emitir notas e evitar multas.
-            </p>
-
-            {/* Input Email */}
-            <div className="w-full max-w-md relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
-              <form 
-                onSubmit={(e) => { e.preventDefault(); handleSubscribe(); }}
-                className="relative flex gap-2 bg-zinc-900/90 p-2 rounded-xl border border-white/10 shadow-2xl"
+      {/* HERO */}
+      <main className="relative z-10 pt-10 lg:pt-16 pb-20 max-w-7xl mx-auto px-6 w-full">
+        <div className="relative">
+          <div className="absolute top-[-10%] right-0 left-0 mx-auto w-[96%] h-[380px] blur-[140px] bg-gradient-to-tr from-teal-500/20 via-purple-600/20 to-sky-500/10 opacity-70 pointer-events-none"></div>
+          <div className="relative z-10 space-y-16">
+            <div className="space-y-6 max-w-4xl">
+              <p className="text-xs uppercase tracking-[0.4em] text-zinc-500">
+                Nova dashboard 1.0.0 • Pensado para MEIs de verdade
+              </p>
+              <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold leading-[1.1] text-white max-w-3xl">
+                <span className="block">Veja seu mês financeiro</span>
+                <span
+                  className="block bg-gradient-to-r from-sky-400 via-rose-500 to-purple-500 bg-clip-text text-transparent"
+                  style={{
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    backgroundImage: "linear-gradient(90deg, #38bdf8 0%, #fb7185 50%, #a855f7 100%)",
+                  }}
+                >
+                  sem planilha e sem susto.
+                </span>
+              </h1>
+              <p className="text-lg text-zinc-200/90 max-w-2xl leading-relaxed">
+                Registre entradas e despesas, acompanhe o limite do MEI e tenha clareza do mês em poucos minutos. Sem planilhas quebradas. Sem dor de cabeça.
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSubscribe();
+                }}
+                className="flex flex-col gap-3 md:flex-row md:items-stretch max-w-3xl"
               >
-                <input 
-                  type="email" 
-                  placeholder="Seu e-mail profissional"
+                <input
+                  type="email"
+                  placeholder="Seu melhor e-mail"
                   value={leadEmailState}
-                  onChange={(e) => { setLeadEmailState(e.target.value); localStorage.setItem('leadEmail', e.target.value); }}
-                  className="flex-1 bg-transparent px-4 py-2 text-white placeholder:text-zinc-600 outline-none"
+                  onChange={(e) => {
+                    setLeadEmailState(e.target.value);
+                    localStorage.setItem("leadEmail", e.target.value);
+                  }}
+                  className="flex-1 bg-white/10 px-4 py-3 text-white placeholder:text-zinc-300 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60 rounded-xl border border-white/20"
+                  aria-label="E-mail"
                 />
-                <button 
+                <button
                   type="submit"
                   disabled={isLoading}
-                  className="bg-purple-600 text-white hover:bg-purple-500 px-6 py-3 rounded-lg font-bold transition-all shadow-lg shadow-purple-900/40 hover:scale-[1.02] whitespace-nowrap"
+                  className="bg-gradient-to-r from-teal-400 to-purple-500 text-black px-6 py-3 rounded-xl font-extrabold transition-all shadow-[0_25px_70px_rgba(16,185,129,0.35)] border border-white/30 hover:scale-[1.02] whitespace-nowrap disabled:opacity-70 disabled:hover:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60"
                 >
-                  {isLoading ? '...' : 'Criar Conta'}
+                  {isLoading ? "..." : "Ver meu mês agora"}
                 </button>
               </form>
+              <div className="flex flex-wrap gap-3 text-xs text-zinc-400 mb-6">
+                {[
+                  "Teste o meumei por 7 dias",
+                  "Rápido e confortável no celular",
+                  "Concebido para quem não quer complicação",
+                ].map((text) => (
+                  <span key={text} className="bg-white/5 border border-white/10 rounded-full px-3 py-1">
+                    {text}
+                  </span>
+                ))}
+              </div>
             </div>
-            
-            <div className="flex gap-6 pt-4 opacity-60 grayscale hover:grayscale-0 transition-all duration-500">
-                <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
-                    <span className="font-bold">🔒 BLINDAGEM SSL</span>
-                    <span className="w-1 h-1 bg-zinc-700 rounded-full"></span>
-                    <span className="font-bold">DADOS CRIPTOGRAFADOS</span>
-                </div>
-            </div>
-          </div>
 
-          {/* LADO DIREITO: Mockup */}
-          <div className="relative w-full perspective-1000 group lg:pl-10 mt-8 lg:mt-0">
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] h-[90%] bg-gradient-to-tr from-purple-600/40 to-blue-600/40 blur-[80px] rounded-full -z-10"></div>
-            
-            <div className="relative bg-[#0F0F11] border border-white/10 rounded-2xl shadow-2xl overflow-hidden transform transition-all duration-700 lg:group-hover:rotate-y-[-2deg] lg:group-hover:rotate-x-[2deg] lg:group-hover:scale-[1.02]">
-                <div className="h-10 bg-[#18181B] border-b border-white/5 flex items-center px-4 justify-between">
-                    <div className="flex gap-2">
-                        <div className="w-3 h-3 rounded-full bg-[#27272A]"></div>
-                        <div className="w-3 h-3 rounded-full bg-[#27272A]"></div>
+            <div className="flex justify-center mt-6 lg:mt-12">
+              <div className="w-full max-w-[640px]">
+                <div className="rounded-3xl border border-white/10 bg-black shadow-[0_20px_60px_rgba(0,0,0,0.55)]" style={{ backgroundColor: "#000000" }}>
+                  <div className="px-8 py-6 space-y-6">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.45em] text-zinc-500">Saldo disponível</p>
+                        <p className="mt-2 text-4xl font-semibold text-white leading-tight">
+                          R$ 12.450,<span className="text-2xl">00</span>
+                        </p>
+                      </div>
+                      <div className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-[10px] uppercase tracking-[0.35em] text-emerald-300">
+                        +24% este mês
+                      </div>
                     </div>
-                    <div className="text-[10px] text-zinc-500 font-mono">app.meumei.com</div>
-                </div>
-
-                <div className="flex h-[320px]">
-                    <div className="w-16 border-r border-white/5 flex flex-col items-center py-6 gap-6">
-                        <div className="w-8 h-8 bg-purple-600/20 rounded-lg text-purple-400 flex items-center justify-center text-xs">●</div>
-                        <div className="w-8 h-8 rounded-lg hover:bg-white/5 transition flex items-center justify-center text-zinc-600">■</div>
-                        <div className="w-8 h-8 rounded-lg hover:bg-white/5 transition flex items-center justify-center text-zinc-600">▲</div>
+                  <div className="mt-12 flex justify-center">
+                    <div className="w-full">
+                      <img
+                        src={metricsPreview}
+                        alt="Mini gráfico estético"
+                        className="w-full max-w-none rounded-3xl border border-white/10 shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
+                        style={{ maxHeight: "150px", objectFit: "cover" }}
+                      />
                     </div>
-
-                    <div className="flex-1 p-6 space-y-6">
-                        <div className="flex justify-between items-end">
-                            <div>
-                                <p className="text-zinc-500 text-xs font-medium uppercase mb-1">Saldo Disponível</p>
-                                <h3 className="text-3xl font-bold text-white">R$ 12.450<span className="text-zinc-500 text-lg">,00</span></h3>
-                            </div>
-                            <div className="px-3 py-1 bg-green-500/10 border border-green-500/20 text-green-400 text-xs rounded-full">
-                                +24% este mês
-                            </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 mt-24 lg:mt-32">
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_15px_30px_rgba(0,0,0,0.35)]">
+                        <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-zinc-400">
+                          <span>Entradas</span>
+                          <ArrowUpRight className="h-4 w-4 text-emerald-300" />
                         </div>
-
-                        <div className="h-32 w-full relative">
-                             <div className="absolute inset-0 flex flex-col justify-between opacity-10">
-                                 <div className="border-t border-white"></div>
-                                 <div className="border-t border-white"></div>
-                                 <div className="border-t border-white"></div>
-                             </div>
-                             <div className="absolute inset-0 flex items-end justify-between px-2 gap-2">
-                                 {[35, 50, 45, 70, 55, 80, 60, 90, 75].map((h, i) => (
-                                     <div key={i} className="w-full bg-zinc-800 hover:bg-purple-500/80 transition-all duration-300 rounded-t-sm" style={{height: `${h}%`}}></div>
-                                 ))}
-                             </div>
+                        <div className="mt-3 flex items-end justify-between">
+                          <span className="text-2xl font-semibold text-white">R$ 8.120</span>
+                          <span className="text-xs font-semibold text-emerald-300">+12%</span>
                         </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="h-16 bg-white/5 rounded-xl border border-white/5"></div>
-                            <div className="h-16 bg-white/5 rounded-xl border border-white/5"></div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_15px_30px_rgba(0,0,0,0.35)]">
+                        <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-zinc-400">
+                          <span>Despesas</span>
+                          <ArrowDownRight className="h-4 w-4 text-rose-400" />
                         </div>
+                        <div className="mt-3 flex items-end justify-between">
+                          <span className="text-2xl font-semibold text-white">R$ 3.410</span>
+                          <span className="text-xs font-semibold text-rose-400">-8%</span>
+                        </div>
+                      </div>
                     </div>
+                  </div>
                 </div>
+              </div>
             </div>
           </div>
         </div>
       </main>
-
-      {/* --- BENTO GRID --- */}
-      <section className="border-t border-white/10 bg-[#0A0A0A] py-32 relative">
-        <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-purple-500 to-transparent opacity-30"></div>
-        
+      {/* FEATURES */}
+      <section id="recursos" className="relative z-10 border-t border-white/10 bg-black/35 backdrop-blur-sm py-20">
         <div className="max-w-7xl mx-auto px-6">
-            <div className="mb-20">
-                <h2 className="text-3xl md:text-5xl font-bold mb-6">Tudo o que você precisa. <br/><span className="text-zinc-500">Nada do que você odeia.</span></h2>
+          <div className="mb-12">
+            <h2 className="text-3xl md:text-5xl font-bold">
+              Tudo o que você precisa.{" "}
+              <span
+                className="block font-bold bg-gradient-to-r from-sky-400 via-rose-500 to-purple-500 bg-clip-text text-transparent"
+                style={{
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundImage: "linear-gradient(90deg, #38bdf8 0%, #fb7185 50%, #a855f7 100%)",
+                }}
+              >
+                Nada do que você odeia.
+              </span>
+            </h2>
+            <div className="h-4" aria-hidden="true"></div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-2 rounded-3xl bg-[#0f1118]/80 border border-white/15 p-8 md:p-10 relative overflow-hidden hover:border-teal-500/35 transition-colors shadow-[0_25px_70px_rgba(15,23,42,0.65)]">
+              <div className="absolute top-0 right-0 w-72 h-72 bg-teal-500/10 blur-[90px] rounded-full"></div>
+              <div className="relative z-10">
+                <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-2xl mb-6">🚀</div>
+                <h3 className="text-2xl font-bold mb-3">Emissão de DAS em 1 clique</h3>
+                <p className="text-zinc-400 max-w-xl">
+                  Não perca tempo no site do governo. Gere sua guia mensal e organize seus pagamentos com consistência.
+                </p>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="col-span-1 md:col-span-2 bg-[#121214] border border-white/5 rounded-3xl p-8 md:p-12 relative overflow-hidden group hover:border-white/10 transition-colors">
-                    <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 blur-[80px] rounded-full group-hover:bg-purple-500/20 transition-all"></div>
-                    <div className="relative z-10">
-                        <div className="w-12 h-12 bg-zinc-900 rounded-xl flex items-center justify-center text-2xl mb-6 border border-white/5">🚀</div>
-                        <h3 className="text-2xl font-bold mb-4">Emissão de DAS em 1 Clique</h3>
-                        <p className="text-zinc-400 max-w-md">Não perca tempo no site do governo. Geramos e enviamos sua guia de imposto mensal diretamente para seu e-mail ou WhatsApp.</p>
-                    </div>
-                </div>
-
-                <div className="col-span-1 bg-[#121214] border border-white/5 rounded-3xl p-8 relative overflow-hidden group hover:border-white/10 transition-colors">
-                    <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-zinc-900 to-transparent"></div>
-                    <div className="w-12 h-12 bg-zinc-900 rounded-xl flex items-center justify-center text-2xl mb-6 border border-white/5">📱</div>
-                    <h3 className="text-xl font-bold mb-4">Controle na palma da mão</h3>
-                    <p className="text-zinc-400 text-sm">Design responsivo que funciona perfeitamente no seu celular.</p>
-                </div>
-
-                <div className="col-span-1 bg-[#121214] border border-white/5 rounded-3xl p-8 group hover:border-white/10 transition-colors">
-                    <h3 className="text-lg font-bold mb-2 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                        Relatórios
-                    </h3>
-                    <p className="text-zinc-500 text-sm">Saiba exatamente seu lucro líquido.</p>
-                </div>
-
-                <div className="col-span-1 md:col-span-2 bg-[#121214] border border-white/5 rounded-3xl p-8 flex items-center justify-between group hover:border-white/10 transition-colors">
-                    <div>
-                        <h3 className="text-xl font-bold mb-2">Segurança de Dados Bancária</h3>
-                        <p className="text-zinc-400 text-sm">Seus dados são seus. Criptografia ponta a ponta.</p>
-                    </div>
-                    <div className="text-4xl opacity-20 group-hover:opacity-100 transition-opacity grayscale group-hover:grayscale-0">🔒</div>
-                </div>
+            <div className="rounded-3xl bg-[#0f1118]/80 border border-white/15 p-8 relative overflow-hidden hover:border-purple-500/35 transition-colors shadow-[0_20px_60px_rgba(15,23,42,0.55)]">
+              <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-zinc-900 to-transparent"></div>
+              <div className="relative z-10">
+                <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-2xl mb-6">📱</div>
+                <h3 className="text-xl font-bold mb-3">Controle na palma da mão</h3>
+                <p className="text-zinc-400 text-sm">
+                  Design responsivo, rápido e confortável. Do jeitinho que o MEI precisa no corre do dia.
+                </p>
+              </div>
             </div>
+
+            <div className="rounded-3xl bg-[#0f1118]/80 border border-white/15 p-8 hover:border-teal-500/35 transition-colors shadow-[0_20px_60px_rgba(15,23,42,0.55)]">
+              <h3 className="text-lg font-bold mb-2 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                Relatórios
+              </h3>
+              <p className="text-zinc-400 text-sm">Saiba exatamente seu lucro e acompanhe evolução mês a mês.</p>
+            </div>
+
+            <div className="md:col-span-2 rounded-3xl bg-[#0f1118]/80 border border-white/15 p-8 flex items-center justify-between hover:border-purple-500/35 transition-colors shadow-[0_20px_60px_rgba(15,23,42,0.55)]">
+              <div>
+                <h3 className="text-xl font-bold mb-2">Segurança de dados</h3>
+                <p className="text-zinc-400 text-sm">Boas práticas e criptografia para proteger suas informações.</p>
+              </div>
+              <div className="text-4xl opacity-40">🔒</div>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* --- FOOTER --- */}
-      <footer className="py-12 border-t border-white/5 bg-black relative overflow-hidden">
-        
-        <div className="max-w-7xl mx-auto px-6 relative z-10 flex flex-col md:flex-row justify-between items-center gap-8">
-            <div className="flex items-center gap-2">
-                <span className="text-xl font-bold tracking-tighter text-zinc-500">meumei</span>
-                <span className="text-zinc-700 text-sm">© 2026</span>
+      {/* HOW IT WORKS (sem o box do print 5) */}
+      <section id="como-funciona" className="relative z-10 py-20">
+        <div className="max-w-7xl mx-auto px-6">
+          <h3 className="text-3xl font-bold mb-4">Como funciona, na prática</h3>
+          <p className="text-zinc-300 max-w-2xl">
+            Sem “setup infinito”. Você entra, registra, e começa a ver seu mês com clareza. O objetivo é tirar peso da sua cabeça.
+          </p>
+
+          <div className="mt-8 grid grid-cols-1 gap-6">
+            <div className="space-y-3">
+              <div className="rounded-2xl bg-[#111219]/80 border border-white/15 p-5">
+                <div className="text-xs text-zinc-400">1) Crie sua conta</div>
+                <div className="text-sm font-semibold text-white mt-1">Em poucos passos, sem complicar.</div>
+              </div>
+              <div className="rounded-2xl bg-[#111219]/80 border border-white/15 p-5">
+                <div className="text-xs text-zinc-400">2) Registre entradas e despesas</div>
+                <div className="text-sm font-semibold text-white mt-1">Tudo organizado, sem gambiarra.</div>
+              </div>
+              <div className="rounded-2xl bg-[#111219]/80 border border-white/15 p-5">
+                <div className="text-xs text-zinc-400">3) Enxergue seu lucro e o limite do MEI</div>
+                <div className="text-sm font-semibold text-white mt-1">Decisões melhores com menos ansiedade.</div>
+              </div>
             </div>
-            
-            <div className="flex items-center text-sm text-zinc-500">
-                <button onClick={() => navigate('/termos')} className="hover:text-white transition-colors">Termos de Uso</button>
-                {/* MARGEM FORÇADA VIA STYLE INLINE (40px) */}
-                <button 
-                  onClick={() => navigate('/privacidade')} 
-                  style={{ marginLeft: '40px' }} 
-                  className="hover:text-white transition-colors"
-                >
-                  Política de Privacidade
-                </button>
+
+          </div>
+        </div>
+      </section>
+        <div className="mt-0 mb-20 w-full px-4 flex flex-col items-center gap-1">
+          <span style={{ fontSize: "100px" }} className="font-black leading-none text-white text-[100px] lg:text-[100px]">R$ 29,90</span>
+          <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-gradient-to-r from-white/10 via-black/40 to-white/15 shadow-[0_20px_60px_rgba(0,0,0,0.45)] p-6 flex flex-col items-center gap-3 uppercase tracking-[0.25em] text-sm">
+            <span className="text-white/80">Assinatura mensal</span>
+            <span className="text-emerald-300 text-lg font-bold">Cancele quando quiser</span>
+            <span className="text-white/70 text-sm">7 dias de garantia</span>
+          </div>
+        </div>
+
+      {/* FAQ */}
+      <section id="perguntas" className="relative z-10 border-t border-white/10 bg-black/35 backdrop-blur-sm py-20">
+        <div className="max-w-7xl mx-auto px-6">
+          <h3 className="text-4xl font-bold mb-2">Perguntas rápidas</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
+              <div className="text-sm font-bold text-white">Funciona no celular?</div>
+              <div className="text-zinc-400 text-sm mt-2">Sim. A interface é pensada para uso rápido no dia a dia.</div>
             </div>
+
+            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
+              <div className="text-sm font-bold text-white">Meus dados ficam seguros?</div>
+              <div className="text-zinc-400 text-sm mt-2">Usamos boas práticas de segurança e criptografia para proteger suas informações.</div>
+            </div>
+
+            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
+              <div className="text-sm font-bold text-white">Vou conseguir entender sem ser “bom de finanças”?</div>
+              <div className="text-zinc-400 text-sm mt-2">Essa é a ideia. O meumei simplifica, sem virar aula.</div>
+            </div>
+
+            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
+              <div className="text-sm font-bold text-white">Posso começar agora?</div>
+              <div className="text-zinc-400 text-sm mt-2">Sim. Clique em “Começar agora” e siga o fluxo de pagamento.</div>
+            </div>
+          </div>
+
+          {/* Final CTA */}
+      <div className="mt-56 rounded-3xl bg-gradient-to-r from-teal-500/15 to-purple-600/15 border border-white/10 p-8 md:p-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div>
+              <div className="text-2xl font-bold">Bora organizar seu MEI sem drama.</div>
+              <div className="text-zinc-300 mt-2">Clareza no mês, decisão melhor, cabeça mais leve.</div>
+            </div>
+            <div className="w-full md:w-auto flex gap-3">
+              <button
+                onClick={() => handleSubscribe()}
+                disabled={isLoading}
+                className="w-full md:w-auto font-extrabold px-6 py-3 rounded-2xl bg-white text-black hover:bg-zinc-200 transition disabled:opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/70 shadow-[0_15px_50px_rgba(255,255,255,0.18)]"
+                style={{ color: "#000000" }}
+              >
+                {isLoading ? "..." : "Começar agora"}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/login")}
+                className="w-full md:w-auto bg-white/5 border border-white/15 text-white font-semibold px-6 py-3 rounded-2xl hover:bg-white/8 transition"
+              >
+                Já tenho conta
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* FOOTER */}
+      <footer className="relative z-10 py-12 border-t border-white/10 bg-black/70 backdrop-blur-xl">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-8">
+          <div className="flex items-center gap-2">
+            <span className="text-xl font-bold tracking-tighter text-zinc-300">meumei</span>
+            <span className="text-zinc-500 text-sm">© {year}</span>
+          </div>
+
+          <div className="flex items-center text-sm text-zinc-400 gap-6">
+            <button onClick={() => navigate("/termos")} className="hover:text-white transition-colors">Termos de Uso</button>
+            <button onClick={() => navigate("/privacidade")} className="hover:text-white transition-colors">Política de Privacidade</button>
+          </div>
         </div>
       </footer>
-
     </div>
   );
 }

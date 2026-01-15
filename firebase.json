@@ -90,6 +90,27 @@
       ],
       "rewrites": [
         {
+          "source": "/api/createCheckoutSessionV2",
+          "function": {
+            "functionId": "createCheckoutSessionV2",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/verifyCheckoutSessionV2",
+          "function": {
+            "functionId": "verifyCheckoutSessionV2",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/grantEntitlementV2",
+          "function": {
+            "functionId": "grantEntitlementV2",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }

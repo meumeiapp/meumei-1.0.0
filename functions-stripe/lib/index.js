@@ -42,7 +42,7 @@ const v2_1 = require("firebase-functions/v2");
 const params_1 = require("firebase-functions/params");
 const admin = __importStar(require("firebase-admin"));
 const stripe_1 = __importDefault(require("stripe"));
-(0, v2_1.setGlobalOptions)({ region: "us-central1" });
+(0, v2_1.setGlobalOptions)({ region: "us-central1", invoker: "public" });
 const STRIPE_SECRET_KEY_SECRET = (0, params_1.defineSecret)("STRIPE_SECRET_KEY");
 const STRIPE_PRICE_ID_SECRET = (0, params_1.defineSecret)("STRIPE_PRICE_ID");
 const MODE = (process.env.MODE || "subscription").trim();

@@ -4,7 +4,7 @@ import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
 
-setGlobalOptions({ region: "us-central1" });
+setGlobalOptions({ region: "us-central1", invoker: "public" });
 
 const STRIPE_SECRET_KEY_SECRET = defineSecret("STRIPE_SECRET_KEY");
 const STRIPE_PRICE_ID_SECRET = defineSecret("STRIPE_PRICE_ID");
