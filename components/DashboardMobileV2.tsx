@@ -23,17 +23,23 @@ import {
   Target,
   Flame,
   OctagonAlert,
+  FileText,
+  GripVertical,
   Lock,
   Search,
   Download,
   ChevronDown
 } from 'lucide-react';
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
+import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 
 interface FinancialData {
     balance: number;
@@ -174,6 +180,7 @@ interface DashboardProps {
   onOpenYields?: () => void; 
   onOpenInvoices?: () => void;
   onOpenReports?: () => void; // New Prop
+  onOpenDas: () => void;
   financialData: FinancialData;
   creditCards: CreditCardType[];
   expenseBreakdown?: ExpenseBreakdown;
@@ -312,14 +319,15 @@ const getMascotConfig = (percentage: number): MascotConfig => {
 };
 
 const DashboardMobileV2: React.FC<DashboardProps> = ({ 
-    onOpenAccounts, 
-    onOpenVariableExpenses,
-    onOpenFixedExpenses,
-    onOpenPersonalExpenses,
-    onOpenIncomes,
-    onOpenYields,
-    onOpenInvoices,
-    onOpenReports,
+  onOpenAccounts,
+  onOpenVariableExpenses,
+  onOpenFixedExpenses,
+  onOpenPersonalExpenses,
+  onOpenIncomes,
+  onOpenYields,
+  onOpenInvoices,
+  onOpenReports,
+  onOpenDas,
     financialData,
     creditCards,
     expenseBreakdown = { fixed: 0, variable: 0, personal: 0 },
@@ -681,9 +689,67 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
   const calloutIcon = meiStatus.level === 'over' ? OctagonAlert : meiStatus.level === 'critical' ? Flame : meiStatus.level === 'attention' ? AlertTriangle : CheckCircle2;
 
   const { navigateToResult } = useGlobalActions();
+  const { layout, setOrder, loading: layoutLoading } = useDashboardLayout();
+
+  const blockLabels: Record<DashboardBlockId, string> = {
+      quick_access: 'Acesso rápido',
+      mei_limit: 'Faturamento fiscal',
+      financial_xray: 'Raio-X financeiro',
+      credit_cards: 'Faturas',
+      expense_breakdown: 'Despesas por categoria'
+  };
+
+  const availableBlocks = useMemo<Record<DashboardBlockId, boolean>>(() => ({
+      quick_access: true,
+      mei_limit: canViewMeiLimit,
+      financial_xray: true,
+      credit_cards: canViewInvoices,
+      expense_breakdown: canManageExpenses
+  }), [canViewMeiLimit, canViewInvoices, canManageExpenses]);
+
+  const visibleOrder = useMemo(
+      () => layout.order.filter((id) => availableBlocks[id]),
+      [layout.order, availableBlocks]
+  );
+
+  const orderMap = useMemo(() => {
+      const map: Record<DashboardBlockId, number> = {
+          quick_access: 0,
+          mei_limit: 1,
+          financial_xray: 2,
+          credit_cards: 3,
+          expense_breakdown: 4
+      };
+      layout.order.forEach((id, index) => {
+          map[id] = index;
+      });
+      return map;
+  }, [layout.order]);
+
+  const sensors = useSensors(
+      useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIndex = visibleOrder.indexOf(active.id as DashboardBlockId);
+      const newIndex = visibleOrder.indexOf(over.id as DashboardBlockId);
+      if (oldIndex < 0 || newIndex < 0) return;
+      const nextVisible = arrayMove(visibleOrder, oldIndex, newIndex) as DashboardBlockId[];
+      const visibleSet = new Set(nextVisible);
+      let pointer = 0;
+      const merged = layout.order.map((id) => {
+          if (!visibleSet.has(id)) return id;
+          const nextId = nextVisible[pointer];
+          pointer += 1;
+          return nextId;
+      });
+      setOrder(merged as DashboardBlockId[]);
+  };
 
   return (
-    <div className="w-full max-w-full px-4 py-4 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="w-full max-w-full px-4 py-4 flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="w-full mt-1">
             <div className="relative" ref={searchContainerRef}>
                 <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white/90 dark:bg-white/10 border border-white/60 dark:border-zinc-800 text-sm font-semibold text-indigo-700 dark:text-white shadow-lg shadow-indigo-500/10 focus-within:ring-2 focus-within:ring-indigo-400 transition-all">
@@ -770,10 +836,26 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
             </div>
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-zinc-400">Arraste os blocos para reorganizar.</span>
+        </div>
+
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
+                <div className="flex flex-col gap-6">
+
         {/* Quick Access */}
+        {availableBlocks.quick_access && (
+        <SortableBlock
+            id="quick_access"
+            label={blockLabels.quick_access}
+            disabled={layoutLoading}
+            style={{ order: orderMap.quick_access }}
+        >
         <section>
-            <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
-            <div className="space-y-2">
+            <div className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
+                <div className="space-y-2">
                 {canViewBalances && (
                     <MobileListItem 
                         icon={<Wallet size={18} className="text-blue-500 dark:text-blue-400" />} 
@@ -828,11 +910,25 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                         onClick={onOpenReports}
                     />
                 )}
+                <MobileListItem
+                    icon={<FileText size={18} className="text-teal-500 dark:text-teal-400" />}
+                    label="Emissão DAS"
+                    onClick={onOpenDas}
+                />
+                </div>
             </div>
         </section>
+        </SortableBlock>
+        )}
 
         {/* MEI Limit Monitor (GAMIFIED) - Conditionally Rendered */}
         {canViewMeiLimit && (
+            <SortableBlock
+                id="mei_limit"
+                label={blockLabels.mei_limit}
+                disabled={layoutLoading}
+                style={{ order: orderMap.mei_limit }}
+            >
             <section>
                 <div className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm transition-colors duration-300`}>
                     <div className="flex items-start justify-between gap-3">
@@ -894,9 +990,17 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                     )}
                 </div>
             </section>
+            </SortableBlock>
         )}
 
         {/* Financial X-Ray */}
+        {availableBlocks.financial_xray && (
+        <SortableBlock
+            id="financial_xray"
+            label={blockLabels.financial_xray}
+            disabled={layoutLoading}
+            style={{ order: orderMap.financial_xray }}
+        >
         <section>
             <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Indicadores do mês</h2>
             <div className="space-y-2">
@@ -936,9 +1040,17 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                 )}
             </div>
         </section>
+        </SortableBlock>
+        )}
 
         {/* Credit Cards Section */}
         {canViewInvoices && (
+            <SortableBlock
+                id="credit_cards"
+                label={blockLabels.credit_cards}
+                disabled={layoutLoading}
+                style={{ order: orderMap.credit_cards }}
+            >
             <section>
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
@@ -993,10 +1105,17 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                     </div>
                 )}
             </section>
+            </SortableBlock>
         )}
 
         {/* Categorized Expense Breakdown - BAR RANKING */}
         {canManageExpenses && (
+            <SortableBlock
+                id="expense_breakdown"
+                label={blockLabels.expense_breakdown}
+                disabled={layoutLoading}
+                style={{ order: orderMap.expense_breakdown }}
+            >
             <section className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
                 <div className="flex items-start justify-between gap-3 mb-4">
                     <div>
@@ -1148,13 +1267,58 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                     </div>
                 )}
             </section>
+            </SortableBlock>
         )}
 
-        <footer className="text-center text-[10px] text-zinc-500 dark:text-zinc-400 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+                </div>
+            </SortableContext>
+        </DndContext>
+
+        <footer
+            className="text-center text-[10px] text-zinc-500 dark:text-zinc-400 pt-3 border-t border-zinc-100 dark:border-zinc-800"
+            style={{ order: 999 }}
+        >
             versão 1.0.0
         </footer>
     </div>
   );
+};
+
+const SortableBlock: React.FC<{
+    id: DashboardBlockId;
+    label: string;
+    disabled: boolean;
+    style?: React.CSSProperties;
+    children: React.ReactNode;
+}> = ({ id, label, disabled, style, children }) => {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+    const mergedStyle = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        ...style
+    };
+
+    return (
+        <div
+            ref={setNodeRef}
+            style={mergedStyle}
+            className={`relative ${isDragging ? 'z-20' : ''}`}
+        >
+            <div className="absolute -left-2 top-4 z-10">
+                <button
+                    type="button"
+                    {...attributes}
+                    {...listeners}
+                    disabled={disabled}
+                    className="flex h-7 w-5 items-center justify-center rounded-r-lg border border-zinc-200 bg-white text-zinc-400 shadow-sm hover:text-zinc-600 dark:border-zinc-800 dark:bg-[#151517] dark:hover:text-zinc-200"
+                    aria-label={`Mover ${label}`}
+                >
+                    <GripVertical size={14} />
+                </button>
+            </div>
+            {children}
+        </div>
+    );
 };
 
 // ... existing subcomponents ...

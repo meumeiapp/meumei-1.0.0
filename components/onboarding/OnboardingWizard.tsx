@@ -20,7 +20,7 @@ interface OnboardingWizardProps {
   isBusy?: boolean;
 }
 
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 2;
 const DEFAULT_NATURE: Account['nature'] = 'PJ';
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
@@ -82,6 +82,12 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const [step, setStep] = useState(1);
   const todayISO = useMemo(() => resolveTodayISO(), []);
   const [companyName, setCompanyName] = useState(companyInfo.name || '');
+  const [companyCnpj, setCompanyCnpj] = useState(companyInfo.cnpj || '');
+  const [companyAddress, setCompanyAddress] = useState(companyInfo.address || '');
+  const [companyZip, setCompanyZip] = useState(companyInfo.zipCode || '');
+  const [companyPhone, setCompanyPhone] = useState(companyInfo.phone || '');
+  const [companyEmail, setCompanyEmail] = useState(companyInfo.email || '');
+  const [companyWebsite, setCompanyWebsite] = useState(companyInfo.website || '');
   const [startDate, setStartDate] = useState(todayISO);
   const [totalBalanceInput, setTotalBalanceInput] = useState(
     initialTotalBalance !== null && initialTotalBalance !== undefined
@@ -137,21 +143,35 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
     );
   }, [draftAccounts]);
 
-  const remainingTotal = useMemo(() => {
-    return roundToCents(totalBalance - distributedTotal);
-  }, [totalBalance, distributedTotal]);
+  const currentTotalForDistribution = useMemo(() => {
+    const parsed = parseCurrency(totalBalanceInput);
+    if (parsed !== null) {
+      return roundToCents(parsed);
+    }
+    return totalBalance;
+  }, [totalBalanceInput, totalBalance]);
 
-  const canProceedStep1 = Boolean(companyName.trim()) && Boolean(startDate);
-  const canProceedStep2 = parseCurrency(totalBalanceInput) !== null;
-  const canProceedStep3 = Math.abs(remainingTotal) <= 0.01;
-  const canProceedStep4 =
-    usesCreditCard === 'no' || (usesCreditCard === 'yes' && creditCards.length > 0);
+  const remainingTotal = useMemo(() => {
+    return roundToCents(currentTotalForDistribution - distributedTotal);
+  }, [currentTotalForDistribution, distributedTotal]);
+
+  const canProceedStep1 =
+    Boolean(companyName.trim()) &&
+    Boolean(startDate) &&
+    Boolean(companyCnpj.trim()) &&
+    Boolean(companyAddress.trim()) &&
+    Boolean(companyPhone.trim()) &&
+    Boolean(companyEmail.trim());
+  const canProceedStep2 =
+    parseCurrency(totalBalanceInput) !== null &&
+    Math.abs(remainingTotal) <= 0.01 &&
+    (usesCreditCard === 'no' || (usesCreditCard === 'yes' && creditCards.length > 0));
 
   const handleNext = async () => {
     setError(null);
     if (step === 1) {
       if (!canProceedStep1) {
-        setError('Preencha o nome e a data de início para continuar.');
+        setError('Preencha os dados da empresa para continuar.');
         console.info('[onboarding] validation', { step, valid: false, reason: 'company_fields' });
         return;
       }
@@ -164,7 +184,13 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
       const nextCompany: CompanyInfo = {
         ...companyInfo,
         name: companyName.trim(),
-        startDate
+        startDate,
+        cnpj: companyCnpj.trim(),
+        address: companyAddress.trim(),
+        zipCode: companyZip.trim(),
+        phone: companyPhone.trim(),
+        email: companyEmail.trim(),
+        website: companyWebsite.trim()
       };
       console.info('[onboarding] company_save', { name: nextCompany.name, startDate: nextCompany.startDate });
       await onUpdateCompany(nextCompany);
@@ -179,18 +205,15 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
         return;
       }
       const rounded = roundToCents(parsed);
+      const remaining = roundToCents(rounded - distributedTotal);
+      if (Math.abs(remaining) > 0.01) {
+        setError('Ajuste os saldos para distribuir todo o valor informado.');
+        console.info('[onboarding] validation', { step, valid: false, remaining });
+        return;
+      }
       setTotalBalance(rounded);
       console.info('[onboarding] total_balance', { total: rounded });
       await onPersistOnboarding({ initialTotalBalance: rounded });
-      setStep(3);
-      return;
-    }
-    if (step === 3) {
-      if (!canProceedStep3) {
-        setError('Ajuste os saldos para distribuir todo o valor informado.');
-        console.info('[onboarding] validation', { step, valid: false, remaining: remainingTotal });
-        return;
-      }
       const normalized = draftAccounts.map(account => {
         const initialBalance = roundToCents(Number(account.initialBalance) || 0);
         return {
@@ -201,16 +224,12 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
         };
       });
       console.info('[onboarding] totals', {
-        total: totalBalance,
+        total: rounded,
         distributed: distributedTotal,
-        remaining: remainingTotal
+        remaining
       });
       await onUpdateAccounts(normalized);
-      setStep(4);
-      return;
-    }
-    if (step === 4) {
-      if (!canProceedStep4) {
+      if (usesCreditCard === 'yes' && creditCards.length === 0) {
         setError('Cadastre pelo menos um cartão ou selecione "Não uso".');
         console.info('[onboarding] validation', { step, valid: false, reason: 'cards_required' });
         return;
@@ -310,13 +329,9 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const stepTitle = () => {
     switch (step) {
       case 1:
-        return 'Vamos configurar sua empresa';
+        return 'Gestão da empresa';
       case 2:
-        return 'Quanto você tem hoje na empresa?';
-      case 3:
-        return 'Distribua esse saldo nas contas';
-      case 4:
-        return 'Cartões de crédito (se você usa)';
+        return 'Saldo, contas e cartões';
       default:
         return '';
     }
@@ -377,6 +392,84 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
               </p>
             </div>
           </div>
+          <div className="rounded-2xl border border-sky-100 dark:border-sky-500/30 bg-sky-50/70 dark:bg-sky-500/10 p-4 flex gap-3 text-sm text-sky-700 dark:text-sky-200">
+            <Info size={18} className="mt-0.5" />
+            <p>Esses dados saem da gestão da empresa e ajudam a emitir a DAS no futuro.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                CNPJ
+              </label>
+              <input
+                type="text"
+                value={companyCnpj}
+                onChange={(e) => setCompanyCnpj(e.target.value)}
+                placeholder="00.000.000/0000-00"
+                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                E-mail
+              </label>
+              <input
+                type="email"
+                value={companyEmail}
+                onChange={(e) => setCompanyEmail(e.target.value)}
+                placeholder="contato@empresa.com"
+                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Telefone
+              </label>
+              <input
+                type="text"
+                value={companyPhone}
+                onChange={(e) => setCompanyPhone(e.target.value)}
+                placeholder="(00) 00000-0000"
+                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Site (opcional)
+              </label>
+              <input
+                type="text"
+                value={companyWebsite}
+                onChange={(e) => setCompanyWebsite(e.target.value)}
+                placeholder="www.suaempresa.com.br"
+                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Endereço
+              </label>
+              <input
+                type="text"
+                value={companyAddress}
+                onChange={(e) => setCompanyAddress(e.target.value)}
+                placeholder="Rua, número, bairro, cidade"
+                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                CEP (opcional)
+              </label>
+              <input
+                type="text"
+                value={companyZip}
+                onChange={(e) => setCompanyZip(e.target.value)}
+                placeholder="00000-000"
+                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+          </div>
         </div>
       );
     }
@@ -387,7 +480,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           <div className="rounded-2xl border border-emerald-100 dark:border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-500/10 p-4 flex gap-3 text-sm text-emerald-700 dark:text-emerald-200">
             <Info size={18} className="mt-0.5" />
             <p>
-              É o total somado de todas as suas contas usadas no negócio. Na próxima etapa você vai dividir esse valor entre suas contas.
+              Informe o saldo total, distribua nas contas e indique se usa cartões.
             </p>
           </div>
           <div className="space-y-2">
@@ -406,13 +499,6 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
               />
             </div>
           </div>
-        </div>
-      );
-    }
-
-    if (step === 3) {
-      return (
-        <div className="space-y-6">
           <div className="rounded-2xl border border-blue-100 dark:border-blue-500/30 bg-blue-50/70 dark:bg-blue-500/10 p-4 flex gap-3 text-sm text-blue-700 dark:text-blue-200">
             <Info size={18} className="mt-0.5" />
             <p>
@@ -461,18 +547,18 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                     <p className="font-semibold text-zinc-900 dark:text-white">{account.name}</p>
                     <p className="text-xs text-zinc-500">{account.type}</p>
                   </div>
-                  <div className="flex flex-col gap-2 md:items-end">
+                  <div className="flex flex-col gap-2 md:items-center text-center">
                     <label className="text-[10px] uppercase tracking-wide text-zinc-400">Natureza</label>
                     <select
                       value={account.nature || DEFAULT_NATURE}
                       onChange={(e) => handleAccountNatureChange(account.id, e.target.value as 'PJ' | 'PF')}
-                      className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-xs text-zinc-700 dark:text-zinc-100"
+                      className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-xs text-zinc-700 dark:text-zinc-100 text-center"
                     >
                       <option value="PJ">PJ</option>
                       <option value="PF">PF</option>
                     </select>
                   </div>
-                  <div className="flex flex-col gap-2 md:items-end">
+                  <div className="flex flex-col gap-2 md:items-center text-center">
                     <label className="text-[10px] uppercase tracking-wide text-zinc-400">Saldo inicial</label>
                     <input
                       type="text"
@@ -480,7 +566,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                       value={balanceDrafts[account.id] ?? ''}
                       onChange={(e) => handleAccountBalanceChange(account.id, e.target.value)}
                       placeholder="0,00"
-                      className="w-32 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-sm text-zinc-700 dark:text-zinc-100 text-right"
+                      className="w-32 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-sm text-zinc-700 dark:text-zinc-100 text-center"
                     />
                     <button
                       type="button"
@@ -497,76 +583,73 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
               ))}
             </div>
           )}
+          <div className="rounded-2xl border border-purple-100 dark:border-purple-500/30 bg-purple-50/70 dark:bg-purple-500/10 p-4 flex gap-3 text-sm text-purple-700 dark:text-purple-200">
+            <Info size={18} className="mt-0.5" />
+            <p>
+              Cartões ajudam a acompanhar despesas e faturas do MEI. Se você não usa, pode seguir sem cadastrar.
+            </p>
+          </div>
+
+          <div className="flex flex-col md:flex-row gap-4">
+            <button
+              type="button"
+              onClick={() => setUsesCreditCard('yes')}
+              className={`flex-1 rounded-2xl border px-4 py-4 text-sm font-semibold transition ${usesCreditCard === 'yes' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300' : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 hover:border-indigo-300'}`}
+            >
+              Sim, uso
+            </button>
+            <button
+              type="button"
+              onClick={() => setUsesCreditCard('no')}
+              className={`flex-1 rounded-2xl border px-4 py-4 text-sm font-semibold transition ${usesCreditCard === 'no' ? 'border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 hover:border-emerald-300'}`}
+            >
+              Não uso
+            </button>
+          </div>
+
+          {usesCreditCard === 'yes' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">Cartões cadastrados</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsCardModalOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 transition"
+                >
+                  <Plus size={14} /> Adicionar cartão
+                </button>
+              </div>
+              {creditCards.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-[#101014] p-6 text-center text-sm text-zinc-500">
+                  Nenhum cartão cadastrado. Adicione ao menos um para continuar.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {creditCards.map(card => (
+                    <div key={card.id} className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-zinc-900 dark:text-white">{card.name}</p>
+                        <p className="text-xs text-zinc-500">{card.brand} • Fecha {card.closingDay} • Vence {card.dueDay}</p>
+                      </div>
+                      <CreditCard className="text-indigo-500" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {canProceedStep2 && (
+            <div className="rounded-2xl border border-emerald-200 dark:border-emerald-500/40 bg-emerald-50/70 dark:bg-emerald-500/10 p-4 flex gap-3 text-sm text-emerald-700 dark:text-emerald-200">
+              <CheckCircle2 size={18} className="mt-0.5" />
+              <p>Base pronta! Você pode começar a usar o painel.</p>
+            </div>
+          )}
         </div>
       );
     }
 
-    return (
-      <div className="space-y-6">
-        <div className="rounded-2xl border border-purple-100 dark:border-purple-500/30 bg-purple-50/70 dark:bg-purple-500/10 p-4 flex gap-3 text-sm text-purple-700 dark:text-purple-200">
-          <Info size={18} className="mt-0.5" />
-          <p>
-            Cartões ajudam a acompanhar despesas e faturas do MEI. Se você não usa, pode seguir sem cadastrar.
-          </p>
-        </div>
-
-        <div className="flex flex-col md:flex-row gap-4">
-          <button
-            type="button"
-            onClick={() => setUsesCreditCard('yes')}
-            className={`flex-1 rounded-2xl border px-4 py-4 text-sm font-semibold transition ${usesCreditCard === 'yes' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300' : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 hover:border-indigo-300'}`}
-          >
-            Sim, uso
-          </button>
-          <button
-            type="button"
-            onClick={() => setUsesCreditCard('no')}
-            className={`flex-1 rounded-2xl border px-4 py-4 text-sm font-semibold transition ${usesCreditCard === 'no' ? 'border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 hover:border-emerald-300'}`}
-          >
-            Não uso
-          </button>
-        </div>
-
-        {usesCreditCard === 'yes' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">Cartões cadastrados</h3>
-              <button
-                type="button"
-                onClick={() => setIsCardModalOpen(true)}
-                className="inline-flex items-center gap-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 transition"
-              >
-                <Plus size={14} /> Adicionar cartão
-              </button>
-            </div>
-            {creditCards.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-[#101014] p-6 text-center text-sm text-zinc-500">
-                Nenhum cartão cadastrado. Adicione ao menos um para continuar.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {creditCards.map(card => (
-                  <div key={card.id} className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-zinc-900 dark:text-white">{card.name}</p>
-                      <p className="text-xs text-zinc-500">{card.brand} • Fecha {card.closingDay} • Vence {card.dueDay}</p>
-                    </div>
-                    <CreditCard className="text-indigo-500" />
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {canProceedStep4 && (
-          <div className="rounded-2xl border border-emerald-200 dark:border-emerald-500/40 bg-emerald-50/70 dark:bg-emerald-500/10 p-4 flex gap-3 text-sm text-emerald-700 dark:text-emerald-200">
-            <CheckCircle2 size={18} className="mt-0.5" />
-            <p>Base pronta! Você pode começar a usar o painel.</p>
-          </div>
-        )}
-      </div>
-    );
+    return null;
   };
 
   return (
@@ -611,10 +694,10 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           <button
             type="button"
             onClick={handleNext}
-            disabled={(step === 1 && !canProceedStep1) || (step === 2 && !canProceedStep2) || (step === 3 && !canProceedStep3) || (step === 4 && !canProceedStep4) || isBusy}
+            disabled={(step === 1 && !canProceedStep1) || (step === 2 && !canProceedStep2) || isBusy}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 text-sm font-semibold shadow-lg shadow-indigo-500/20 transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {step === 4 ? 'Ir para o painel' : 'Continuar'}
+            {step === 2 ? 'Ir para o painel' : 'Continuar'}
             <ArrowRight size={16} />
           </button>
         </div>

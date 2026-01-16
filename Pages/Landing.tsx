@@ -6,7 +6,14 @@ import metricsPreview from "@/assets/Code_Generated_Image.png";
 export default function Landing() {
   const [isLoading, setIsLoading] = useState(false);
   const [subscribeError, setSubscribeError] = useState("");
-  const [leadEmailState, setLeadEmailState] = useState("");
+  const [leadEmailState, setLeadEmailState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return localStorage.getItem("leadEmail") || "";
+    } catch {
+      return "";
+    }
+  });
 
   // --- LÓGICA (MANTIDA) ---
   const checkoutEndpointOverride = (import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || "").trim();

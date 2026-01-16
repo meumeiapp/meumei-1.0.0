@@ -7,6 +7,7 @@ import IncomesView from './components/IncomesView';
 import YieldsView from './components/YieldsView'; 
 import InvoicesView from './components/InvoicesView'; 
 import ReportsView from './components/ReportsView';
+import DasView from './components/DasView';
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import GlobalHeader from './components/GlobalHeader';
 import CompanyDetailsView from './components/CompanyDetailsView';
@@ -195,6 +196,8 @@ const AppInner: React.FC = () => {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
+  const ACCESS_BLOCKED_MESSAGE =
+    'Seu acesso ainda não está liberado. Conclua o pagamento para criar sua conta.';
   const [checkoutStatus, setCheckoutStatus] = useState<{
     tone: 'success' | 'warning' | 'error';
     message: string;
@@ -248,6 +251,10 @@ const AppInner: React.FC = () => {
         host === 'meumei-beta.firebaseapp.com' ||
         host === 'meumei-d88be.web.app' ||
         host === 'meumei-d88be.firebaseapp.com' ||
+        host === 'meumeiapp.web.app' ||
+        host === 'meumeiapp.firebaseapp.com' ||
+        host === 'meumeiapp.com.br' ||
+        host === 'www.meumeiapp.com.br' ||
         host.includes('meumei-beta') ||
         host.includes('meumei-d88be')
       );
@@ -486,6 +493,26 @@ const AppInner: React.FC = () => {
       docIds.push(trimmed);
     }
     return { rawEmail: trimmed, normalizedEmail: normalized, docIds };
+  };
+
+  const canRegisterWithEntitlement = async (email: string) => {
+    if (!email) return false;
+    const { docIds } = buildEntitlementDocIds(email);
+    for (const docId of docIds) {
+      try {
+        const ref = doc(db, 'entitlements', docId);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          if (data?.status === 'active') {
+            return true;
+          }
+        }
+      } catch (error) {
+        console.error('[auth] signup_precheck_error', error);
+      }
+    }
+    return false;
   };
 
   const checkEntitlement = async (
@@ -2900,6 +2927,14 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       const sessionId = checkoutSessionId;
       try {
           const emailKey = loginEmail.trim().toLowerCase();
+          if (!sessionId) {
+              const entitlementOk = await canRegisterWithEntitlement(emailKey);
+              if (!entitlementOk) {
+                  setLoginError(ACCESS_BLOCKED_MESSAGE);
+                  setLoginLoading(false);
+                  return;
+              }
+          }
           console.info('[beta-auth] register_start', { email_present: Boolean(emailKey) });
           await authRegister(emailKey, loginPassword);
           console.info('[beta-auth] register_result', { ok: true });
@@ -3117,14 +3152,27 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                       </div>
                   )}
                   {loginError && (
-                      <div className="text-xs text-red-400 text-left">
-                          <div>{loginError}</div>
-                          {debugAuthEnabled && loginErrorCode && (
-                              <div className="mt-1 text-[10px] text-slate-400 font-mono">
-                                  Código interno: AUTH_SIGNIN_FAILED ({loginErrorCode})
+                      loginError === ACCESS_BLOCKED_MESSAGE ? (
+                          <button
+                              type="button"
+                              onClick={() => updateRoute('/', '')}
+                              className="w-full text-xs text-amber-200 text-center bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:border-amber-300/60 hover:text-amber-100 transition"
+                          >
+                              <div className="font-semibold">{loginError}</div>
+                              <div className="mt-1 text-[10px] text-slate-200/70">
+                                  Clique para voltar e concluir o pagamento.
                               </div>
-                          )}
-                      </div>
+                          </button>
+                      ) : (
+                          <div className="text-xs text-red-400 text-left">
+                              <div>{loginError}</div>
+                              {debugAuthEnabled && loginErrorCode && (
+                                  <div className="mt-1 text-[10px] text-slate-400 font-mono">
+                                      Código interno: AUTH_SIGNIN_FAILED ({loginErrorCode})
+                                  </div>
+                              )}
+                          </div>
+                      )
                   )}
                   {resetPasswordMessage && (
                       <div className="text-xs text-amber-200 text-left">{resetPasswordMessage}</div>
@@ -3184,6 +3232,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       return renderBetaMpOnboarding();
   }
 
+  if (isLandingRoute && !authUser) {
+      return <Landing />;
+  }
+
   if (authLoading && !authTimeoutHit) {
       return renderAuthLoading();
   }
@@ -3198,10 +3250,6 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
 
   if (authUser && (licenseResolveState === 'blocked' || !resolvedLicenseId)) {
       return renderLicenseBlocked();
-  }
-
-  if (isLandingRoute && !authUser) {
-      return <Landing />;
   }
 
   if (!authUser || !currentUser) {
@@ -3254,6 +3302,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 onOpenYields={() => setCurrentView(ViewState.YIELDS)}
                 onOpenInvoices={() => setCurrentView(ViewState.INVOICES)}
                 onOpenReports={() => setCurrentView(ViewState.REPORTS)}
+                onOpenDas={() => setCurrentView(ViewState.DAS)}
                 financialData={{
                     balance: totalBalance,
                     legacyBalance: legacyTotalBalance,
@@ -3287,6 +3336,14 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              companyName={companyInfo.name}
              creditCards={creditCards}
              licenseId={currentUser?.licenseId}
+          />
+      )}
+
+      {currentView === ViewState.DAS && renderLayout(
+          <DasView
+              onBack={() => setCurrentView(ViewState.DASHBOARD)}
+              company={companyInfo}
+              onOpenCompany={() => setCurrentView(ViewState.SETTINGS)}
           />
       )}
 

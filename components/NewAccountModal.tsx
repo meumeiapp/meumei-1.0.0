@@ -235,9 +235,9 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
               {/* Initial Balance */}
-              <div className="space-y-2">
+              <div className="space-y-2 text-center">
                 <label className={modalLabelClass}>
                   {isEditMode ? 'Saldo Inicial (somente leitura)' : 'Saldo Inicial (R$)'}
                 </label>
@@ -249,23 +249,25 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                   value={initialBalance}
                   onChange={(e) => setInitialBalance(e.target.value)}
                   disabled={isEditMode}
-                  className={`${modalInputClass} ${isEditMode ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  className={`${modalInputClass} text-center ${isEditMode ? 'opacity-70 cursor-not-allowed' : ''}`}
                 />
               </div>
 
               {/* Account Type Section */}
-              <div className="space-y-4 relative">
+              <div className="space-y-4 relative text-center">
                   <div className="space-y-2">
                       <label className={modalLabelClass}>Natureza da conta</label>
-                      <SegmentedControl
-                        value={accountNature}
-                        options={[
-                          { label: 'PJ', value: 'PJ' },
-                          { label: 'PF', value: 'PF' }
-                        ]}
-                        onChange={setAccountNature}
-                        ariaLabel="Natureza da conta"
-                      />
+                      <div className="flex justify-center">
+                        <SegmentedControl
+                          value={accountNature}
+                          options={[
+                            { label: 'PJ', value: 'PJ' },
+                            { label: 'PF', value: 'PF' }
+                          ]}
+                          onChange={setAccountNature}
+                          ariaLabel="Natureza da conta"
+                        />
+                      </div>
                       <p className={modalHelperTextClass}>
                         Use PJ para contas do negócio e PF para pessoais.
                       </p>

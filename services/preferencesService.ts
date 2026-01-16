@@ -36,6 +36,68 @@ export const preferencesService = {
     }
   },
 
+  async getDashboardLayout(uid: string | null | undefined): Promise<{
+    order?: string[];
+    hidden?: string[];
+  } | null> {
+    if (!uid) {
+      console.info('[prefs] layout_load_skipped', { reason: 'missing_uid' });
+      return null;
+    }
+    const ref = getUserPreferencesRef(uid);
+    const path = `users/${uid}/preferences/app`;
+    if (!guardUserPath(uid, path, 'prefs_layout_get')) return null;
+    try {
+      const snap = await getDoc(ref);
+      console.info('[prefs] layout_read', { path: ref.path, exists: snap.exists() });
+      if (!snap.exists()) return null;
+      const data = snap.data() as Record<string, unknown>;
+      const layout = data?.dashboardLayout as { order?: string[]; hidden?: string[] } | undefined;
+      return layout || null;
+    } catch (error: any) {
+      logPermissionDenied({
+        step: 'preferences_get_layout',
+        path: ref.path,
+        operation: 'getDoc',
+        error,
+        licenseId: uid
+      });
+      console.error('[prefs] layout_error', { step: 'get', message: error?.message });
+      return null;
+    }
+  },
+
+  async setDashboardLayout(
+    uid: string | null | undefined,
+    layout: { order: string[]; hidden: string[] }
+  ): Promise<void> {
+    if (!uid) {
+      console.error('[prefs] layout_error', { step: 'save', message: 'missing_uid' });
+      return;
+    }
+    const ref = getUserPreferencesRef(uid);
+    const path = `users/${uid}/preferences/app`;
+    if (!guardUserPath(uid, path, 'prefs_layout_set')) return;
+    try {
+      await setDoc(
+        ref,
+        { dashboardLayout: layout, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      console.info('[prefs] layout_save', { path: ref.path });
+    } catch (error) {
+      logPermissionDenied({
+        step: 'preferences_set_layout',
+        path: ref.path,
+        operation: 'setDoc',
+        error,
+        licenseId: uid
+      });
+      console.error('[prefs] layout_error', { step: 'save', message: (error as any)?.message });
+      throw error;
+    }
+  },
+
   async setTheme(uid: string | null | undefined, theme: ThemePreference): Promise<void> {
     if (!uid) {
       console.error('[prefs] error', { step: 'save', message: 'missing_uid' });

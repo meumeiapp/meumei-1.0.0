@@ -22,17 +22,23 @@ import {
   Target,
   Flame,
   OctagonAlert,
+  FileText,
+  GripVertical,
   Lock,
   Search,
   Download,
   ChevronDown
 } from 'lucide-react';
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
+import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 
 interface FinancialData {
     balance: number;
@@ -173,6 +179,7 @@ interface DashboardProps {
   onOpenYields?: () => void; 
   onOpenInvoices?: () => void;
   onOpenReports?: () => void; // New Prop
+  onOpenDas: () => void;
   financialData: FinancialData;
   creditCards: CreditCardType[];
   expenseBreakdown?: ExpenseBreakdown;
@@ -310,15 +317,16 @@ const getMascotConfig = (percentage: number): MascotConfig => {
   };
 };
 
-const DashboardDesktop: React.FC<DashboardProps> = ({ 
-    onOpenAccounts, 
-    onOpenVariableExpenses,
-    onOpenFixedExpenses,
-    onOpenPersonalExpenses,
-    onOpenIncomes,
-    onOpenYields,
-    onOpenInvoices,
-    onOpenReports,
+const DashboardDesktop: React.FC<DashboardProps> = ({
+  onOpenAccounts,
+  onOpenVariableExpenses,
+  onOpenFixedExpenses,
+  onOpenPersonalExpenses,
+  onOpenIncomes,
+  onOpenYields,
+  onOpenInvoices,
+  onOpenReports,
+  onOpenDas,
     financialData,
     creditCards,
     expenseBreakdown = { fixed: 0, variable: 0, personal: 0 },
@@ -683,6 +691,64 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const calloutIcon = meiStatus.level === 'over' ? OctagonAlert : meiStatus.level === 'critical' ? Flame : meiStatus.level === 'attention' ? AlertTriangle : CheckCircle2;
 
   const { navigateToResult } = useGlobalActions();
+  const { layout, setOrder, loading: layoutLoading } = useDashboardLayout();
+
+  const blockLabels: Record<DashboardBlockId, string> = {
+      quick_access: 'Acesso rápido',
+      mei_limit: 'Faturamento fiscal',
+      financial_xray: 'Raio-X financeiro',
+      credit_cards: 'Faturas',
+      expense_breakdown: 'Despesas por categoria'
+  };
+
+  const availableBlocks = useMemo<Record<DashboardBlockId, boolean>>(() => ({
+      quick_access: true,
+      mei_limit: canViewMeiLimit,
+      financial_xray: true,
+      credit_cards: canViewInvoices,
+      expense_breakdown: canManageExpenses
+  }), [canViewMeiLimit, canViewInvoices, canManageExpenses]);
+
+  const visibleOrder = useMemo(
+      () => layout.order.filter((id) => availableBlocks[id]),
+      [layout.order, availableBlocks]
+  );
+
+  const orderMap = useMemo(() => {
+      const map: Record<DashboardBlockId, number> = {
+          quick_access: 0,
+          mei_limit: 1,
+          financial_xray: 2,
+          credit_cards: 3,
+          expense_breakdown: 4
+      };
+      layout.order.forEach((id, index) => {
+          map[id] = index;
+      });
+      return map;
+  }, [layout.order]);
+
+  const sensors = useSensors(
+      useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIndex = visibleOrder.indexOf(active.id as DashboardBlockId);
+      const newIndex = visibleOrder.indexOf(over.id as DashboardBlockId);
+      if (oldIndex < 0 || newIndex < 0) return;
+      const nextVisible = arrayMove(visibleOrder, oldIndex, newIndex) as DashboardBlockId[];
+      const visibleSet = new Set(nextVisible);
+      let pointer = 0;
+      const merged = layout.order.map((id) => {
+          if (!visibleSet.has(id)) return id;
+          const nextId = nextVisible[pointer];
+          pointer += 1;
+          return nextId;
+      });
+      setOrder(merged as DashboardBlockId[]);
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pt-8">
@@ -773,10 +839,25 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
             </div>
         </div>
 
-        {/* Quick Access */}
-        <section>
-            <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-4">Acesso Rápido</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4">
+            <span className="text-xs text-zinc-400">Arraste os blocos para reorganizar.</span>
+        </div>
+
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
+                <div className="flex flex-col gap-8">
+                {/* Quick Access */}
+                {availableBlocks.quick_access && (
+                    <SortableBlock
+                        id="quick_access"
+                        label={blockLabels.quick_access}
+                        disabled={layoutLoading}
+                        style={{ order: orderMap.quick_access }}
+                    >
+                        <section>
+                            <div className="bg-white dark:bg-[#151517] rounded-2xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                                <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-4">Acesso Rápido</h2>
+                                <div className="grid grid-flow-col auto-cols-fr gap-3">
                 {canViewBalances && (
                     <QuickAction 
                         icon={<Wallet />} 
@@ -855,11 +936,28 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         onClick={onOpenReports}
                     />
                 )}
-            </div>
-        </section>
+                <QuickAction
+                    icon={<FileText />}
+                    label="Emissão DAS"
+                    color="text-teal-600 dark:text-teal-400"
+                    bg="bg-teal-50 dark:bg-teal-500/10"
+                    border="border-teal-100 dark:border-teal-500/20"
+                    onClick={onOpenDas}
+                />
+                            </div>
+                        </div>
+                    </section>
+                </SortableBlock>
+                )}
 
         {/* MEI Limit Monitor (GAMIFIED) - Conditionally Rendered */}
-        {canViewMeiLimit && (
+                {canViewMeiLimit && (
+                    <SortableBlock
+                        id="mei_limit"
+                        label={blockLabels.mei_limit}
+                        disabled={layoutLoading}
+                        style={{ order: orderMap.mei_limit }}
+                    >
             <section>
                 <div className={`bg-white dark:bg-[#151517] rounded-2xl p-6 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
                     <div className="absolute inset-y-0 right-0 w-32 opacity-5 pointer-events-none">
@@ -956,9 +1054,17 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                     </div>
                 </div>
             </section>
+            </SortableBlock>
         )}
 
         {/* Financial X-Ray */}
+        {availableBlocks.financial_xray && (
+        <SortableBlock
+            id="financial_xray"
+            label={blockLabels.financial_xray}
+            disabled={layoutLoading}
+            style={{ order: orderMap.financial_xray }}
+        >
         <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
             
             {/* Balance Card - Conditional */}
@@ -1010,9 +1116,17 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 />
             )}
         </section>
+        </SortableBlock>
+        )}
 
         {/* Credit Cards Section */}
         {canViewInvoices && (
+            <SortableBlock
+                id="credit_cards"
+                label={blockLabels.credit_cards}
+                disabled={layoutLoading}
+                style={{ order: orderMap.credit_cards }}
+            >
             <section>
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
@@ -1099,10 +1213,17 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                     </div>
                 )}
             </section>
+            </SortableBlock>
         )}
 
         {/* Categorized Expense Breakdown - BAR RANKING */}
         {canManageExpenses && (
+            <SortableBlock
+                id="expense_breakdown"
+                label={blockLabels.expense_breakdown}
+                disabled={layoutLoading}
+                style={{ order: orderMap.expense_breakdown }}
+            >
             <section className="bg-white dark:bg-[#151517] rounded-2xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
                 <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
                     <div>
@@ -1254,7 +1375,12 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                     </div>
                 )}
             </section>
+            </SortableBlock>
         )}
+
+                </div>
+            </SortableContext>
+        </DndContext>
 
         <footer className="text-center text-xs text-zinc-500 dark:text-zinc-400 pt-4 border-t border-zinc-100 dark:border-zinc-800">
             versão 1.0.0
@@ -1262,6 +1388,43 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
 
     </div>
   );
+};
+
+const SortableBlock: React.FC<{
+    id: DashboardBlockId;
+    label: string;
+    disabled: boolean;
+    style?: React.CSSProperties;
+    children: React.ReactNode;
+}> = ({ id, label, disabled, style, children }) => {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+    const mergedStyle = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        ...style
+    };
+
+    return (
+        <div
+            ref={setNodeRef}
+            style={mergedStyle}
+            className={`relative ${isDragging ? 'z-20' : ''}`}
+        >
+            <div className="absolute -left-3 top-6 z-10">
+                <button
+                    type="button"
+                    {...attributes}
+                    {...listeners}
+                    disabled={disabled}
+                    className="flex h-8 w-6 items-center justify-center rounded-r-xl border border-zinc-200 bg-white text-zinc-400 shadow-sm hover:text-zinc-600 dark:border-zinc-800 dark:bg-[#151517] dark:hover:text-zinc-200"
+                    aria-label={`Mover ${label}`}
+                >
+                    <GripVertical size={16} />
+                </button>
+            </div>
+            {children}
+        </div>
+    );
 };
 
 // ... existing subcomponents ...

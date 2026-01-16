@@ -71,6 +71,7 @@ export interface CompanyInfo {
 export enum ViewState {
   LOGIN = 'LOGIN',
   DASHBOARD = 'DASHBOARD',
+  DAS = 'DAS',
   SETTINGS = 'SETTINGS',
   ACCOUNTS = 'ACCOUNTS',
   COMPANY_DETAILS = 'COMPANY_DETAILS',
