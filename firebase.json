@@ -36,7 +36,7 @@
   },
   "hosting": [
     {
-      "site": "meumeiapp",
+      "site": "meumei-d88be",
       "public": "dist",
       "ignore": [
         "firebase.json",
@@ -45,50 +45,12 @@
       ],
       "rewrites": [
         {
-          "source": "**",
-          "destination": "/index.html"
-        }
-      ]
-    },
-    {
-      "target": "beta",
-      "public": "dist",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
-        {
-          "source": "**",
-          "destination": "/index.html"
-        }
-      ]
-    },
-    {
-      "target": "meumei-beta",
-      "public": "dist",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
-        {
-          "source": "**",
-          "destination": "/index.html"
-        }
-      ]
-    },
-    {
-      "target": "meumei-d88be",
-      "public": "dist",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
+          "source": "/api/health",
+          "function": {
+            "functionId": "health",
+            "region": "us-central1"
+          }
+        },
         {
           "source": "/api/createCheckoutSessionV2",
           "function": {
@@ -97,9 +59,9 @@
           }
         },
         {
-          "source": "/api/verifyCheckoutSessionV2",
+          "source": "/api/confirmCheckoutSession",
           "function": {
-            "functionId": "verifyCheckoutSessionV2",
+            "functionId": "confirmCheckoutSession",
             "region": "us-central1"
           }
         },
@@ -111,36 +73,12 @@
           }
         },
         {
-          "source": "**",
-          "destination": "/index.html"
-        }
-      ]
-    },
-    {
-      "site": "meumeiapp-beta",
-      "public": "dist",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
-        {
-          "source": "**",
-          "destination": "/index.html"
-        }
-      ]
-    }
-    ,
-    {
-      "target": "meumeibeta",
-      "public": "dist",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
+          "source": "/api/stripeWebhook",
+          "function": {
+            "functionId": "stripeWebhook",
+            "region": "us-central1"
+          }
+        },
         {
           "source": "**",
           "destination": "/index.html"

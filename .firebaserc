@@ -1,24 +1,5 @@
 {
   "projects": {
     "default": "meumei-d88be"
-  },
-  "targets": {
-    "meumei-d88be": {
-      "hosting": {
-        "beta": [
-          "meumei-beta-102"
-        ],
-        "meumei-beta": [
-          "meumei-beta"
-        ],
-        "meumei-d88be": [
-          "meumei-d88be"
-        ],
-        "meumeibeta": [
-          "meumeibeta"
-        ]
-      }
-    }
-  },
-  "etags": {}
+  }
 }
