@@ -39,6 +39,8 @@ import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
+import MeumeiHelper from './MeumeiHelper';
+import QuickAccessHelp from './QuickAccessHelp';
 
 interface FinancialData {
     balance: number;
@@ -192,6 +194,12 @@ interface DashboardProps {
   minDate?: string;
   onOpenInstall: () => void;
   isAppInstalled?: boolean;
+  tipsEnabled?: boolean;
+  onOpenSettings?: () => void;
+  categoriesCount?: number;
+  isPwaInstallable?: boolean;
+  isStandalone?: boolean;
+  onInstallApp?: () => void;
 }
 
 const MEI_LIMIT = 81000;
@@ -336,16 +344,194 @@ const DashboardMobile: React.FC<DashboardProps> = ({
     incomes,
     accounts,
     viewDate,
-    onOpenInstall,
-    isAppInstalled
+  onOpenInstall,
+  isAppInstalled,
+  tipsEnabled,
+  onOpenSettings,
+  categoriesCount = 0,
+  isPwaInstallable = false,
+  isStandalone = false,
+  onInstallApp
 }) => {
-  
   const canViewBalances = true;
   const canViewMeiLimit = true;
   const canViewInvoices = true;
   const canViewReports = true;
   const canManageIncomes = true;
   const canManageExpenses = true;
+
+  const helperSignals = useMemo(
+      () => ({
+          isLoggedIn: true,
+          hasAccounts: accounts.length > 0,
+          hasIncomes: incomes.length > 0,
+          hasExpenses: expenses.length > 0,
+          hasCategories: categoriesCount > 0,
+          isPwaInstallable,
+          isStandalone
+      }),
+      [accounts.length, categoriesCount, expenses.length, incomes.length, isPwaInstallable, isStandalone]
+  );
+
+  const helperActions = useMemo(
+      () => ({
+          accounts: onOpenAccounts,
+          incomes: onOpenIncomes,
+          expenses: onOpenVariableExpenses,
+          personal_expenses: onOpenPersonalExpenses,
+          reports: onOpenReports,
+          invoices: onOpenInvoices,
+          yields: onOpenYields,
+          das: onOpenDas,
+          pwa_install: onInstallApp || onOpenInstall
+      }),
+      [
+          onInstallApp,
+          onOpenAccounts,
+          onOpenDas,
+          onOpenIncomes,
+          onOpenInstall,
+          onOpenInvoices,
+          onOpenPersonalExpenses,
+          onOpenReports,
+          onOpenVariableExpenses,
+          onOpenYields
+      ]
+  );
+
+  const quickActions = useMemo(
+      () => [
+          {
+              id: 'accounts',
+              label: 'Contas Bancárias',
+              icon: <Wallet />,
+              color: 'text-blue-500 dark:text-blue-400',
+              bg: 'bg-blue-50 dark:bg-blue-500/10',
+              border: 'border-blue-100 dark:border-blue-500/20',
+              tipTitle: 'Contas Bancárias',
+              tipBody:
+                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.",
+              onClick: onOpenAccounts,
+              showWhen: canViewBalances
+          },
+          {
+              id: 'incomes',
+              label: 'Entradas',
+              icon: <ArrowUpCircle />,
+              color: 'text-emerald-500 dark:text-emerald-400',
+              bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+              border: 'border-emerald-100 dark:border-emerald-500/20',
+              tipTitle: 'Entradas',
+              tipBody:
+                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.',
+              onClick: onOpenIncomes,
+              showWhen: canManageIncomes
+          },
+          {
+              id: 'fixed_expenses',
+              label: 'Despesas Fixas',
+              icon: <Home />,
+              color: 'text-amber-500 dark:text-amber-400',
+              bg: 'bg-amber-50 dark:bg-amber-500/10',
+              border: 'border-amber-100 dark:border-amber-500/20',
+              tipTitle: 'Despesas Fixas',
+              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.',
+              onClick: onOpenFixedExpenses,
+              showWhen: canManageExpenses
+          },
+          {
+              id: 'variable_expenses',
+              label: 'Despesas Variáveis',
+              icon: <ShoppingCart />,
+              color: 'text-pink-500 dark:text-pink-400',
+              bg: 'bg-pink-50 dark:bg-pink-500/10',
+              border: 'border-pink-100 dark:border-pink-500/20',
+              tipTitle: 'Despesas Variáveis',
+              tipBody:
+                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.',
+              onClick: onOpenVariableExpenses,
+              showWhen: canManageExpenses
+          },
+          {
+              id: 'personal_expenses',
+              label: 'Despesas Pessoais',
+              icon: <User />,
+              color: 'text-cyan-500 dark:text-cyan-400',
+              bg: 'bg-cyan-50 dark:bg-cyan-500/10',
+              border: 'border-cyan-100 dark:border-cyan-500/20',
+              tipTitle: 'Despesas Pessoais',
+              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.',
+              onClick: onOpenPersonalExpenses,
+              showWhen: canManageExpenses
+          },
+          {
+              id: 'yields',
+              label: 'Rendimentos',
+              icon: <TrendingUp />,
+              color: 'text-violet-500 dark:text-violet-400',
+              bg: 'bg-violet-50 dark:bg-violet-500/10',
+              border: 'border-violet-100 dark:border-violet-500/20',
+              tipTitle: 'Rendimentos',
+              tipBody:
+                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.',
+              onClick: onOpenYields,
+              showWhen: canViewBalances
+          },
+          {
+              id: 'invoices',
+              label: 'Faturas',
+              icon: <CreditCard />,
+              color: 'text-rose-500 dark:text-rose-400',
+              bg: 'bg-rose-50 dark:bg-rose-500/10',
+              border: 'border-rose-100 dark:border-rose-500/20',
+              tipTitle: 'Faturas',
+              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.',
+              onClick: onOpenInvoices,
+              showWhen: canViewInvoices
+          },
+          {
+              id: 'reports',
+              label: 'Relatórios',
+              icon: <BarChart3 />,
+              color: 'text-zinc-500 dark:text-zinc-400',
+              bg: 'bg-zinc-100 dark:bg-zinc-500/10',
+              border: 'border-zinc-200 dark:border-zinc-500/20',
+              tipTitle: 'Relatórios',
+              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.',
+              onClick: onOpenReports,
+              showWhen: canViewReports && Boolean(onOpenReports)
+          },
+          {
+              id: 'das',
+              label: 'Emissão DAS',
+              icon: <FileText />,
+              color: 'text-teal-600 dark:text-teal-400',
+              bg: 'bg-teal-50 dark:bg-teal-500/10',
+              border: 'border-teal-100 dark:border-teal-500/20',
+              tipTitle: 'Emissão DAS',
+              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.',
+              onClick: onOpenDas,
+              showWhen: true
+          }
+      ],
+      [
+          canManageExpenses,
+          canManageIncomes,
+          canViewBalances,
+          canViewInvoices,
+          canViewReports,
+          onOpenAccounts,
+          onOpenDas,
+          onOpenFixedExpenses,
+          onOpenIncomes,
+          onOpenInvoices,
+          onOpenPersonalExpenses,
+          onOpenReports,
+          onOpenVariableExpenses,
+          onOpenYields
+      ]
+  );
+  
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -835,7 +1021,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11px] text-zinc-400">Arraste os blocos para reorganizar.</span>
+            <MeumeiHelper signals={helperSignals} actions={helperActions} tipsEnabled={tipsEnabled} />
         </div>
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -854,92 +1040,21 @@ const DashboardMobile: React.FC<DashboardProps> = ({
             <div className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm">
                 <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
             <div className="grid grid-flow-col auto-cols-fr gap-2">
-                {canViewBalances && (
-                    <QuickAction 
-                        icon={<Wallet />} 
-                        label="Contas Bancárias" 
-                        color="text-blue-500 dark:text-blue-400" 
-                        bg="bg-blue-50 dark:bg-blue-500/10" 
-                        border="border-blue-100 dark:border-blue-500/20" 
-                        onClick={onOpenAccounts}
-                    />
-                )}
-                {canManageIncomes && (
-                    <QuickAction 
-                        icon={<ArrowUpCircle />} 
-                        label="Entradas" 
-                        color="text-emerald-500 dark:text-emerald-400" 
-                        bg="bg-emerald-50 dark:bg-emerald-500/10" 
-                        border="border-emerald-100 dark:border-emerald-500/20" 
-                        onClick={onOpenIncomes}
-                    />
-                )}
-                {canManageExpenses && (
-                    <>
-                        <QuickAction 
-                            icon={<Home />} 
-                            label="Despesas Fixas" 
-                            color="text-amber-500 dark:text-amber-400" 
-                            bg="bg-amber-50 dark:bg-amber-500/10" 
-                            border="border-amber-100 dark:border-amber-500/20" 
-                            onClick={onOpenFixedExpenses}
+                {quickActions
+                    .filter((action) => action.showWhen)
+                    .map((action) => (
+                        <QuickAction
+                            key={action.id}
+                            icon={action.icon}
+                            label={action.label}
+                            color={action.color}
+                            bg={action.bg}
+                            border={action.border}
+                            tipTitle={action.tipTitle}
+                            tipBody={action.tipBody}
+                            onClick={action.onClick}
                         />
-                        <QuickAction 
-                            icon={<ShoppingCart />} 
-                            label="Despesas Variáveis" 
-                            color="text-pink-500 dark:text-pink-400" 
-                            bg="bg-pink-50 dark:bg-pink-500/10" 
-                            border="border-pink-100 dark:border-pink-500/20" 
-                            onClick={onOpenVariableExpenses}
-                        />
-                        <QuickAction 
-                            icon={<User />} 
-                            label="Despesas Pessoais" 
-                            color="text-cyan-500 dark:text-cyan-400" 
-                            bg="bg-cyan-50 dark:bg-cyan-500/10" 
-                            border="border-cyan-100 dark:border-cyan-500/20" 
-                            onClick={onOpenPersonalExpenses}
-                        />
-                    </>
-                )}
-                {canViewBalances && (
-                    <QuickAction 
-                        icon={<TrendingUp />} 
-                        label="Rendimentos" 
-                        color="text-violet-500 dark:text-violet-400" 
-                        bg="bg-violet-50 dark:bg-violet-500/10" 
-                        border="border-violet-100 dark:border-violet-500/20"
-                        onClick={onOpenYields} 
-                    />
-                )}
-                {canViewInvoices && (
-                    <QuickAction 
-                        icon={<CreditCard />} 
-                        label="Faturas" 
-                        color="text-rose-500 dark:text-rose-400" 
-                        bg="bg-rose-50 dark:bg-rose-500/10" 
-                        border="border-rose-100 dark:border-rose-500/20" 
-                        onClick={onOpenInvoices}
-                    />
-                )}
-                {canViewReports && (
-                    <QuickAction 
-                        icon={<BarChart3 />} 
-                        label="Relatórios" 
-                        color="text-zinc-500 dark:text-zinc-400" 
-                        bg="bg-zinc-100 dark:bg-zinc-500/10" 
-                        border="border-zinc-200 dark:border-zinc-500/20" 
-                        onClick={onOpenReports}
-                    />
-                )}
-                <QuickAction
-                    icon={<FileText />}
-                    label="Emissão DAS"
-                    color="text-teal-600 dark:text-teal-400"
-                    bg="bg-teal-50 dark:bg-teal-500/10"
-                    border="border-teal-100 dark:border-teal-500/20"
-                    onClick={onOpenDas}
-                />
+                    ))}
                 </div>
             </div>
         </section>
@@ -1397,22 +1512,34 @@ const SortableBlock: React.FC<{
 };
 
 // ... existing subcomponents ...
-const QuickAction: React.FC<{ icon: React.ReactNode, label: string, color: string, bg: string, border: string, onClick?: () => void }> = ({ icon, label, color, bg, border, onClick }) => {
+const QuickAction: React.FC<{
+    icon: React.ReactNode;
+    label: string;
+    color: string;
+    bg: string;
+    border: string;
+    tipTitle: string;
+    tipBody: string;
+    onClick?: () => void;
+}> = ({ icon, label, color, bg, border, tipTitle, tipBody, onClick }) => {
     const renderedIcon = React.isValidElement(icon)
         ? React.cloneElement(icon as React.ReactElement, { size: 18 })
         : icon;
     return (
-    <button 
-        onClick={onClick}
-        className={`flex flex-col items-center justify-center px-2 py-2 rounded-2xl border bg-white dark:bg-[#1a1a1a] hover:bg-gray-50 dark:hover:bg-[#202022] transition-all group active:scale-95 ${border} shadow-sm dark:shadow-none min-w-0`}
-    >
-        <div className={`p-2 rounded-full mb-2 ${bg} ${color} group-hover:scale-110 transition-transform`}>
-            {renderedIcon}
-        </div>
-        <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-white text-center leading-tight">
-            {label}
-        </span>
-    </button>
+    <div className="relative overflow-visible">
+        <QuickAccessHelp label={label} title={tipTitle} body={tipBody} />
+        <button 
+            onClick={onClick}
+            className={`flex w-full flex-col items-center justify-center px-2 py-2 rounded-2xl border bg-white dark:bg-[#1a1a1a] hover:bg-gray-50 dark:hover:bg-[#202022] transition-all group active:scale-95 ${border} shadow-sm dark:shadow-none min-w-0`}
+        >
+            <div className={`p-2 rounded-full mb-2 ${bg} ${color} group-hover:scale-110 transition-transform`}>
+                {renderedIcon}
+            </div>
+            <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-white text-center leading-tight">
+                {label}
+            </span>
+        </button>
+    </div>
     );
 };
 

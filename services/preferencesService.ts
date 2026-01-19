@@ -8,7 +8,9 @@ const getUserPreferencesRef = (uid: string) =>
   doc(db, 'users', uid, 'preferences', 'app');
 
 export const preferencesService = {
-  async getPreferences(uid: string | null | undefined): Promise<{ theme?: ThemePreference }> {
+  async getPreferences(
+    uid: string | null | undefined
+  ): Promise<{ theme?: ThemePreference; tipsEnabled?: boolean }> {
     if (!uid) {
       console.info('[prefs] load_skipped', { reason: 'missing_uid' });
       return {};
@@ -22,7 +24,12 @@ export const preferencesService = {
       if (!snap.exists()) return {};
       const data = snap.data() as Record<string, unknown>;
       const theme = data?.theme as ThemePreference | undefined;
-      return theme ? { theme } : {};
+      const tipsEnabled =
+        typeof data?.tipsEnabled === 'boolean' ? (data.tipsEnabled as boolean) : undefined;
+      return {
+        ...(theme ? { theme } : {}),
+        ...(typeof tipsEnabled === 'boolean' ? { tipsEnabled } : {})
+      };
     } catch (error: any) {
       logPermissionDenied({
         step: 'preferences_get',
@@ -122,6 +129,33 @@ export const preferencesService = {
         licenseId: uid
       });
       console.error('[prefs] error', { step: 'save', message: (error as any)?.message });
+      throw error;
+    }
+  },
+  async setTipsEnabled(uid: string | null | undefined, tipsEnabled: boolean): Promise<void> {
+    if (!uid) {
+      console.error('[prefs] error', { step: 'tips_save', message: 'missing_uid' });
+      return;
+    }
+    const ref = getUserPreferencesRef(uid);
+    const path = `users/${uid}/preferences/app`;
+    if (!guardUserPath(uid, path, 'prefs_tips_set')) return;
+    try {
+      await setDoc(
+        ref,
+        { tipsEnabled, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      console.info('[prefs] tips_save', { path: ref.path, enabled: tipsEnabled });
+    } catch (error) {
+      logPermissionDenied({
+        step: 'preferences_set_tips',
+        path: ref.path,
+        operation: 'setDoc',
+        error,
+        licenseId: uid
+      });
+      console.error('[prefs] tips_error', { step: 'save', message: (error as any)?.message });
       throw error;
     }
   }

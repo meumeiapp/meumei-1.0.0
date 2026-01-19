@@ -73,6 +73,13 @@
           }
         },
         {
+          "source": "/api/askMeumeiHelper",
+          "function": {
+            "functionId": "askMeumeiHelper",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "/api/stripeWebhook",
           "function": {
             "functionId": "stripeWebhook",

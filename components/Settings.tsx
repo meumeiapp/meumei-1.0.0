@@ -4,7 +4,7 @@
 // resolvedCurrentUser.username disparavam ReferenceError. Agora
 // resolvemos o usuário de forma defensiva via helper e só renderizamos a UI
 // completa quando os dados essenciais estão prontos.
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ArrowLeft, 
   Trash2, 
@@ -19,7 +19,9 @@ import {
   FileText,
   AlertOctagon,
   Calendar,
-  Download
+  Download,
+  Lightbulb,
+  Sprout
 } from 'lucide-react';
 import { CompanyInfo } from '../types';
 import { debugLog } from '../utils/debug';
@@ -79,9 +81,11 @@ interface SettingsProps {
   userId?: string;
   companyInfo: CompanyInfo;
   onUpdateCompany: (info: CompanyInfo) => Promise<void> | void;
-  onSystemReset?: () => Promise<void> | void;
+  onSystemReset?: () => Promise<{ deletedDocsCount: number } | null> | void;
   onOpenInstall: () => void;
   isAppInstalled?: boolean;
+  tipsEnabled?: boolean;
+  onUpdateTipsEnabled?: (enabled: boolean) => void;
 }
 
 const Settings: React.FC<SettingsProps> = ({ 
@@ -91,7 +95,9 @@ const Settings: React.FC<SettingsProps> = ({
     onUpdateCompany,
     onSystemReset,
     onOpenInstall,
-    isAppInstalled
+    isAppInstalled,
+    tipsEnabled,
+    onUpdateTipsEnabled
 }) => {
   
   // Local state for editing company info
@@ -106,8 +112,16 @@ const Settings: React.FC<SettingsProps> = ({
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetError, setResetError] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+  const [resetKeyTurned, setResetKeyTurned] = useState(false);
+  const [resetTermsAccepted, setResetTermsAccepted] = useState(false);
+  const [resetArmed, setResetArmed] = useState(false);
+  const [resetCountdown, setResetCountdown] = useState<number | null>(null);
+  const [resetEstimatedDeleted, setResetEstimatedDeleted] = useState(0);
+  const [resetDeletedCount, setResetDeletedCount] = useState<number | null>(null);
+  const [resetPhase, setResetPhase] = useState<'idle' | 'countdown' | 'matrix' | 'result'>('idle');
+  const [matrixStartedAt, setMatrixStartedAt] = useState<number | null>(null);
 
-  const { user: firebaseUser } = useAuth();
+  const { user: firebaseUser, logout } = useAuth();
   const normalizedSessionEmail = (() => {
       if (!firebaseUser?.email) return null;
       try {
@@ -119,8 +133,24 @@ const Settings: React.FC<SettingsProps> = ({
   })();
   const [configErrorState, setConfigErrorState] = useState<ConfigErrorState | null>(null);
   const [isFetchingConfig, setIsFetchingConfig] = useState(false);
+  const resolvedTipsEnabled = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
+  const actionButtonBase =
+      'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition h-10 w-full sm:w-48 whitespace-nowrap';
 
   const timeoutRef = useRef<number | null>(null);
+  const matrixColumns = useMemo(() => {
+      const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ#$%*';
+      const buildLine = (length: number) =>
+          Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      const buildText = (lines: number, lineLength: number) =>
+          Array.from({ length: lines }, () => buildLine(lineLength)).join('\n');
+      return Array.from({ length: 28 }, (_, idx) => ({
+          id: `col-${idx}`,
+          text: buildText(24 + (idx % 6), 10 + (idx % 8)),
+          duration: 8 + (idx % 6),
+          delay: -idx * 0.4
+      }));
+  }, []);
 
   // Sync with prop if it changes externally (rare but safe)
   useEffect(() => {
@@ -276,16 +306,24 @@ useEffect(() => {
   // --- System Reset Handlers ---
   const handleConfirmReset = async () => {
     const confirmation = resetConfirmText.trim().toUpperCase();
-    if (confirmation !== 'RESET') {
-        setResetError('Digite RESET para confirmar.');
+    const ready = resetKeyTurned && resetTermsAccepted && resetArmed && confirmation === 'RESET';
+    if (!ready) {
+        setResetError('Complete o protocolo de lançamento antes de continuar.');
         return;
     }
     if (!onSystemReset) return;
     setResetError('');
     setIsResetting(true);
+    setResetCountdown(10);
+    setResetEstimatedDeleted(Math.floor(1200 + Math.random() * 2600));
+    setResetDeletedCount(null);
+    setResetPhase('countdown');
+    setMatrixStartedAt(null);
     try {
-        await onSystemReset();
-        setIsResetModalOpen(false);
+        const result = await onSystemReset();
+        if (result && typeof result.deletedDocsCount === 'number') {
+            setResetDeletedCount(result.deletedDocsCount);
+        }
         setResetConfirmText('');
     } catch (error: any) {
         console.error('[reset] failed', { message: error?.message || error });
@@ -298,10 +336,45 @@ useEffect(() => {
   const openResetModal = () => {
     setResetConfirmText('');
     setResetError('');
+    setResetKeyTurned(false);
+    setResetTermsAccepted(false);
+    setResetArmed(false);
+    setResetCountdown(null);
+    setResetEstimatedDeleted(0);
+    setResetDeletedCount(null);
+    setResetPhase('idle');
+    setMatrixStartedAt(null);
     setIsResetModalOpen(true);
   };
 
   const canConfirmReset = resetConfirmText.trim().toUpperCase() === 'RESET';
+
+  useEffect(() => {
+      if (resetPhase !== 'countdown' || resetCountdown === null) return;
+      if (resetCountdown <= 1) {
+          setResetCountdown(1);
+          setResetPhase('matrix');
+          setMatrixStartedAt(Date.now());
+          return;
+      }
+      const timer = window.setTimeout(() => {
+          setResetCountdown(prev => (prev === null ? prev : Math.max(prev - 1, 1)));
+      }, 1000);
+      return () => window.clearTimeout(timer);
+  }, [resetCountdown, resetPhase]);
+
+  useEffect(() => {
+      if (resetPhase !== 'matrix') return;
+      const startedAt = matrixStartedAt ?? Date.now();
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(5000 - elapsed, 0);
+      const timer = window.setTimeout(() => {
+          if (!isResetting) {
+              setResetPhase('result');
+          }
+      }, remaining);
+      return () => window.clearTimeout(timer);
+  }, [isResetting, matrixStartedAt, resetPhase]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
@@ -358,7 +431,11 @@ useEffect(() => {
                                 )}
                                 <button 
                                     onClick={handleSaveCompany}
-                                    className={`px-5 py-2.5 rounded-lg font-bold text-white transition-all flex items-center gap-2 shadow-lg w-full sm:w-auto justify-center ${isSaved ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-zinc-900 dark:bg-zinc-700 hover:bg-zinc-800 dark:hover:bg-zinc-600'}`}
+                                    className={`${actionButtonBase} ${
+                                        isSaved
+                                            ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                                            : 'bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-zinc-700 dark:hover:bg-zinc-600'
+                                    }`}
                                 >
                                     <Save size={18} />
                                     <span>Salvar Alterações</span>
@@ -510,7 +587,7 @@ useEffect(() => {
                                     onOpenInstall();
                                 }}
                                 disabled={isAppInstalled}
-                                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                                className={`${actionButtonBase} ${
                                     isAppInstalled
                                         ? 'cursor-not-allowed bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600'
                                         : 'bg-emerald-500 text-zinc-900 hover:bg-emerald-400'
@@ -522,10 +599,51 @@ useEffect(() => {
                         </div>
                     </section>
 
+                    <section className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm relative overflow-hidden">
+                        <div className="flex items-start gap-4">
+                            <div className="p-3 bg-indigo-100 dark:bg-indigo-900/20 rounded-xl text-indigo-600 dark:text-indigo-300">
+                                <Lightbulb size={22} />
+                            </div>
+                            <div className="flex-1">
+                                <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Dicas do meumei</h2>
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                    Ative ou desative os balões de dicas que aparecem no dashboard.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                            <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                                {resolvedTipsEnabled ? 'Dicas ativas' : 'Dicas desativadas'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!onUpdateTipsEnabled) return;
+                                    const next = !resolvedTipsEnabled;
+                                    console.info('[tips] toggle', { enabled: next });
+                                    onUpdateTipsEnabled(next);
+                                }}
+                                disabled={!onUpdateTipsEnabled}
+                                className={`${actionButtonBase} ${
+                                    resolvedTipsEnabled
+                                        ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                                        : 'bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
+                                } ${!onUpdateTipsEnabled ? 'cursor-not-allowed opacity-70' : ''}`}
+                                aria-pressed={resolvedTipsEnabled}
+                            >
+                                {resolvedTipsEnabled ? 'Desativar dicas' : 'Ativar dicas'}
+                            </button>
+                        </div>
+                    </section>
+
                     <div className="grid grid-cols-1 gap-6">
                         <section className="bg-white dark:bg-[#151517] rounded-2xl border border-red-100 dark:border-red-900/30 p-6 shadow-sm relative overflow-hidden flex flex-col">
                              <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
                             <div className="relative z-10 space-y-3 flex-1">
+                                <div className="inline-flex items-center gap-2 rounded-full bg-red-600/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-300">
+                                    <AlertTriangle size={12} />
+                                    Ação Irreversível
+                                </div>
                                 <div className="flex items-center gap-3">
                                     <div className="p-2.5 bg-red-100 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400">
                                         <AlertTriangle size={20} />
@@ -535,11 +653,14 @@ useEffect(() => {
                                 <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
                                     Essa ação apagará <strong>TODOS</strong> os dados do sistema e não poderá ser desfeita.
                                 </p>
+                                <p className="text-xs font-semibold text-red-600 dark:text-red-300">
+                                    Só continue se tiver certeza absoluta e estiver preparado para perder todas as informações.
+                                </p>
                             </div>
                             <div className="relative z-10 flex justify-end mt-4">
                                 <button 
                                     onClick={openResetModal}
-                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-red-200 dark:border-red-900/50 text-sm font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                                    className={`${actionButtonBase} bg-red-600 text-white hover:bg-red-500`}
                                 >
                                     <Trash2 size={16} /> Resetar Sistema
                                 </button>
@@ -571,19 +692,67 @@ useEffect(() => {
                         </p>
                     </div>
 
-                    <div className="space-y-2 mb-6">
-                        <label htmlFor={resetConfirmId} className="text-[10px] font-bold text-zinc-500 uppercase ml-1">
-                          Digite RESET para confirmar
+                    <div className="space-y-4 mb-6">
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-red-900/40 bg-red-950/40 px-3 py-2">
+                            <div>
+                                <p className="text-xs font-semibold text-red-200">Girar chave de segurança</p>
+                                <p className="text-[11px] text-red-300/70">Ative para iniciar o protocolo.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setResetKeyTurned((prev) => !prev)}
+                                className={`h-9 w-20 rounded-full border text-xs font-bold transition ${
+                                    resetKeyTurned
+                                        ? 'border-amber-300 bg-amber-400 text-zinc-900'
+                                        : 'border-red-900/60 bg-transparent text-red-200'
+                                }`}
+                            >
+                                {resetKeyTurned ? 'CHAVE ON' : 'CHAVE OFF'}
+                            </button>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label htmlFor={resetConfirmId} className="text-[10px] font-bold text-zinc-500 uppercase ml-1">
+                              Código de lançamento
+                            </label>
+                            <input
+                                id={resetConfirmId}
+                                name="resetConfirm"
+                                type="text"
+                                value={resetConfirmText}
+                                onChange={(e) => setResetConfirmText(e.target.value)}
+                                placeholder="RESET"
+                                className="w-full bg-[#121212] border border-zinc-800 rounded-lg px-3 py-2.5 text-white focus:ring-1 focus:ring-red-500 outline-none"
+                            />
+                        </div>
+
+                        <label className="flex items-center gap-3 rounded-lg border border-red-900/40 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+                            <input
+                                type="checkbox"
+                                checked={resetTermsAccepted}
+                                onChange={(e) => setResetTermsAccepted(e.target.checked)}
+                                className="h-4 w-4 rounded border-red-900/40 bg-transparent text-red-500 focus:ring-red-500"
+                            />
+                            Eu entendo que esta ação é irreversível e aceito os termos.
                         </label>
-                        <input
-                            id={resetConfirmId}
-                            name="resetConfirm"
-                            type="text"
-                            value={resetConfirmText}
-                            onChange={(e) => setResetConfirmText(e.target.value)}
-                            placeholder="RESET"
-                            className="w-full bg-[#121212] border border-zinc-800 rounded-lg px-3 py-2.5 text-white focus:ring-1 focus:ring-red-500 outline-none"
-                        />
+
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-red-900/40 bg-red-950/40 px-3 py-2">
+                            <div>
+                                <p className="text-xs font-semibold text-red-200">Armar lançamento</p>
+                                <p className="text-[11px] text-red-300/70">Obrigatório antes de lançar.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setResetArmed((prev) => !prev)}
+                                className={`h-9 w-20 rounded-full border text-xs font-bold transition ${
+                                    resetArmed
+                                        ? 'border-emerald-400 bg-emerald-500 text-white'
+                                        : 'border-red-900/60 bg-transparent text-red-200'
+                                }`}
+                            >
+                                {resetArmed ? 'ARMADO' : 'DESARM'}
+                            </button>
+                        </div>
                     </div>
 
                     {resetError && (
@@ -596,14 +765,15 @@ useEffect(() => {
                         <button 
                             onClick={() => setIsResetModalOpen(false)}
                             className="flex-1 py-3 rounded-xl font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors text-sm"
+                            disabled={isResetting || resetCountdown !== null}
                         >
                             Cancelar
                         </button>
                         <button 
                             onClick={handleConfirmReset}
-                            disabled={!canConfirmReset || isResetting}
+                            disabled={!canConfirmReset || isResetting || !resetKeyTurned || !resetTermsAccepted || !resetArmed}
                             className={`flex-[2] py-3 rounded-xl font-bold text-white transition-colors shadow-lg shadow-red-900/30 flex items-center justify-center gap-2 text-sm ${
-                                !canConfirmReset || isResetting
+                                !canConfirmReset || isResetting || !resetKeyTurned || !resetTermsAccepted || !resetArmed
                                     ? 'bg-red-900/40 cursor-not-allowed'
                                     : 'bg-red-600 hover:bg-red-700'
                             }`}
@@ -613,6 +783,70 @@ useEffect(() => {
                     </div>
                 </div>
              </div>
+        </div>
+      )}
+
+      {resetPhase !== 'idle' && (
+        <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center text-white">
+            {resetPhase === 'countdown' && (
+                <div className="flex h-full w-full flex-col items-center justify-center bg-black">
+                    <div className="text-[140px] font-black text-red-500 drop-shadow-[0_0_20px_rgba(239,68,68,0.6)]">
+                        {resetCountdown}
+                    </div>
+                </div>
+            )}
+            {resetPhase === 'matrix' && (
+                <div className="relative h-full w-full overflow-hidden bg-black">
+                    <style>
+                        {`@keyframes mm-matrix-rise {0%{transform:translateY(120%);}100%{transform:translateY(-120%);}}`}
+                    </style>
+                    <div className="absolute inset-0 opacity-70">
+                        {matrixColumns.map((column, index) => (
+                            <div
+                                key={column.id}
+                                className="absolute top-0 h-full text-emerald-400/70 font-mono text-xs whitespace-pre leading-5"
+                                style={{
+                                    left: `${(index / matrixColumns.length) * 100}%`,
+                                    animation: `mm-matrix-rise ${column.duration}s linear infinite`,
+                                    animationDelay: `${column.delay}s`
+                                }}
+                            >
+                                {column.text}
+                            </div>
+                        ))}
+                    </div>
+                    <div className="relative z-10 flex h-full w-full items-center justify-center">
+                        <p className="text-lg sm:text-2xl font-semibold text-emerald-400 tracking-[0.35em] uppercase">
+                            Reiniciando o Sistema
+                        </p>
+                    </div>
+                </div>
+            )}
+            {resetPhase === 'result' && (
+                <div className="flex h-full w-full flex-col items-center justify-center bg-black">
+                    <div className="text-5xl font-black text-emerald-400">
+                        {resetDeletedCount ?? resetEstimatedDeleted}
+                    </div>
+                    <p className="mt-2 text-sm text-emerald-200">
+                        Número de Arquivos Mortos
+                    </p>
+                    <button
+                        type="button"
+                        onClick={async () => {
+                            setIsResetModalOpen(false);
+                            setResetPhase('idle');
+                            try {
+                                await logout();
+                            } finally {
+                                window.location.href = '/login';
+                            }
+                        }}
+                        className="mt-8 inline-flex items-center gap-2 rounded-full bg-emerald-500 px-6 py-2 text-sm font-semibold text-white hover:bg-emerald-400"
+                    >
+                        <Sprout size={16} /> Recomeçar
+                    </button>
+                </div>
+            )}
         </div>
       )}
 

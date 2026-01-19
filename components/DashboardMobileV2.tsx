@@ -40,6 +40,8 @@ import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
+import MeumeiHelper from './MeumeiHelper';
+import QuickAccessHelp from './QuickAccessHelp';
 
 interface FinancialData {
     balance: number;
@@ -193,6 +195,12 @@ interface DashboardProps {
   minDate?: string;
   onOpenInstall: () => void;
   isAppInstalled?: boolean;
+  tipsEnabled?: boolean;
+  onOpenSettings?: () => void;
+  categoriesCount?: number;
+  isPwaInstallable?: boolean;
+  isStandalone?: boolean;
+  onInstallApp?: () => void;
 }
 
 const MEI_LIMIT = 81000;
@@ -318,7 +326,7 @@ const getMascotConfig = (percentage: number): MascotConfig => {
   };
 };
 
-const DashboardMobileV2: React.FC<DashboardProps> = ({ 
+const DashboardMobileV2: React.FC<DashboardProps> = ({
   onOpenAccounts,
   onOpenVariableExpenses,
   onOpenFixedExpenses,
@@ -337,16 +345,167 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
     incomes,
     accounts,
     viewDate,
-    onOpenInstall,
-    isAppInstalled
+  onOpenInstall,
+  isAppInstalled,
+  tipsEnabled,
+  onOpenSettings,
+  categoriesCount = 0,
+  isPwaInstallable = false,
+  isStandalone = false,
+  onInstallApp
 }) => {
-  
   const canViewBalances = true;
   const canViewMeiLimit = true;
   const canViewInvoices = true;
   const canViewReports = true;
   const canManageIncomes = true;
   const canManageExpenses = true;
+
+  const helperSignals = useMemo(
+      () => ({
+          isLoggedIn: true,
+          hasAccounts: accounts.length > 0,
+          hasIncomes: incomes.length > 0,
+          hasExpenses: expenses.length > 0,
+          hasCategories: categoriesCount > 0,
+          isPwaInstallable,
+          isStandalone
+      }),
+      [accounts.length, categoriesCount, expenses.length, incomes.length, isPwaInstallable, isStandalone]
+  );
+
+  const helperActions = useMemo(
+      () => ({
+          accounts: onOpenAccounts,
+          incomes: onOpenIncomes,
+          expenses: onOpenVariableExpenses,
+          personal_expenses: onOpenPersonalExpenses,
+          reports: onOpenReports,
+          invoices: onOpenInvoices,
+          yields: onOpenYields,
+          das: onOpenDas,
+          pwa_install: onInstallApp || onOpenInstall
+      }),
+      [
+          onInstallApp,
+          onOpenAccounts,
+          onOpenDas,
+          onOpenIncomes,
+          onOpenInstall,
+          onOpenInvoices,
+          onOpenPersonalExpenses,
+          onOpenReports,
+          onOpenVariableExpenses,
+          onOpenYields
+      ]
+  );
+
+  const quickAccessItems = useMemo(
+      () => [
+          {
+              id: 'accounts',
+              label: 'Contas Bancárias',
+              icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
+              tipTitle: 'Contas Bancárias',
+              tipBody:
+                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.",
+              onClick: onOpenAccounts,
+              showWhen: canViewBalances
+          },
+          {
+              id: 'incomes',
+              label: 'Entradas',
+              icon: <ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />,
+              tipTitle: 'Entradas',
+              tipBody:
+                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.',
+              onClick: onOpenIncomes,
+              showWhen: canManageIncomes
+          },
+          {
+              id: 'fixed_expenses',
+              label: 'Despesas Fixas',
+              icon: <Home size={18} className="text-amber-500 dark:text-amber-400" />,
+              tipTitle: 'Despesas Fixas',
+              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.',
+              onClick: onOpenFixedExpenses,
+              showWhen: canManageExpenses
+          },
+          {
+              id: 'variable_expenses',
+              label: 'Despesas Variáveis',
+              icon: <ShoppingCart size={18} className="text-pink-500 dark:text-pink-400" />,
+              tipTitle: 'Despesas Variáveis',
+              tipBody:
+                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.',
+              onClick: onOpenVariableExpenses,
+              showWhen: canManageExpenses
+          },
+          {
+              id: 'personal_expenses',
+              label: 'Despesas Pessoais',
+              icon: <User size={18} className="text-cyan-500 dark:text-cyan-400" />,
+              tipTitle: 'Despesas Pessoais',
+              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.',
+              onClick: onOpenPersonalExpenses,
+              showWhen: canManageExpenses
+          },
+          {
+              id: 'yields',
+              label: 'Rendimentos',
+              icon: <TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />,
+              tipTitle: 'Rendimentos',
+              tipBody:
+                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.',
+              onClick: onOpenYields,
+              showWhen: canViewBalances
+          },
+          {
+              id: 'invoices',
+              label: 'Faturas',
+              icon: <CreditCard size={18} className="text-rose-500 dark:text-rose-400" />,
+              tipTitle: 'Faturas',
+              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.',
+              onClick: onOpenInvoices,
+              showWhen: canViewInvoices
+          },
+          {
+              id: 'reports',
+              label: 'Relatórios',
+              icon: <BarChart3 size={18} className="text-zinc-500 dark:text-zinc-400" />,
+              tipTitle: 'Relatórios',
+              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.',
+              onClick: onOpenReports,
+              showWhen: canViewReports && Boolean(onOpenReports)
+          },
+          {
+              id: 'das',
+              label: 'Emissão DAS',
+              icon: <FileText size={18} className="text-teal-500 dark:text-teal-400" />,
+              tipTitle: 'Emissão DAS',
+              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.',
+              onClick: onOpenDas,
+              showWhen: true
+          }
+      ],
+      [
+          canManageExpenses,
+          canManageIncomes,
+          canViewBalances,
+          canViewInvoices,
+          canViewReports,
+          onOpenAccounts,
+          onOpenDas,
+          onOpenFixedExpenses,
+          onOpenIncomes,
+          onOpenInvoices,
+          onOpenPersonalExpenses,
+          onOpenReports,
+          onOpenVariableExpenses,
+          onOpenYields
+      ]
+  );
+  
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -837,7 +996,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11px] text-zinc-400">Arraste os blocos para reorganizar.</span>
+            <MeumeiHelper signals={helperSignals} actions={helperActions} tipsEnabled={tipsEnabled} />
         </div>
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -856,65 +1015,18 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
             <div className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm">
                 <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
                 <div className="space-y-2">
-                {canViewBalances && (
-                    <MobileListItem 
-                        icon={<Wallet size={18} className="text-blue-500 dark:text-blue-400" />} 
-                        label="Contas Bancárias" 
-                        onClick={onOpenAccounts}
-                    />
-                )}
-                {canManageIncomes && (
-                    <MobileListItem 
-                        icon={<ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />} 
-                        label="Entradas" 
-                        onClick={onOpenIncomes}
-                    />
-                )}
-                {canManageExpenses && (
-                    <>
-                        <MobileListItem 
-                            icon={<Home size={18} className="text-amber-500 dark:text-amber-400" />} 
-                            label="Despesas Fixas" 
-                            onClick={onOpenFixedExpenses}
+                {quickAccessItems
+                    .filter((item) => item.showWhen)
+                    .map((item) => (
+                        <MobileListItem
+                            key={item.id}
+                            icon={item.icon}
+                            label={item.label}
+                            tipTitle={item.tipTitle}
+                            tipBody={item.tipBody}
+                            onClick={item.onClick}
                         />
-                        <MobileListItem 
-                            icon={<ShoppingCart size={18} className="text-pink-500 dark:text-pink-400" />} 
-                            label="Despesas Variáveis" 
-                            onClick={onOpenVariableExpenses}
-                        />
-                        <MobileListItem 
-                            icon={<User size={18} className="text-cyan-500 dark:text-cyan-400" />} 
-                            label="Despesas Pessoais" 
-                            onClick={onOpenPersonalExpenses}
-                        />
-                    </>
-                )}
-                {canViewBalances && (
-                    <MobileListItem 
-                        icon={<TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />} 
-                        label="Rendimentos" 
-                        onClick={onOpenYields} 
-                    />
-                )}
-                {canViewInvoices && (
-                    <MobileListItem 
-                        icon={<CreditCard size={18} className="text-rose-500 dark:text-rose-400" />} 
-                        label="Faturas" 
-                        onClick={onOpenInvoices}
-                    />
-                )}
-                {canViewReports && onOpenReports && (
-                    <MobileListItem 
-                        icon={<BarChart3 size={18} className="text-zinc-500 dark:text-zinc-400" />} 
-                        label="Relatórios" 
-                        onClick={onOpenReports}
-                    />
-                )}
-                <MobileListItem
-                    icon={<FileText size={18} className="text-teal-500 dark:text-teal-400" />}
-                    label="Emissão DAS"
-                    onClick={onOpenDas}
-                />
+                    ))}
                 </div>
             </div>
         </section>
@@ -1342,7 +1454,9 @@ const MobileListItem: React.FC<{
     valueClassName?: string;
     onClick?: () => void;
     iconContainerClassName?: string;
-}> = ({ icon, label, description, value, valueClassName, onClick, iconContainerClassName }) => {
+    tipTitle?: string;
+    tipBody?: string;
+}> = ({ icon, label, description, value, valueClassName, onClick, iconContainerClassName, tipTitle, tipBody }) => {
     const wrapperClasses = onClick
         ? 'hover:border-zinc-300 dark:hover:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-[#1c1c20] active:scale-[0.99]'
         : '';
@@ -1370,17 +1484,27 @@ const MobileListItem: React.FC<{
         </>
     );
 
-    return onClick ? (
-        <button
-            type="button"
-            onClick={onClick}
-            className={`w-full min-h-[52px] px-3 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] flex items-center justify-between gap-3 text-left transition-all ${wrapperClasses}`}
-        >
-            {content}
-        </button>
-    ) : (
-        <div className="w-full min-h-[52px] px-3 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] flex items-center justify-between gap-3">
-            {content}
+    const baseClasses = `w-full min-h-[52px] px-3 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] flex items-center justify-between gap-3 text-left transition-all ${wrapperClasses}`;
+    const paddedClasses = tipTitle && tipBody ? `${baseClasses} pr-10` : baseClasses;
+
+    return (
+        <div className="relative overflow-visible">
+            {tipTitle && tipBody && (
+                <QuickAccessHelp label={label} title={tipTitle} body={tipBody} />
+            )}
+            {onClick ? (
+                <button
+                    type="button"
+                    onClick={onClick}
+                    className={paddedClasses}
+                >
+                    {content}
+                </button>
+            ) : (
+                <div className={paddedClasses}>
+                    {content}
+                </div>
+            )}
         </div>
     );
 };

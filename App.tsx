@@ -365,6 +365,7 @@ const AppInner: React.FC = () => {
   const PWA_INSTALL_FLAG_KEY = 'pwa_installed';
   const PWA_DISMISSED_AT_KEY = 'pwa_install_dismissed_at';
   const PWA_LEGACY_DISMISS_KEY = 'pwa_install_dismissed_v1';
+  const PWA_POST_ONBOARDING_KEY = 'pwa_install_post_onboarding_shown';
   const PWA_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
 
   const readInstalledFlag = () => {
@@ -389,6 +390,20 @@ const AppInner: React.FC = () => {
     } catch {
       return 0;
     }
+  };
+
+  const readPostOnboardingShown = () => {
+    try {
+      return localStorage.getItem(PWA_POST_ONBOARDING_KEY) === '1';
+    } catch {
+      return false;
+    }
+  };
+
+  const setPostOnboardingShown = () => {
+    try {
+      localStorage.setItem(PWA_POST_ONBOARDING_KEY, '1');
+    } catch {}
   };
 
   const setDismissedNow = () => {
@@ -1234,8 +1249,10 @@ const AppInner: React.FC = () => {
       return 'light';
   };
   const [theme, setTheme] = useState<'dark' | 'light'>(() => resolveInitialTheme());
+  const [tipsEnabled, setTipsEnabled] = useState(true);
   const { registerHandlers, setHighlightTarget } = useGlobalActions();
   const canAccessSettings = Boolean(currentUser);
+  const onboardingCompleted = onboardingSettings?.onboardingCompleted === true;
   const {
     isOpen: isPwaInstallOpen,
     isInstalled: isPwaInstalled,
@@ -1264,6 +1281,15 @@ const AppInner: React.FC = () => {
       });
       return;
     }
+    if (!onboardingCompleted) {
+      console.log('[pwa] auto_modal_skipped', { reason: 'onboarding_incomplete', path: currentPath });
+      return;
+    }
+    if (readPostOnboardingShown()) {
+      console.log('[pwa] auto_modal_skipped', { reason: 'post_onboarding_shown', path: currentPath });
+      return;
+    }
+    setPostOnboardingShown();
     console.log('[pwa] install_prompt_eligible', {
       path: currentPath,
       auth: Boolean(authUser)
@@ -1272,7 +1298,15 @@ const AppInner: React.FC = () => {
       openModalAutoIfEligible();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [authUser, currentPath, isBetaHost, isLandingRoute, isLoginRoute, openModalAutoIfEligible]);
+  }, [
+    authUser,
+    currentPath,
+    isBetaHost,
+    isLandingRoute,
+    isLoginRoute,
+    onboardingCompleted,
+    openModalAutoIfEligible
+  ]);
 
   const isIosDevice = useMemo(() => {
     if (typeof navigator === 'undefined') return false;
@@ -1443,11 +1477,11 @@ const AppInner: React.FC = () => {
     console.info('[reset] unsubscribe:done', { stopped });
   };
 
-  const handleSystemReset = async (): Promise<void> => {
+  const handleSystemReset = async (): Promise<{ deletedDocsCount: number } | null> => {
     const uid = authUser?.uid || null;
     if (!uid) {
       console.warn('[reset] uid_missing');
-      return;
+      return null;
     }
     const licenseId = currentUser?.licenseId || null;
     const allowTenantReset = !licenseId || licenseId === uid;
@@ -1457,8 +1491,6 @@ const AppInner: React.FC = () => {
     setIsLoading(true);
     try {
       stopRealtimeSubscriptions();
-      setCurrentView(ViewState.LOGIN);
-      setCurrentUser(null);
       const summary = await resetCurrentSession({ uid, licenseId, allowTenantReset });
       console.info('[reset] firestore:done', {
         uid,
@@ -1482,17 +1514,7 @@ const AppInner: React.FC = () => {
       setExpenseCategories([]);
       setIncomeCategories([]);
       setViewDate(new Date());
-      setCurrentUser(null);
-      setResolvedLicenseId(null);
-      setLicenseReason(null);
-      setLicenseResolveState('idle');
-      setCurrentView(ViewState.LOGIN);
-      await authLogout();
-      console.info('[reset] signed out', { uid });
-      if (typeof window !== 'undefined') {
-        window.location.href = '/?reset=1';
-        console.info('[reset] redirected', { to: '/?reset=1' });
-      }
+      return { deletedDocsCount: summary.userSummary.deletedDocsCount };
     } catch (error) {
       console.error('[reset] error', {
         step: 'reset_flow',
@@ -1565,6 +1587,9 @@ const AppInner: React.FC = () => {
               } catch (error) {
                   console.error('[theme] persisted', { key: 'meumei_theme', error });
               }
+          }
+          if (typeof pref.tipsEnabled === 'boolean') {
+              setTipsEnabled(pref.tipsEnabled);
           }
       } catch (error) {
           console.error('[prefs] error', { step: 'load-apply', message: (error as any)?.message });
@@ -2309,6 +2334,20 @@ const AppInner: React.FC = () => {
       }
       preferencesService
         .setTheme(uid, newTheme)
+        .catch(() => {
+          // persist silently
+        });
+  };
+
+  const handleTipsEnabledChange = (nextEnabled: boolean) => {
+      setTipsEnabled(nextEnabled);
+      const uid = authUser?.uid || null;
+      if (!uid) {
+          console.error('[prefs] error', { step: 'tips_save', message: 'missing_uid' });
+          return;
+      }
+      preferencesService
+        .setTipsEnabled(uid, nextEnabled)
         .catch(() => {
           // persist silently
         });
@@ -3269,7 +3308,6 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       return renderOnboardingLoading();
   }
 
-  const onboardingCompleted = onboardingSettings?.onboardingCompleted === true;
   const shouldShowOnboarding = !onboardingCompleted;
   if (shouldShowOnboarding) {
       return (
@@ -3323,6 +3361,12 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 minDate={minTransactionDate}
                 onOpenInstall={openModalManual}
                 isAppInstalled={isPwaInstalled}
+                tipsEnabled={tipsEnabled && onboardingCompleted}
+                onOpenSettings={() => canAccessSettings && setCurrentView(ViewState.SETTINGS)}
+                categoriesCount={expenseCategories.length + incomeCategories.length}
+                isPwaInstallable={pwaInstallMode === 'installable'}
+                isStandalone={isStandalone}
+                onInstallApp={triggerInstall}
             />,
             { skipMobileOffset: true }
         )}
@@ -3505,6 +3549,8 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           onSystemReset={handleSystemReset}
           onOpenInstall={openModalManual}
           isAppInstalled={isPwaInstalled}
+          tipsEnabled={tipsEnabled}
+          onUpdateTipsEnabled={handleTipsEnabledChange}
         />
       )}
       <CalculatorModal 

@@ -118,4 +118,5 @@ firebase deploy --only hosting:meumeiappbeta
 	3. Confirm landing layout: hero two-column on desktop, mock dashboard on right, CTAs present and spaced, benefits and steps visible below.
 	4. Click `Começar agora` — it should initiate the same checkout flow as before.
 	5. Click `Já sou cliente` — it should navigate to `/login`.
-
+- Helper AI: 401 fix (auth header + verifyIdToken)
+- Helper AI: IAM invoker public fix (allUsers invoker)

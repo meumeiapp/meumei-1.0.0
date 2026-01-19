@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode, command }) => {
     const env = loadEnv(mode, '.', '');
-    if (command === 'build') {
+  if (command === 'build') {
       const salt = (env.VITE_CRYPTO_SALT || process.env.VITE_CRYPTO_SALT || '').trim();
       if (!salt) {
         throw new Error(
@@ -13,10 +13,26 @@ export default defineConfig(({ mode, command }) => {
         );
       }
     }
+    const apiTarget = (env.VITE_API_ORIGIN || '').trim() || 'https://meumei-d88be.web.app';
     return {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          '/api': {
+            target: apiTarget,
+            changeOrigin: true,
+            secure: true,
+            configure: (proxy) => {
+              proxy.on('proxyReq', (proxyReq, req) => {
+                const authHeader = req.headers?.authorization;
+                if (authHeader) {
+                  proxyReq.setHeader('authorization', authHeader);
+                }
+              });
+            }
+          }
+        }
       },
       plugins: [
         react(),
@@ -123,10 +139,6 @@ export default defineConfig(({ mode, command }) => {
           }
         })
       ],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
