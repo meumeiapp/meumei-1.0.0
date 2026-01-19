@@ -45,23 +45,9 @@
       ],
       "rewrites": [
         {
-          "source": "/api/health",
-          "function": {
-            "functionId": "health",
-            "region": "us-central1"
-          }
-        },
-        {
           "source": "/api/createCheckoutSessionV2",
           "function": {
             "functionId": "createCheckoutSessionV2",
-            "region": "us-central1"
-          }
-        },
-        {
-          "source": "/api/confirmCheckoutSession",
-          "function": {
-            "functionId": "confirmCheckoutSession",
             "region": "us-central1"
           }
         },
@@ -76,13 +62,6 @@
           "source": "/api/askMeumeiHelper",
           "function": {
             "functionId": "askMeumeiHelper",
-            "region": "us-central1"
-          }
-        },
-        {
-          "source": "/api/stripeWebhook",
-          "function": {
-            "functionId": "stripeWebhook",
             "region": "us-central1"
           }
         },
