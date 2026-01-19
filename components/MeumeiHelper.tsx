@@ -23,15 +23,22 @@ type MeumeiHelperProps = {
   signals: HelperSignals;
   actions?: HelperActionMap;
   tipsEnabled?: boolean;
+  forceVisible?: boolean;
+  openSignal?: boolean;
 };
 
 const MAX_BODY_CHARS = 140;
 
-const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tipsEnabled }) => {
+const MeumeiHelper: React.FC<MeumeiHelperProps> = ({
+  signals,
+  actions = {},
+  tipsEnabled,
+  forceVisible,
+  openSignal
+}) => {
   const [helperState, setHelperState] = useState(loadHelperState);
   const [stepIndex, setStepIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
-  const [manualOpen, setManualOpen] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -39,10 +46,11 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
   const [askError, setAskError] = useState('');
   const [askLoading, setAskLoading] = useState(false);
   const shownKeyRef = useRef('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const tipsActive = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
   const autoVisible = tipsActive && shouldRenderHelper(helperState);
-  const shouldShowHelper = signals.isLoggedIn && (manualOpen || autoVisible);
+  const shouldShowHelper = signals.isLoggedIn && (forceVisible || autoVisible);
 
   const selection = useMemo<HelperSelection | null>(() => {
     if (!shouldShowHelper) return null;
@@ -92,33 +100,7 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
     });
   }, [selection, stepIndex, shouldShowHelper, fallbackTrack.id]);
 
-  if (!shouldShowHelper) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          const nextState = {
-            ...helperState,
-            dismissedCount: 0,
-            cooldownUntil: 0,
-            snoozeUntil: 0,
-            doNotShow: false
-          };
-          setHelperState(nextState);
-          saveHelperState(nextState);
-          setManualOpen(true);
-          trackHelperEvent('helper_manual_open');
-        }}
-        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-200 shadow-lg backdrop-blur hover:border-emerald-400 hover:bg-emerald-500/20"
-        aria-label="Abrir Ajudante do meumei"
-      >
-        <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-emerald-200">
-          Dicas
-        </span>
-        <span>Ajudante</span>
-      </button>
-    );
-  }
+  if (!shouldShowHelper) return null;
 
   const track = selection?.track || fallbackTrack;
   const steps = selection?.steps || fallbackTrack.steps;
@@ -150,19 +132,16 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
   const handleDismiss = () => {
     updateState((prev) => applyDismiss(prev));
     trackHelperEvent('helper_dismiss', { trackId: track.id, stepIndex });
-    setManualOpen(false);
   };
 
   const handleSnooze = () => {
     updateState((prev) => applySnooze(prev));
     trackHelperEvent('helper_snooze', { trackId: track.id, stepIndex });
-    setManualOpen(false);
   };
 
   const handleDoNotShow = () => {
     updateState((prev) => applyDoNotShow(prev));
     trackHelperEvent('helper_do_not_show', { trackId: track.id, stepIndex });
-    setManualOpen(false);
   };
 
   const handlePrev = () => {
@@ -175,7 +154,6 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
   const finishTrack = () => {
     updateState((prev) => applyTrackComplete(prev, track.id));
     trackHelperEvent('helper_next', { trackId: track.id, stepIndex, completed: true });
-    setManualOpen(false);
   };
 
   const handleNext = () => {
@@ -197,6 +175,17 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
     setStepIndex((prev) => Math.min(prev + 1, totalSteps - 1));
     setExpanded(false);
   };
+
+  useEffect(() => {
+    if (!openSignal) return;
+    setAskOpen(true);
+  }, [openSignal]);
+
+  useEffect(() => {
+    if (!openSignal || !askOpen) return;
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 50);
+    return () => window.clearTimeout(timer);
+  }, [openSignal, askOpen]);
 
   const handleCta = () => {
     if (!currentStep.ctaId) return;
@@ -301,33 +290,33 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
   };
 
   return (
-    <div className="w-full rounded-2xl border border-white/10 bg-white/80 px-4 py-3 text-zinc-900 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-[#151517] dark:text-white">
+    <div className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-white shadow-[0_12px_30px_rgba(0,0,0,0.35)] backdrop-blur">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-500">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">
             Ajudante do meumei
           </p>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">{helperLabel}</p>
+          <p className="text-xs text-white/50">{helperLabel}</p>
         </div>
         <button
           type="button"
           onClick={handleDismiss}
-          className="text-xs font-semibold text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+          className="text-xs font-semibold text-white/50 hover:text-white/80"
         >
           X
         </button>
       </div>
 
       <div className="mt-2 flex items-start justify-between gap-3">
-        <p className="text-sm text-zinc-700 dark:text-zinc-200" style={bodyStyle as React.CSSProperties}>
-          <span className="font-semibold text-zinc-900 dark:text-white">{currentStep.title}. </span>
+        <p className="text-sm text-white/85" style={bodyStyle as React.CSSProperties}>
+          <span className="font-semibold text-white">{currentStep.title}. </span>
           {currentStep.body}
         </p>
         {currentStep.ctaLabel && actions[currentStep.ctaId || ''] && (
           <button
             type="button"
             onClick={handleCta}
-            className="flex shrink-0 items-center rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-black hover:bg-emerald-400"
+            className="flex shrink-0 items-center rounded-full bg-gradient-to-r from-indigo-500/80 via-sky-500/80 to-fuchsia-500/80 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:from-indigo-400/80 hover:via-sky-400/80 hover:to-fuchsia-400/80"
           >
             {currentStep.ctaLabel}
           </button>
@@ -341,20 +330,20 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
             setExpanded(next);
             trackHelperEvent('helper_expand', { trackId: track.id, stepIndex, expanded: next });
           }}
-          className="mt-1 text-[11px] font-semibold text-emerald-500 hover:text-emerald-400"
+          className="mt-1 text-[11px] font-semibold text-indigo-300 hover:text-indigo-200"
         >
           {expanded ? 'Ver menos' : 'Ver mais'}
         </button>
       )}
 
-      <div className="mt-2 h-1 w-full rounded-full bg-emerald-100/40 dark:bg-emerald-900/40">
+      <div className="mt-2 h-1 w-full rounded-full bg-white/10">
         <div
-          className="h-1 rounded-full bg-emerald-500 transition-all"
+          className="h-1 rounded-full bg-gradient-to-r from-indigo-400/70 via-sky-400/70 to-fuchsia-400/70 transition-all"
           style={{ width: `${progressValue}%` }}
         />
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-white/50">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -362,8 +351,8 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
             disabled={stepIndex === 0}
             className={`rounded-full px-2 py-1 text-[11px] font-semibold transition ${
               stepIndex === 0
-                ? 'cursor-not-allowed text-zinc-300 dark:text-zinc-600'
-                : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white'
+                ? 'cursor-not-allowed text-white/20'
+                : 'text-white/60 hover:text-white'
             }`}
           >
             Anterior
@@ -371,7 +360,7 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
           <button
             type="button"
             onClick={handleNext}
-            className="rounded-full px-2 py-1 text-[11px] font-semibold text-zinc-900 hover:text-emerald-500 dark:text-white dark:hover:text-emerald-400"
+            className="rounded-full px-2 py-1 text-[11px] font-semibold text-white hover:text-indigo-200"
           >
             Próximo
           </button>
@@ -380,28 +369,28 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
           <button
             type="button"
             onClick={() => setAskOpen((prev) => !prev)}
-            className="text-[11px] font-semibold text-emerald-500 hover:text-emerald-400"
+            className="text-[11px] font-semibold text-indigo-300 hover:text-indigo-200"
           >
             Perguntar
           </button>
           <button
             type="button"
             onClick={handleSkip}
-            className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+            className="text-[11px] font-semibold text-white/50 hover:text-white/80"
           >
             Pular
           </button>
           <button
             type="button"
             onClick={handleSnooze}
-            className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+            className="text-[11px] font-semibold text-white/50 hover:text-white/80"
           >
             Lembrar depois
           </button>
           <button
             type="button"
             onClick={handleDoNotShow}
-            className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white"
+            className="text-[11px] font-semibold text-white/50 hover:text-white/80"
           >
             Não mostrar
           </button>
@@ -409,20 +398,21 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
       </div>
 
       {askOpen && (
-        <form className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3" onSubmit={handleQuestionSubmit}>
+        <form className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4" onSubmit={handleQuestionSubmit}>
           <div className="flex flex-col gap-2">
             <input
               type="text"
+              ref={inputRef}
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Pergunte sobre como usar o meumei..."
-              className="w-full rounded-lg border border-emerald-500/30 bg-white px-3 py-2 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/40 dark:border-emerald-500/30 dark:bg-[#0f1111] dark:text-white"
+              placeholder="O que você quer organizar agora?"
+              className="min-h-[48px] w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-base text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/20"
             />
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="submit"
                 disabled={askLoading}
-                className="rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-black hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
+                className="rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {askLoading ? 'Carregando...' : 'Enviar'}
               </button>
@@ -434,16 +424,16 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
                   setSuggestions([]);
                   setAskError('');
                 }}
-                className="rounded-full border border-emerald-500/40 px-3 py-1 text-xs font-semibold text-emerald-400 hover:border-emerald-400"
+                className="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold text-white/70 hover:border-white/40 hover:text-white"
               >
                 Limpar
               </button>
             </div>
             {askError && (
-              <p className="text-[11px] font-semibold text-amber-500">{askError}</p>
+              <p className="text-[11px] font-semibold text-red-300/80">{askError}</p>
             )}
             {answer && (
-              <div className="rounded-lg border border-emerald-500/20 bg-[#0b1412] px-3 py-2 text-xs text-emerald-100 whitespace-pre-line">
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/85 whitespace-pre-line">
                 {answer}
               </div>
             )}
@@ -452,7 +442,7 @@ const MeumeiHelper: React.FC<MeumeiHelperProps> = ({ signals, actions = {}, tips
                 {suggestions.slice(0, 3).map((item) => (
                   <span
                     key={item}
-                    className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-300"
+                    className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/70"
                   >
                     {item}
                   </span>

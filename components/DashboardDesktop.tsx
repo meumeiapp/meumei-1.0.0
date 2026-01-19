@@ -25,7 +25,6 @@ import {
   FileText,
   GripVertical,
   Lock,
-  Search,
   Download,
   ChevronDown
 } from 'lucide-react';
@@ -39,7 +38,7 @@ import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
-import MeumeiHelper from './MeumeiHelper';
+import SearchHelperBar from './SearchHelperBar';
 import QuickAccessHelp from './QuickAccessHelp';
 
 interface FinancialData {
@@ -941,93 +940,87 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
         
         <div className="w-full px-4 mt-2 mb-6">
             <div className="max-w-5xl mx-auto relative" ref={searchContainerRef}>
-                <div className="flex items-center gap-3 px-6 py-3 rounded-full bg-white/80 dark:bg-white/10 border border-white/50 dark:border-zinc-800 text-sm sm:text-base font-semibold text-indigo-700 dark:text-white shadow-lg shadow-indigo-500/10 focus-within:ring-2 focus-within:ring-indigo-400 transition-all">
-                    <Search size={18} className="text-indigo-600 dark:text-indigo-300" />
-                    <input
-                        id="dashboard-search-desktop"
-                        name="dashboardSearch"
-                        value={searchQuery}
-                        onChange={(e) => {
-                            setSearchQuery(e.target.value);
-                            setActiveSearchIndex(0);
-                        }}
-                        onFocus={() => setIsSearchActive(true)}
-                        onKeyDown={handleSearchKeyDown}
-                        placeholder="Pesquisar despesas, entradas, contas e cartões..."
-                        aria-label="Pesquisar despesas, entradas, contas e cartões"
-                        className="flex-1 bg-transparent text-sm sm:text-base text-zinc-900 dark:text-white placeholder-zinc-500 outline-none"
-                    />
-                </div>
-                {Boolean(trimmedSearchQuery) && isSearchActive && (
-                    <div className="absolute left-0 right-0 mt-3 bg-[#111114] border border-white/10 rounded-2xl shadow-2xl max-h-80 overflow-y-auto z-20">
-                        {visibleInlineResults.length === 0 ? (
-                            <div className="text-sm text-zinc-500 px-6 py-4">Nenhum resultado encontrado.</div>
-                        ) : (
-                            <ul>
-                                {visibleInlineResults.map((item, idx) => {
-                                    const isActive = idx === activeSearchIndex;
-                                    const statusMeta = getInlineExpenseStatusMeta(item);
-                                    return (
-                                        <li
-                                            key={`${item.entity}-${item.id}`}
-                                            className={`px-6 py-4 border-b border-white/5 cursor-pointer ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
-                                            onMouseEnter={() => setActiveSearchIndex(idx)}
-                                            onClick={() => handleSelectSearchResult(item)}
-                                        >
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div>
-                                                    <p className="text-sm font-semibold text-white flex items-center gap-2">
-                                                        {item.entity === 'expense' && <span className="text-rose-400 text-[10px] uppercase">Despesa</span>}
-                                                        {item.entity === 'income' && <span className="text-emerald-400 text-[10px] uppercase">Entrada</span>}
-                                                        {item.entity === 'account' && <span className="text-blue-400 text-[10px] uppercase">Conta</span>}
-                                                        {item.entity === 'card' && <span className="text-purple-400 text-[10px] uppercase">Cartão</span>}
-                                                        {item.entity === 'category' && <span className="text-zinc-400 text-[10px] uppercase">Categoria</span>}
-                                                        <span>{item.title}</span>
-                                                    </p>
-                                                    {item.subtitle && <p className="text-xs text-zinc-500">{item.subtitle}</p>}
-                                                </div>
-                                                <div className="text-right">
-                                                    {statusMeta && (
-                                                        <p className={`text-[11px] font-semibold flex items-center justify-end gap-1 ${statusMeta.textClass}`}>
-                                                            <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
-                                                            {statusMeta.label}
-                                                        </p>
-                                                    )}
-                                                    {typeof item.amount === 'number' && (
-                                                        <p className="text-sm font-bold text-white">
-                                                            {item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                        </p>
-                                                    )}
-                                                    {item.entity === 'expense' ? (
-                                                        item.dateLabel ? (
-                                                            <p className="text-[11px] text-zinc-500">
-                                                                {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
+                <SearchHelperBar
+                    variant="desktop"
+                    searchQuery={searchQuery}
+                    setSearchQuery={setSearchQuery}
+                    setActiveSearchIndex={setActiveSearchIndex}
+                    setIsSearchActive={setIsSearchActive}
+                    onSearchKeyDown={handleSearchKeyDown}
+                    signals={helperSignals}
+                    actions={helperActions}
+                    tipsEnabled={tipsEnabled}
+                    results={
+                        Boolean(trimmedSearchQuery) && isSearchActive ? (
+                            <div className="absolute left-0 right-0 mt-3 bg-[#111114] border border-white/10 rounded-2xl shadow-2xl max-h-80 overflow-y-auto z-20">
+                                {visibleInlineResults.length === 0 ? (
+                                    <div className="text-sm text-zinc-500 px-6 py-4">Nenhum resultado encontrado.</div>
+                                ) : (
+                                    <ul>
+                                        {visibleInlineResults.map((item, idx) => {
+                                            const isActive = idx === activeSearchIndex;
+                                            const statusMeta = getInlineExpenseStatusMeta(item);
+                                            return (
+                                                <li
+                                                    key={`${item.entity}-${item.id}`}
+                                                    className={`px-6 py-4 border-b border-white/5 cursor-pointer ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
+                                                    onMouseEnter={() => setActiveSearchIndex(idx)}
+                                                    onClick={() => handleSelectSearchResult(item)}
+                                                >
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div>
+                                                            <p className="text-sm font-semibold text-white flex items-center gap-2">
+                                                                {item.entity === 'expense' && <span className="text-rose-400 text-[10px] uppercase">Despesa</span>}
+                                                                {item.entity === 'income' && <span className="text-emerald-400 text-[10px] uppercase">Entrada</span>}
+                                                                {item.entity === 'account' && <span className="text-blue-400 text-[10px] uppercase">Conta</span>}
+                                                                {item.entity === 'card' && <span className="text-purple-400 text-[10px] uppercase">Cartão</span>}
+                                                                {item.entity === 'category' && <span className="text-zinc-400 text-[10px] uppercase">Categoria</span>}
+                                                                <span>{item.title}</span>
                                                             </p>
-                                                        ) : (
-                                                            <p className="text-[11px] text-zinc-500">Sem vencimento</p>
-                                                        )
-                                                    ) : (
-                                                        item.dateLabel && (
-                                                            <p className="text-[11px] text-zinc-500">
-                                                                {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                            </p>
-                                                        )
-                                                    )}
-                                               </div>
-                                           </div>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        )}
-                    </div>
-                )}
+                                                            {item.subtitle && <p className="text-xs text-zinc-500">{item.subtitle}</p>}
+                                                        </div>
+                                                        <div className="text-right">
+                                                            {statusMeta && (
+                                                                <p className={`text-[11px] font-semibold flex items-center justify-end gap-1 ${statusMeta.textClass}`}>
+                                                                    <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
+                                                                    {statusMeta.label}
+                                                                </p>
+                                                            )}
+                                                            {typeof item.amount === 'number' && (
+                                                                <p className="text-sm font-bold text-white">
+                                                                    {item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                                </p>
+                                                            )}
+                                                            {item.entity === 'expense' ? (
+                                                                item.dateLabel ? (
+                                                                    <p className="text-[11px] text-zinc-500">
+                                                                        {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                                    </p>
+                                                                ) : (
+                                                                    <p className="text-[11px] text-zinc-500">Sem vencimento</p>
+                                                                )
+                                                            ) : (
+                                                                item.dateLabel && (
+                                                                    <p className="text-[11px] text-zinc-500">
+                                                                        {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                                    </p>
+                                                                )
+                                                            )}
+                                                       </div>
+                                                   </div>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                            </div>
+                        ) : null
+                    }
+                />
             </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4">
-            <MeumeiHelper signals={helperSignals} actions={helperActions} tipsEnabled={tipsEnabled} />
-        </div>
+        
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>

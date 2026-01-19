@@ -40,6 +40,15 @@ export type HelperSelection = {
   stepIndex: number;
 };
 
+export type HelperTip = {
+  id: string;
+  title: string;
+  body: string;
+  trackId: string;
+  ctaId?: string;
+  ctaLabel?: string;
+};
+
 const STORAGE_KEY = 'meumei.helper';
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -97,6 +106,24 @@ export const shouldRenderHelper = (state: HelperState, now = Date.now()) => {
 
 const getEligibleSteps = (track: HelperTrack, signals: HelperSignals) =>
   track.steps.filter((step) => step.showWhen(signals));
+
+export const getHelperTips = (signals: HelperSignals): HelperTip[] => {
+  const tips: HelperTip[] = [];
+  helperTracks.forEach((track) => {
+    track.steps.forEach((step) => {
+      if (!step.showWhen(signals)) return;
+      tips.push({
+        id: step.id,
+        title: step.title,
+        body: step.body,
+        trackId: track.id,
+        ctaId: step.ctaId,
+        ctaLabel: step.ctaLabel
+      });
+    });
+  });
+  return tips;
+};
 
 const clampIndex = (value: number, max: number) =>
   Math.min(Math.max(value, 0), Math.max(max, 0));
