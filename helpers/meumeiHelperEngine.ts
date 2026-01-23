@@ -6,6 +6,7 @@ export type HelperSignals = {
   hasCategories: boolean;
   isPwaInstallable: boolean;
   isStandalone: boolean;
+  isMobile: boolean;
 };
 
 export type HelperStep = {
@@ -14,6 +15,7 @@ export type HelperStep = {
   body: string;
   ctaId?: string;
   ctaLabel?: string;
+  onlyMobile?: boolean;
   showWhen: (signals: HelperSignals) => boolean;
 };
 
@@ -104,14 +106,23 @@ export const shouldRenderHelper = (state: HelperState, now = Date.now()) => {
   return true;
 };
 
+const isStepVisible = (step: HelperStep, signals: HelperSignals) => {
+  if (signals.isMobile) {
+    if (!step.onlyMobile) return false;
+  } else if (step.onlyMobile) {
+    return false;
+  }
+  return step.showWhen(signals);
+};
+
 const getEligibleSteps = (track: HelperTrack, signals: HelperSignals) =>
-  track.steps.filter((step) => step.showWhen(signals));
+  track.steps.filter((step) => isStepVisible(step, signals));
 
 export const getHelperTips = (signals: HelperSignals): HelperTip[] => {
   const tips: HelperTip[] = [];
   helperTracks.forEach((track) => {
     track.steps.forEach((step) => {
-      if (!step.showWhen(signals)) return;
+      if (!isStepVisible(step, signals)) return;
       tips.push({
         id: step.id,
         title: step.title,
@@ -129,6 +140,54 @@ const clampIndex = (value: number, max: number) =>
   Math.min(Math.max(value, 0), Math.max(max, 0));
 
 export const helperTracks: HelperTrack[] = [
+  {
+    id: 'mobile_exclusivas',
+    label: 'Dicas do mobile',
+    steps: [
+      {
+        id: 'mobile_quick_access',
+        title: 'Acesso rápido no rodapé',
+        body: 'Deslize os botões do rodapé para o lado e descubra mais atalhos.',
+        onlyMobile: true,
+        showWhen: (s) => s.isLoggedIn && s.isMobile
+      },
+      {
+        id: 'mobile_expand_lists',
+        title: 'Listas inteligentes',
+        body: 'Quando a lista ficar longa, toque em “expandir” para ver tudo e “recolher” para voltar.',
+        onlyMobile: true,
+        showWhen: (s) => s.isLoggedIn && s.isMobile
+      },
+      {
+        id: 'mobile_tap_details',
+        title: 'Toque para detalhes',
+        body: 'Em contas, entradas e saídas, toque no item para abrir detalhes e ações.',
+        onlyMobile: true,
+        showWhen: (s) => s.isLoggedIn && s.isMobile
+      },
+      {
+        id: 'mobile_search',
+        title: 'Busca rápida',
+        body: 'Use a busca no topo para achar despesas, entradas, contas e cartões em segundos.',
+        onlyMobile: true,
+        showWhen: (s) => s.isLoggedIn && s.isMobile
+      },
+      {
+        id: 'mobile_home',
+        title: 'Voltar para a Home',
+        body: 'Ao sair do painel, o botão de casa aparece no rodapé para voltar rápido.',
+        onlyMobile: true,
+        showWhen: (s) => s.isLoggedIn && s.isMobile
+      },
+      {
+        id: 'mobile_tips_settings',
+        title: 'Dicas no controle',
+        body: 'Se quiser, você pode desativar as dicas nas Configurações.',
+        onlyMobile: true,
+        showWhen: (s) => s.isLoggedIn && s.isMobile
+      }
+    ]
+  },
   {
     id: 'primeiros_passos',
     label: 'Primeiros passos',
@@ -176,6 +235,48 @@ export const helperTracks: HelperTrack[] = [
     ]
   },
   {
+    id: 'configuracoes',
+    label: 'Configurações',
+    steps: [
+      {
+        id: 'dicas_config',
+        title: 'Dicas sob controle',
+        body: 'Se preferir, você pode desativar as dicas nas Configurações.',
+        showWhen: (s) => s.isLoggedIn
+      }
+    ]
+  },
+  {
+    id: 'atalhos',
+    label: 'Atalhos do teclado',
+    steps: [
+      {
+        id: 'atalhos_1_9',
+        title: 'Atalhos do Acesso Rápido',
+        body: 'Use as teclas 1 a 9 para abrir os botões do Acesso Rápido quando não estiver digitando.',
+        showWhen: (s) => s.isLoggedIn
+      },
+      {
+        id: 'atalho_esc',
+        title: 'Volte ou feche rápido',
+        body: 'Pressione ESC para fechar modais e voltar para a tela anterior.',
+        showWhen: (s) => s.isLoggedIn
+      },
+      {
+        id: 'atalho_busca',
+        title: 'Navegue na busca',
+        body: 'Com resultados abertos, use as setas para cima/baixo e Enter para abrir o item.',
+        showWhen: (s) => s.isLoggedIn
+      },
+      {
+        id: 'atalho_ajudante_enter',
+        title: 'Pergunte ao Ajudante',
+        body: 'No modo Ajudante, pressione Enter para enviar a pergunta.',
+        showWhen: (s) => s.isLoggedIn
+      }
+    ]
+  },
+  {
     id: 'pwa',
     label: 'Dica de PWA',
     steps: [
@@ -215,7 +316,7 @@ export const helperTracks: HelperTrack[] = [
 
 export const selectHelperTrack = (signals: HelperSignals, state: HelperState): HelperSelection | null => {
   if (!signals.isLoggedIn) return null;
-  const priority = ['pwa', 'primeiros_passos', 'higiene_financeira'];
+  const priority = ['mobile_exclusivas', 'pwa', 'primeiros_passos', 'higiene_financeira'];
   for (const trackId of priority) {
     const track = helperTracks.find((item) => item.id === trackId);
     if (!track) continue;

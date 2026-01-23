@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Plus, CreditCard as CardIcon, Wallet } from 'lucide-react';
 import { Expense, Account, CreditCard } from '../types';
 import NewExpenseModal from './NewExpenseModal';
@@ -7,6 +7,7 @@ import CardTag from './CardTag';
 import { getAccountColor } from '../services/cardColorUtils';
 import useIsMobile from '../hooks/useIsMobile';
 import MobilePageShell from './mobile/MobilePageShell';
+import MobileEmptyState from './mobile/MobileEmptyState';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 
 interface VariableExpensesViewProps {
@@ -92,6 +93,29 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
   const handleNew = () => {
       setIsModalOpen(true);
   };
+
+  useEffect(() => {
+      if (isMobile) return;
+      const handleKeyDown = (event: KeyboardEvent) => {
+          if (event.defaultPrevented || event.repeat) return;
+          if (event.ctrlKey || event.metaKey || event.altKey) return;
+          if (event.key !== 'Enter') return;
+          if (document.querySelector('[data-modal-root="true"]')) return;
+          const target = event.target as HTMLElement | null;
+          if (target) {
+              const tagName = target.tagName;
+              if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target.isContentEditable) {
+                  return;
+              }
+          }
+          if (isModalOpen) return;
+          event.preventDefault();
+          handleNew();
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNew, isMobile, isModalOpen]);
 
   const getSourceInfo = (expense: Expense) => {
       if (expense.paymentMethod === 'Crédito' && expense.cardId) {
@@ -242,7 +266,14 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
                   contentClassName="space-y-4"
               >
                   {headerSection}
-                  {tableSection}
+                  {filteredExpenses.length === 0 ? (
+                      <MobileEmptyState
+                          icon={<Wallet size={18} />}
+                          message="Nenhuma despesa encontrada para este mês."
+                      />
+                  ) : (
+                      tableSection
+                  )}
               </MobilePageShell>
               {modals}
           </>

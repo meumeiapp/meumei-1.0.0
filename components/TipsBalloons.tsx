@@ -49,6 +49,16 @@ const TipsBalloons: React.FC<TipsBalloonsProps> = ({ onOpenInstall, onOpenSettin
         message: 'Arraste os blocos do dashboard para organizar o que você quer ver primeiro.'
       },
       {
+        id: 'esc_shortcut',
+        title: 'Atalho rápido',
+        message: 'Use a tecla ESC para fechar modais e voltar etapas sem precisar do mouse.'
+      },
+      {
+        id: 'quick_access_shortcuts',
+        title: 'Atalhos do Acesso Rápido',
+        message: 'Use as teclas 1 a 9 para abrir os botões do Acesso Rápido sem precisar do mouse.'
+      },
+      {
         id: 'tips_settings_toggle',
         title: 'Dicas sob controle',
         message: 'Você pode ativar ou desativar estas dicas nas Configurações.',

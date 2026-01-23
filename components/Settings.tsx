@@ -19,15 +19,20 @@ import {
   FileText,
   AlertOctagon,
   Calendar,
+  ChevronDown,
   Download,
   Lightbulb,
-  Sprout
+  Sprout,
+  Keyboard,
+  Bell
 } from 'lucide-react';
 import { CompanyInfo } from '../types';
 import { debugLog } from '../utils/debug';
 import { dataService } from '../services/dataService';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizeEmail } from '../utils/normalizeEmail';
+import useIsMobile from '../hooks/useIsMobile';
+import { notificationsService } from '../services/notificationsService';
 
 type ConfigErrorStage = 'entitlement' | 'company' | 'timeout';
 
@@ -35,6 +40,14 @@ type ConfigErrorState = {
   stage: ConfigErrorStage;
   error: Error;
 };
+
+type SettingsSectionId =
+  | 'company'
+  | 'install'
+  | 'notifications'
+  | 'tips'
+  | 'shortcuts'
+  | 'danger';
 
 const createFriendlyError = (value: unknown, fallback: string): Error => {
   if (value instanceof Error) {
@@ -74,6 +87,50 @@ const getConfigErrorCopy = (state: ConfigErrorState) => {
     description: 'Atualize a página para tentar novamente.',
     details: message
   };
+};
+
+const SettingsSection: React.FC<{
+  label: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  className?: string;
+  children: React.ReactNode;
+}> = ({ label, collapsed, onToggle, className, children }) => {
+  const toggleLabel = collapsed ? `Expandir ${label}` : `Recolher ${label}`;
+  return (
+    <section
+      className={`rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-6 shadow-sm relative overflow-hidden ${className || ''}`}
+    >
+      <div className="absolute right-3 top-3 z-10">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={toggleLabel}
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
+        >
+          <ChevronDown size={16} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={toggleLabel}
+          className="w-full rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/80 dark:bg-white/5 px-4 py-3 text-left transition hover:border-indigo-200 dark:hover:border-indigo-500/40"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-wider text-zinc-400">Recolhido</p>
+              <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{label}</p>
+            </div>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Clique para expandir</span>
+          </div>
+        </button>
+      ) : (
+        children
+      )}
+    </section>
+  );
 };
 
 interface SettingsProps {
@@ -120,8 +177,19 @@ const Settings: React.FC<SettingsProps> = ({
   const [resetDeletedCount, setResetDeletedCount] = useState<number | null>(null);
   const [resetPhase, setResetPhase] = useState<'idle' | 'countdown' | 'matrix' | 'result'>('idle');
   const [matrixStartedAt, setMatrixStartedAt] = useState<number | null>(null);
+  const [matrixText, setMatrixText] = useState('');
+  const [matrixFlashActive, setMatrixFlashActive] = useState(false);
+  const [boomActive, setBoomActive] = useState(false);
+  const matrixAudioRef = useRef<{
+      ctx: AudioContext;
+      osc: OscillatorNode;
+      gain: GainNode;
+      clickTimer?: number;
+  } | null>(null);
+  const boomPlayedRef = useRef(false);
 
   const { user: firebaseUser, logout } = useAuth();
+  const isMobile = useIsMobile();
   const normalizedSessionEmail = (() => {
       if (!firebaseUser?.email) return null;
       try {
@@ -133,24 +201,140 @@ const Settings: React.FC<SettingsProps> = ({
   })();
   const [configErrorState, setConfigErrorState] = useState<ConfigErrorState | null>(null);
   const [isFetchingConfig, setIsFetchingConfig] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Partial<Record<SettingsSectionId, boolean>>>(() => ({
+      company: true,
+      install: true,
+      notifications: true,
+      tips: true,
+      shortcuts: true,
+      danger: true
+  }));
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+      notificationsService.getLocalEnabled()
+  );
+  const [notificationsPermission, setNotificationsPermission] = useState<
+      NotificationPermission | 'unsupported'
+  >('unsupported');
+  const [notificationsBusy, setNotificationsBusy] = useState(false);
+  const [notificationsError, setNotificationsError] = useState('');
+  const [testNotificationStatus, setTestNotificationStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const resolvedTipsEnabled = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
   const actionButtonBase =
       'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition h-10 w-full sm:w-48 whitespace-nowrap';
+  const shortcutGroups = useMemo(
+      () => [
+          {
+              id: 'quick_access',
+              title: 'Acesso Rápido (1 a 9)',
+              description: 'Funciona quando nenhum campo de texto estiver ativo.',
+              layout: 'grid',
+              items: [
+                  { key: '1', label: 'Contas Bancárias' },
+                  { key: '2', label: 'Entradas' },
+                  { key: '3', label: 'Despesas Fixas' },
+                  { key: '4', label: 'Despesas Variáveis' },
+                  { key: '5', label: 'Despesas Pessoais' },
+                  { key: '6', label: 'Rendimentos' },
+                  { key: '7', label: 'Faturas' },
+                  { key: '8', label: 'Relatórios' },
+                  { key: '9', label: 'Emissão DAS' }
+              ]
+          },
+          {
+              id: 'navigation',
+              title: 'Busca e navegação',
+              description: 'Atalhos gerais para navegar mais rápido.',
+              layout: 'list',
+              items: [
+                  { key: 'Setas', label: 'Navegar pelos resultados da busca.' },
+                  { key: 'Enter', label: 'Abrir o item selecionado na busca.' },
+                  { key: 'ESC', label: 'Fechar modais e voltar para a tela anterior.' },
+                  { key: 'Enter (Ajudante)', label: 'Enviar pergunta no modo Ajudante.' }
+              ]
+          }
+      ],
+      []
+  );
+  const isSectionCollapsed = (id: SettingsSectionId) => Boolean(collapsedSections[id]);
+  const toggleSection = (id: SettingsSectionId) => {
+      setCollapsedSections((prev) => ({
+          ...prev,
+          [id]: !prev[id]
+      }));
+  };
 
   const timeoutRef = useRef<number | null>(null);
-  const matrixColumns = useMemo(() => {
-      const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ#$%*';
-      const buildLine = (length: number) =>
-          Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-      const buildText = (lines: number, lineLength: number) =>
-          Array.from({ length: lines }, () => buildLine(lineLength)).join('\n');
-      return Array.from({ length: 28 }, (_, idx) => ({
-          id: `col-${idx}`,
-          text: buildText(24 + (idx % 6), 10 + (idx % 8)),
-          duration: 8 + (idx % 6),
-          delay: -idx * 0.4
-      }));
-  }, []);
+  const matrixCharset = useMemo(() => '01MEUMEI-SYSTEM-REBOOT::', []);
+  const setupMatrixAudio = () => {
+      if (typeof window === 'undefined') return;
+      if (matrixAudioRef.current) return;
+      try {
+          const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+          if (!AudioCtx) return;
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.value = 420;
+          gain.gain.value = 0.02;
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          ctx.resume?.();
+          matrixAudioRef.current = { ctx, osc, gain };
+      } catch (error) {
+          console.warn('[matrix] audio_unavailable');
+      }
+  };
+
+  const playBoomSound = () => {
+      if (typeof window === 'undefined') return;
+      try {
+          const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+          if (!AudioCtx) return;
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(70, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(18, ctx.currentTime + 1.6);
+          gain.gain.setValueAtTime(0.0, ctx.currentTime);
+          gain.gain.linearRampToValueAtTime(0.95, ctx.currentTime + 0.05);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.6);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+
+          const bufferSize = Math.floor(ctx.sampleRate * 1.8);
+          const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+          const data = noiseBuffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i += 1) {
+              data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+          }
+          const noise = ctx.createBufferSource();
+          noise.buffer = noiseBuffer;
+          const noiseGain = ctx.createGain();
+          noiseGain.gain.setValueAtTime(0.0, ctx.currentTime);
+          noiseGain.gain.linearRampToValueAtTime(0.7, ctx.currentTime + 0.03);
+          noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.2);
+          noise.connect(noiseGain);
+          noiseGain.connect(ctx.destination);
+          noise.start();
+
+          ctx.resume?.();
+          window.setTimeout(() => {
+              try {
+                  osc.stop();
+                  noise.stop();
+                  ctx.close();
+              } catch {
+                  // ignore
+              }
+          }, 3000);
+      } catch {
+          console.warn('[matrix] boom_unavailable');
+      }
+  };
 
   // Sync with prop if it changes externally (rare but safe)
   useEffect(() => {
@@ -246,6 +430,34 @@ useEffect(() => {
     };
 }, [userId]);
 
+  useEffect(() => {
+      if (!isMobile) return;
+      if (typeof window === 'undefined' || !('Notification' in window)) {
+          setNotificationsPermission('unsupported');
+          return;
+      }
+      setNotificationsPermission(Notification.permission);
+  }, [isMobile]);
+
+  useEffect(() => {
+      if (!isMobile || !userId) return;
+      let active = true;
+      notificationsService
+          .getSettings(userId)
+          .then((settings) => {
+              if (!active) return;
+              if (typeof settings.enabled === 'boolean') {
+                  setNotificationsEnabled(settings.enabled);
+              }
+          })
+          .catch((error) => {
+              console.warn('[push] settings load failed', error);
+          });
+      return () => {
+          active = false;
+      };
+  }, [isMobile, userId]);
+
   const attemptReload = () => {
       if (typeof window !== 'undefined') {
           window.location.reload();
@@ -303,6 +515,54 @@ useEffect(() => {
     }
   };
 
+  const handleEnableNotifications = async () => {
+    if (!userId) return;
+    setNotificationsBusy(true);
+    setNotificationsError('');
+    setTestNotificationStatus('idle');
+    try {
+        await notificationsService.enable(userId);
+        setNotificationsEnabled(true);
+        if (typeof window !== 'undefined' && 'Notification' in window) {
+            setNotificationsPermission(Notification.permission);
+        }
+    } catch (error: any) {
+        setNotificationsError(error?.message || 'Falha ao ativar notificações.');
+    } finally {
+        setNotificationsBusy(false);
+    }
+  };
+
+  const handleDisableNotifications = async () => {
+    if (!userId) return;
+    setNotificationsBusy(true);
+    setNotificationsError('');
+    setTestNotificationStatus('idle');
+    try {
+        await notificationsService.disable(userId);
+        setNotificationsEnabled(false);
+        if (typeof window !== 'undefined' && 'Notification' in window) {
+            setNotificationsPermission(Notification.permission);
+        }
+    } catch (error: any) {
+        setNotificationsError(error?.message || 'Falha ao desativar notificações.');
+    } finally {
+        setNotificationsBusy(false);
+    }
+  };
+
+  const handleSendTestNotification = async () => {
+    setTestNotificationStatus('sending');
+    setNotificationsError('');
+    try {
+        await notificationsService.sendTestNotification();
+        setTestNotificationStatus('sent');
+    } catch (error: any) {
+        setTestNotificationStatus('error');
+        setNotificationsError(error?.message || 'Falha ao enviar notificação de teste.');
+    }
+  };
+
   // --- System Reset Handlers ---
   const handleConfirmReset = async () => {
     const confirmation = resetConfirmText.trim().toUpperCase();
@@ -319,6 +579,8 @@ useEffect(() => {
     setResetDeletedCount(null);
     setResetPhase('countdown');
     setMatrixStartedAt(null);
+    boomPlayedRef.current = false;
+    setBoomActive(false);
     try {
         const result = await onSystemReset();
         if (result && typeof result.deletedDocsCount === 'number') {
@@ -344,6 +606,8 @@ useEffect(() => {
     setResetDeletedCount(null);
     setResetPhase('idle');
     setMatrixStartedAt(null);
+    boomPlayedRef.current = false;
+    setBoomActive(false);
     setIsResetModalOpen(true);
   };
 
@@ -353,6 +617,12 @@ useEffect(() => {
       if (resetPhase !== 'countdown' || resetCountdown === null) return;
       if (resetCountdown <= 1) {
           setResetCountdown(1);
+          if (!boomPlayedRef.current) {
+              playBoomSound();
+              boomPlayedRef.current = true;
+              setBoomActive(true);
+              window.setTimeout(() => setBoomActive(false), 1200);
+          }
           setResetPhase('matrix');
           setMatrixStartedAt(Date.now());
           return;
@@ -367,14 +637,79 @@ useEffect(() => {
       if (resetPhase !== 'matrix') return;
       const startedAt = matrixStartedAt ?? Date.now();
       const elapsed = Date.now() - startedAt;
-      const remaining = Math.max(5000 - elapsed, 0);
+      const remaining = Math.max(3000 - elapsed, 0);
       const timer = window.setTimeout(() => {
-          if (!isResetting) {
-              setResetPhase('result');
-          }
+          setResetPhase('result');
       }, remaining);
       return () => window.clearTimeout(timer);
-  }, [isResetting, matrixStartedAt, resetPhase]);
+  }, [matrixStartedAt, resetPhase]);
+
+  useEffect(() => {
+      if (resetPhase !== 'matrix') return;
+      setMatrixFlashActive(true);
+      const flashTimer = window.setTimeout(() => {
+          setMatrixFlashActive(false);
+      }, 1600);
+      let active = true;
+      const width = typeof window !== 'undefined' ? window.innerWidth : 1200;
+      const height = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const lineLength = Math.max(60, Math.floor(width / 10));
+      const maxLines = Math.max(24, Math.floor(height / 14));
+      const buildLine = () =>
+          Array.from({ length: lineLength }, () => matrixCharset[Math.floor(Math.random() * matrixCharset.length)]).join('');
+      let line = '';
+      let lines: string[] = Array.from({ length: Math.floor(maxLines / 2) }, buildLine);
+
+      const tick = () => {
+          if (!active) return;
+          const char = matrixCharset[Math.floor(Math.random() * matrixCharset.length)];
+          line += char;
+          if (line.length >= lineLength) {
+              lines.push(line);
+              line = '';
+          }
+          const visible = lines.slice(-maxLines);
+          const paddedLine = line.padEnd(lineLength, ' ');
+          setMatrixText([...visible, paddedLine].join('\n'));
+      };
+
+      const interval = window.setInterval(tick, 28);
+      return () => {
+          active = false;
+          window.clearInterval(interval);
+          setMatrixText('');
+          window.clearTimeout(flashTimer);
+          setMatrixFlashActive(false);
+      };
+  }, [matrixCharset, resetPhase]);
+
+  useEffect(() => {
+      if (resetPhase !== 'matrix') return;
+      if (typeof window === 'undefined') return;
+      return () => {
+          const currentAudio = matrixAudioRef.current;
+          if (!currentAudio) return;
+          if (currentAudio.clickTimer) {
+              window.clearInterval(currentAudio.clickTimer);
+          }
+          try {
+              const { ctx, gain, osc } = currentAudio;
+              gain.gain.cancelScheduledValues(ctx.currentTime);
+              gain.gain.setTargetAtTime(0, ctx.currentTime, 0.1);
+              window.setTimeout(() => {
+                  try {
+                      osc.stop();
+                      ctx.close();
+                  } catch {
+                      // ignore
+                  }
+                  matrixAudioRef.current = null;
+              }, 200);
+          } catch {
+              matrixAudioRef.current = null;
+          }
+      };
+  }, [resetPhase]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
@@ -409,7 +744,11 @@ useEffect(() => {
             <div className="space-y-6">
                     
                     {/* Company Management Card */}
-                    <section className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm relative overflow-hidden">
+                    <SettingsSection
+                        label="Gestão da Empresa"
+                        collapsed={isSectionCollapsed('company')}
+                        onToggle={() => toggleSection('company')}
+                    >
                         {/* ... (Company Details Form Content same as before) ... */}
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 relative z-10 gap-4">
                             <div className="flex items-start gap-4">
@@ -565,9 +904,13 @@ useEffect(() => {
                                 />
                             </div>
                         </div>
-                    </section>
+                    </SettingsSection>
 
-                    <section className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm relative overflow-hidden">
+                    <SettingsSection
+                        label="Instalar app"
+                        collapsed={isSectionCollapsed('install')}
+                        onToggle={() => toggleSection('install')}
+                    >
                         <div className="flex items-start gap-4">
                             <div className="p-3 bg-emerald-100 dark:bg-emerald-900/20 rounded-xl text-emerald-600 dark:text-emerald-400">
                                 <Download size={22} />
@@ -597,9 +940,116 @@ useEffect(() => {
                                 Instalar
                             </button>
                         </div>
-                    </section>
+                    </SettingsSection>
 
-                    <section className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm relative overflow-hidden">
+                    {isMobile && (
+                        <SettingsSection
+                            label="Notificações"
+                            collapsed={isSectionCollapsed('notifications')}
+                            onToggle={() => toggleSection('notifications')}
+                        >
+                            <div className="flex items-start gap-4">
+                                <div className="p-3 bg-violet-100 dark:bg-violet-900/20 rounded-xl text-violet-600 dark:text-violet-300">
+                                    <Bell size={22} />
+                                </div>
+                                <div className="flex-1">
+                                    <h2 className="text-lg font-bold text-zinc-900 dark:text-white">
+                                        Notificações no celular
+                                    </h2>
+                                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                        Receba avisos importantes diretamente na tela do seu dispositivo.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-4 space-y-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                {notificationsError && (
+                                    <div className="rounded-lg border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-900/20 px-3 py-2 text-[11px] text-rose-600 dark:text-rose-300">
+                                        {notificationsError}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (notificationsBusy) return;
+                                        if (notificationsEnabled) return;
+                                        if (notificationsPermission === 'denied' || notificationsPermission === 'unsupported') {
+                                            return;
+                                        }
+                                        handleEnableNotifications();
+                                    }}
+                                    disabled={
+                                        notificationsBusy ||
+                                        notificationsPermission === 'denied' ||
+                                        notificationsPermission === 'unsupported'
+                                    }
+                                    className={`${actionButtonBase} ${
+                                        notificationsBusy
+                                            ? 'bg-zinc-500 text-white'
+                                            : notificationsEnabled
+                                            ? 'bg-emerald-600 text-white'
+                                            : notificationsPermission === 'default'
+                                            ? 'bg-amber-500 text-zinc-900'
+                                            : notificationsPermission === 'denied'
+                                            ? 'bg-rose-600 text-white'
+                                            : notificationsPermission === 'unsupported'
+                                            ? 'bg-zinc-400 text-white'
+                                            : 'bg-rose-600 text-white'
+                                    } ${
+                                        notificationsPermission === 'denied' ||
+                                        notificationsPermission === 'unsupported'
+                                            ? 'cursor-not-allowed opacity-70'
+                                            : ''
+                                    }`}
+                                >
+                                    {notificationsBusy
+                                        ? 'Processando...'
+                                        : notificationsEnabled
+                                        ? 'Notificações ativas'
+                                        : notificationsPermission === 'default'
+                                        ? 'Permissão pendente'
+                                        : notificationsPermission === 'denied'
+                                        ? 'Permissão bloqueada'
+                                        : notificationsPermission === 'unsupported'
+                                        ? 'Notificações indisponíveis'
+                                        : 'Notificações desligadas'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDisableNotifications}
+                                    disabled={notificationsBusy || !notificationsEnabled}
+                                    className={`${actionButtonBase} bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 ${
+                                        !notificationsEnabled ? 'cursor-not-allowed opacity-60' : ''
+                                    }`}
+                                >
+                                    {notificationsBusy ? 'Processando...' : 'Desativar'}
+                                </button>
+                            </div>
+                            <div className="mt-3 flex items-center justify-end">
+                                <button
+                                    type="button"
+                                    onClick={handleSendTestNotification}
+                                    disabled={!notificationsEnabled || notificationsBusy}
+                                    className={`${actionButtonBase} bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-zinc-700 dark:hover:bg-zinc-600 ${
+                                        !notificationsEnabled ? 'cursor-not-allowed opacity-60' : ''
+                                    }`}
+                                >
+                                    {testNotificationStatus === 'sending'
+                                        ? 'Enviando...'
+                                        : testNotificationStatus === 'sent'
+                                        ? 'Notificação enviada'
+                                        : 'Testar notificação'}
+                                </button>
+                            </div>
+                        </SettingsSection>
+                    )}
+
+                    <SettingsSection
+                        label="Dicas do meumei"
+                        collapsed={isSectionCollapsed('tips')}
+                        onToggle={() => toggleSection('tips')}
+                    >
                         <div className="flex items-start gap-4">
                             <div className="p-3 bg-indigo-100 dark:bg-indigo-900/20 rounded-xl text-indigo-600 dark:text-indigo-300">
                                 <Lightbulb size={22} />
@@ -634,11 +1084,68 @@ useEffect(() => {
                                 {resolvedTipsEnabled ? 'Desativar dicas' : 'Ativar dicas'}
                             </button>
                         </div>
-                    </section>
+                    </SettingsSection>
+
+                    <SettingsSection
+                        label="Atalhos do teclado"
+                        collapsed={isSectionCollapsed('shortcuts')}
+                        onToggle={() => toggleSection('shortcuts')}
+                    >
+                        <div className="flex items-start gap-4">
+                            <div className="p-3 bg-sky-100 dark:bg-sky-900/20 rounded-xl text-sky-600 dark:text-sky-300">
+                                <Keyboard size={22} />
+                            </div>
+                            <div className="flex-1">
+                                <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Atalhos do teclado</h2>
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                    Use atalhos para navegar mais rápido sem tirar as mãos do teclado.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                            {shortcutGroups.map((group) => (
+                                <div
+                                    key={group.id}
+                                    className="rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/70 dark:bg-white/5 p-4"
+                                >
+                                    <div className="space-y-1">
+                                        <p className="text-sm font-semibold text-zinc-900 dark:text-white">{group.title}</p>
+                                        <p className="text-xs text-zinc-500 dark:text-zinc-400">{group.description}</p>
+                                    </div>
+                                    <div
+                                        className={`mt-3 ${
+                                            group.layout === 'grid'
+                                                ? 'grid grid-cols-1 gap-2 sm:grid-cols-2'
+                                                : 'space-y-2'
+                                        }`}
+                                    >
+                                        {group.items.map((item) => (
+                                            <div
+                                                key={`${group.id}-${item.key}`}
+                                                className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200/60 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-2"
+                                            >
+                                                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">
+                                                    {item.key}
+                                                </span>
+                                                <span className="text-xs text-zinc-600 dark:text-zinc-300 text-right">
+                                                    {item.label}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </SettingsSection>
 
                     <div className="grid grid-cols-1 gap-6">
-                        <section className="bg-white dark:bg-[#151517] rounded-2xl border border-red-100 dark:border-red-900/30 p-6 shadow-sm relative overflow-hidden flex flex-col">
-                             <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
+                        <SettingsSection
+                            label="Zona de Perigo"
+                            collapsed={isSectionCollapsed('danger')}
+                            onToggle={() => toggleSection('danger')}
+                            className="border-red-100 dark:border-red-900/30 flex flex-col"
+                        >
+                            <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
                             <div className="relative z-10 space-y-3 flex-1">
                                 <div className="inline-flex items-center gap-2 rounded-full bg-red-600/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-300">
                                     <AlertTriangle size={12} />
@@ -665,7 +1172,7 @@ useEffect(() => {
                                     <Trash2 size={16} /> Resetar Sistema
                                 </button>
                             </div>
-                        </section>
+                        </SettingsSection>
                     </div>
                 </div>
         </div>
@@ -796,24 +1303,25 @@ useEffect(() => {
                 </div>
             )}
             {resetPhase === 'matrix' && (
-                <div className="relative h-full w-full overflow-hidden bg-black">
-                    <style>
-                        {`@keyframes mm-matrix-rise {0%{transform:translateY(120%);}100%{transform:translateY(-120%);}}`}
-                    </style>
-                    <div className="absolute inset-0 opacity-70">
-                        {matrixColumns.map((column, index) => (
-                            <div
-                                key={column.id}
-                                className="absolute top-0 h-full text-emerald-400/70 font-mono text-xs whitespace-pre leading-5"
-                                style={{
-                                    left: `${(index / matrixColumns.length) * 100}%`,
-                                    animation: `mm-matrix-rise ${column.duration}s linear infinite`,
-                                    animationDelay: `${column.delay}s`
-                                }}
-                            >
-                                {column.text}
-                            </div>
-                        ))}
+                <div
+                    className={`relative h-full w-full overflow-hidden bg-black ${
+                        boomActive ? 'animate-[mm-shake_0.6s_ease-in-out]' : ''
+                    }`}
+                >
+                    {matrixFlashActive && (
+                        <div className="absolute inset-0">
+                            <style>
+                                {`@keyframes mm-matrix-flash {0%{opacity:1;}70%{opacity:0.55;}100%{opacity:0;}}
+                                   @keyframes mm-shake {0%{transform:translate(0);}15%{transform:translate(-6px,4px);}30%{transform:translate(6px,-4px);}45%{transform:translate(-4px,6px);}60%{transform:translate(4px,-6px);}75%{transform:translate(-3px,3px);}100%{transform:translate(0);}}`}
+                            </style>
+                            <div className="absolute inset-0 bg-white animate-[mm-matrix-flash_1.6s_ease-out_forwards]" />
+                            <div className="absolute inset-0 bg-red-600/45 mix-blend-screen animate-[mm-matrix-flash_1.2s_ease-out_forwards]" />
+                        </div>
+                    )}
+                    <div className="absolute inset-0 opacity-85 flex items-center justify-center">
+                        <pre className="w-full h-full text-center text-emerald-400/80 font-mono text-[10px] sm:text-xs leading-4 tracking-[0.12em] whitespace-pre">
+                            {matrixText}
+                        </pre>
                     </div>
                     <div className="relative z-10 flex h-full w-full items-center justify-center">
                         <p className="text-lg sm:text-2xl font-semibold text-emerald-400 tracking-[0.35em] uppercase">

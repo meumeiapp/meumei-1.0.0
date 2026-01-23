@@ -35,12 +35,19 @@ const MobileTransactionCard: React.FC<MobileTransactionCardProps> = ({
       ? 'border-emerald-300 dark:border-emerald-600 bg-emerald-50/60 dark:bg-emerald-900/20'
       : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517]'
   } ${onClick ? 'hover:bg-zinc-50 dark:hover:bg-[#1c1c20]' : ''}`;
+  const resolvedAmountClass = amountClassName
+    ? amountClassName
+    : isLocked
+      ? 'text-zinc-400 dark:text-zinc-500'
+      : 'bg-gradient-to-r from-emerald-400 via-emerald-300 to-teal-200 bg-clip-text text-transparent';
 
   const content = (
     <>
       <div className="flex items-start justify-between gap-3 min-w-0">
         <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{title}</p>
-        <span className={`text-sm font-bold ${amountClassName || 'text-zinc-900 dark:text-white'}`}>{amount}</span>
+        <span className={`text-base font-semibold tracking-tight text-right max-w-[160px] truncate ${resolvedAmountClass}`}>
+          {amount}
+        </span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 min-w-0">
         <span className="truncate">{dateLabel}</span>

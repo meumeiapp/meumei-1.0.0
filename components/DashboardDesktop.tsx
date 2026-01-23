@@ -367,7 +367,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           hasExpenses: expenses.length > 0,
           hasCategories: categoriesCount > 0,
           isPwaInstallable,
-          isStandalone
+          isStandalone,
+          isMobile: false
       }),
       [accounts.length, categoriesCount, expenses.length, incomes.length, isPwaInstallable, isStandalone]
   );
@@ -409,7 +410,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-blue-100 dark:border-blue-500/20',
               tipTitle: 'Contas Bancárias',
               tipBody:
-                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.",
+                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.\nAtalho: 1",
               onClick: onOpenAccounts,
               showWhen: canViewBalances
           },
@@ -422,7 +423,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-emerald-100 dark:border-emerald-500/20',
               tipTitle: 'Entradas',
               tipBody:
-                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.',
+                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.\nAtalho: 2',
               onClick: onOpenIncomes,
               showWhen: canManageIncomes
           },
@@ -434,7 +435,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-amber-50 dark:bg-amber-500/10',
               border: 'border-amber-100 dark:border-amber-500/20',
               tipTitle: 'Despesas Fixas',
-              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.',
+              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.\nAtalho: 3',
               onClick: onOpenFixedExpenses,
               showWhen: canManageExpenses
           },
@@ -447,7 +448,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-pink-100 dark:border-pink-500/20',
               tipTitle: 'Despesas Variáveis',
               tipBody:
-                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.',
+                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.\nAtalho: 4',
               onClick: onOpenVariableExpenses,
               showWhen: canManageExpenses
           },
@@ -459,7 +460,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-cyan-50 dark:bg-cyan-500/10',
               border: 'border-cyan-100 dark:border-cyan-500/20',
               tipTitle: 'Despesas Pessoais',
-              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.',
+              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.\nAtalho: 5',
               onClick: onOpenPersonalExpenses,
               showWhen: canManageExpenses
           },
@@ -472,7 +473,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-violet-100 dark:border-violet-500/20',
               tipTitle: 'Rendimentos',
               tipBody:
-                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.',
+                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.\nAtalho: 6',
               onClick: onOpenYields,
               showWhen: canViewBalances
           },
@@ -484,7 +485,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-rose-50 dark:bg-rose-500/10',
               border: 'border-rose-100 dark:border-rose-500/20',
               tipTitle: 'Faturas',
-              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.',
+              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.\nAtalho: 7',
               onClick: onOpenInvoices,
               showWhen: canViewInvoices
           },
@@ -496,7 +497,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-zinc-100 dark:bg-zinc-500/10',
               border: 'border-zinc-200 dark:border-zinc-500/20',
               tipTitle: 'Relatórios',
-              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.',
+              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.\nAtalho: 8',
               onClick: onOpenReports,
               showWhen: canViewReports && Boolean(onOpenReports)
           },
@@ -508,7 +509,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-teal-50 dark:bg-teal-500/10',
               border: 'border-teal-100 dark:border-teal-500/20',
               tipTitle: 'Emissão DAS',
-              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.',
+              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.\nAtalho: 9',
               onClick: onOpenDas,
               showWhen: true
           }
@@ -530,12 +531,22 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           onOpenYields
       ]
   );
+
+  const quickActionItems = useMemo(
+      () => quickActions.filter((action) => action.showWhen),
+      [quickActions]
+  );
   
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [collapsedBlocks, setCollapsedBlocks] = useState<Partial<Record<DashboardBlockId, boolean>>>({});
+  const [isCreditCardsCollapsed, setIsCreditCardsCollapsed] = useState(true);
+  const [isExpenseBreakdownCollapsed, setIsExpenseBreakdownCollapsed] = useState(true);
+  const collapsePrefsLoadedRef = useRef(false);
+  const collapsePrefsKey = 'meumei.dashboard.desktop.collapse';
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const categoryNames = useMemo(() => {
       const names = new Set<string>();
@@ -544,6 +555,76 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       });
       return Array.from(names);
   }, [expenses]);
+
+  const toggleCollapse = (id: DashboardBlockId) => {
+      setCollapsedBlocks((prev) => ({
+          ...prev,
+          [id]: !prev[id]
+      }));
+  };
+
+  useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+          if (event.defaultPrevented || event.repeat) return;
+          if (event.ctrlKey || event.metaKey || event.altKey) return;
+          if (document.querySelector('[data-modal-root="true"]')) return;
+          const target = event.target as HTMLElement | null;
+          if (target) {
+              const tagName = target.tagName;
+              if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target.isContentEditable) {
+                  return;
+              }
+          }
+          if (!/^[1-9]$/.test(event.key)) return;
+          const index = Number(event.key) - 1;
+          const action = quickActionItems[index];
+          if (!action?.onClick) return;
+          event.preventDefault();
+          action.onClick();
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [quickActionItems]);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      try {
+          const raw = window.localStorage.getItem(collapsePrefsKey);
+          if (raw) {
+              const stored = JSON.parse(raw) as {
+                  credit_cards?: boolean;
+                  expense_breakdown?: boolean;
+              };
+              if (typeof stored.credit_cards === 'boolean') {
+                  setIsCreditCardsCollapsed(stored.credit_cards);
+              }
+              if (typeof stored.expense_breakdown === 'boolean') {
+                  setIsExpenseBreakdownCollapsed(stored.expense_breakdown);
+              }
+          }
+      } catch (error) {
+          console.warn('[dashboard][collapse] load_failed', { message: (error as any)?.message });
+      } finally {
+          collapsePrefsLoadedRef.current = true;
+      }
+  }, []);
+
+  useEffect(() => {
+      if (!collapsePrefsLoadedRef.current) return;
+      if (typeof window === 'undefined') return;
+      try {
+          window.localStorage.setItem(
+              collapsePrefsKey,
+              JSON.stringify({
+                  credit_cards: isCreditCardsCollapsed,
+                  expense_breakdown: isExpenseBreakdownCollapsed
+              })
+          );
+      } catch (error) {
+          console.warn('[dashboard][collapse] save_failed', { message: (error as any)?.message });
+      }
+  }, [collapsePrefsKey, isCreditCardsCollapsed, isExpenseBreakdownCollapsed]);
 
   const expenseSearchItems = useMemo<InlineSearchItem[]>(() =>
       expenses.map(expense => {
@@ -794,6 +875,9 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       ];
   }, [categoryTotals]);
 
+  const visibleCreditCards = isCreditCardsCollapsed ? creditCards.slice(0, 2) : creditCards;
+  const visibleCategoryItems = isExpenseBreakdownCollapsed ? categoryTotals.items.slice(0, 2) : categoryTotals.items;
+
   useEffect(() => {
       if (!expandedCategoryKey) return;
       if (!categoryTotals.categoryItems[expandedCategoryKey]) {
@@ -887,7 +971,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   };
 
   const availableBlocks = useMemo<Record<DashboardBlockId, boolean>>(() => ({
-      quick_access: true,
+      quick_access: false,
       mei_limit: canViewMeiLimit,
       financial_xray: true,
       credit_cards: canViewInvoices,
@@ -936,9 +1020,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pt-8">
-        
-        <div className="w-full px-4 mt-2 mb-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500 pt-6">
+        <div className="w-full px-4 mt-1 mb-2">
             <div className="max-w-5xl mx-auto relative" ref={searchContainerRef}>
                 <SearchHelperBar
                     variant="desktop"
@@ -1020,11 +1103,9 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
             </div>
         </div>
 
-        
-
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
-                <div className="flex flex-col gap-8">
+                <div className="flex flex-col gap-6">
                 {/* Quick Access */}
                 {availableBlocks.quick_access && (
                     <SortableBlock
@@ -1032,14 +1113,14 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         label={blockLabels.quick_access}
                         disabled={layoutLoading}
                         style={{ order: orderMap.quick_access }}
+                        isCollapsed={Boolean(collapsedBlocks.quick_access)}
+                        onToggleCollapse={() => toggleCollapse('quick_access')}
                     >
                         <section>
-                            <div className="bg-white dark:bg-[#151517] rounded-2xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                                <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-4">Acesso Rápido</h2>
+                            <div className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                                <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
                                 <div className="grid grid-flow-col auto-cols-fr gap-3">
-                {quickActions
-                    .filter((action) => action.showWhen)
-                    .map((action) => (
+                {quickActionItems.map((action) => (
                         <QuickAction
                             key={action.id}
                             icon={action.icon}
@@ -1065,15 +1146,17 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         label={blockLabels.mei_limit}
                         disabled={layoutLoading}
                         style={{ order: orderMap.mei_limit }}
+                        isCollapsed={Boolean(collapsedBlocks.mei_limit)}
+                        onToggleCollapse={() => toggleCollapse('mei_limit')}
                     >
             <section>
-                <div className={`bg-white dark:bg-[#151517] rounded-2xl p-6 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
+                <div className={`bg-white dark:bg-[#151517] rounded-2xl p-5 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
                     <div className="absolute inset-y-0 right-0 w-32 opacity-5 pointer-events-none">
                         <Building2 size={120} className="w-full h-full" />
                     </div>
 
-                    <div className="relative flex flex-col gap-6">
-                        <div className="flex flex-col lg:flex-row gap-6 lg:items-start">
+                    <div className="relative flex flex-col gap-5">
+                        <div className="flex flex-col lg:flex-row gap-5 lg:items-start">
                             <div className="flex flex-1 items-start gap-4">
                                 <div 
                                     className={`relative w-20 h-20 rounded-2xl border ${mascotConfig.ringClass} flex items-center justify-center shadow-xl ${mascotConfig.auraClass} transition-all duration-500`}
@@ -1107,7 +1190,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                             </div>
                         </div>
 
-                        <div className="relative pt-8">
+                        <div className="relative pt-6">
                             <div className="relative h-4 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
                                 <div 
                                     className={`absolute inset-y-0 left-0 bg-gradient-to-r ${meiStatus.gradient} transition-all duration-700 ease-out`}
@@ -1172,12 +1255,14 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
             label={blockLabels.financial_xray}
             disabled={layoutLoading}
             style={{ order: orderMap.financial_xray }}
+            isCollapsed={Boolean(collapsedBlocks.financial_xray)}
+            onToggleCollapse={() => toggleCollapse('financial_xray')}
         >
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-5">
             
             {/* Balance Card - Conditional */}
             {canViewBalances ? (
-                <div className="bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 relative overflow-hidden group shadow-sm transition-all duration-300 hover:border-zinc-300 dark:hover:border-zinc-700">
+                <div className="bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 relative overflow-hidden group shadow-sm transition-all duration-300 hover:border-zinc-300 dark:hover:border-zinc-700">
                     <div className="flex justify-between items-start mb-4">
                         <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400">
                             <Wallet size={20} />
@@ -1195,7 +1280,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                     </div>
                 </div>
             ) : (
-                <div className="bg-zinc-50 dark:bg-zinc-900 rounded-2xl p-6 border border-dashed border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center text-zinc-400">
+                <div className="bg-zinc-50 dark:bg-zinc-900 rounded-2xl p-5 border border-dashed border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center text-zinc-400">
                     <Lock size={24} className="mb-2" />
                     <p className="text-xs">Saldo Oculto</p>
                 </div>
@@ -1234,92 +1319,94 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 label={blockLabels.credit_cards}
                 disabled={layoutLoading}
                 style={{ order: orderMap.credit_cards }}
+                isCollapsed={isCreditCardsCollapsed}
+                onToggleCollapse={() => setIsCreditCardsCollapsed((prev) => !prev)}
+                renderCollapsedChildren
             >
             <section>
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                        <CreditCard className="text-purple-600 dark:text-purple-500" size={20} />
-                        Faturas dos Cartões
-                    </h2>
-                    <button onClick={onOpenInvoices} className="text-xs text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-white transition-colors">
-                        Gerenciar Faturas
-                    </button>
-                </div>
+                <div className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                            <CreditCard className="text-purple-600 dark:text-purple-500" size={20} />
+                            Faturas dos Cartões
+                        </h2>
+                    </div>
 
-                {creditCards.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {creditCards.map((card, idx) => {
-                            const style = getCardStyle(card); 
-                            
-                            const invoiceTotal = cardTotals[card.id] ?? 0;
+                    {visibleCreditCards.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            {visibleCreditCards.map((card, idx) => {
+                                const style = getCardStyle(card); 
+                                
+                                const invoiceTotal = cardTotals[card.id] ?? 0;
 
-                            const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-                            if (card.dueDay < card.closingDay) {
-                                dueDateObj.setMonth(dueDateObj.getMonth() + 1);
-                            }
-                            const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
+                                const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
+                                if (card.dueDay < card.closingDay) {
+                                    dueDateObj.setMonth(dueDateObj.getMonth() + 1);
+                                }
+                                const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
 
-                            return (
-                                <div 
-                                    key={card.id} 
-                                    className="rounded-2xl p-6 border border-white/5 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
-                                    style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
-                                >
-                                    <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
-                                    <div className="relative z-10 flex flex-col h-full justify-between">
-                                        <div className="flex justify-between items-start">
-                                            <div>
-                                                <h3 className="font-bold text-lg text-white mb-1">{card.name}</h3>
-                                                <p className="text-xs text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
-                                            </div>
-                                            <div className="bg-white/20 backdrop-blur-md p-2 rounded-lg">
-                                                <img src={style.icon} className="w-8 h-8 opacity-90" alt="Card Brand" />
-                                            </div>
-                                        </div>
-                                        <div className="mt-8">
-                                            <div className="flex justify-between items-end mb-4">
+                                return (
+                                    <div 
+                                        key={card.id} 
+                                        className="rounded-2xl p-5 border border-white/5 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
+                                        style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
+                                    >
+                                        <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
+                                        <div className="relative z-10 flex flex-col h-full justify-between">
+                                            <div className="flex justify-between items-start">
                                                 <div>
-                                                    <p className="text-xs text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
-                                                    <div className="text-2xl font-bold text-white">
-                                                        R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                    <h3 className="font-bold text-lg text-white mb-1">{card.name}</h3>
+                                                    <p className="text-xs text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
+                                                </div>
+                                                <div className="bg-white/20 backdrop-blur-md p-2 rounded-lg">
+                                                    <img src={style.icon} className="w-8 h-8 opacity-90" alt="Card Brand" />
+                                                </div>
+                                            </div>
+                                            <div className="mt-8">
+                                                <div className="flex justify-between items-end mb-4">
+                                                    <div>
+                                                        <p className="text-xs text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
+                                                        <div className="text-2xl font-bold text-white">
+                                                            R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-xs text-white/80 mb-1">Vence em</p>
+                                                        <p className="text-sm font-bold text-white bg-white/20 px-3 py-1 rounded-md backdrop-blur-sm">
+                                                            {formattedDueDate}
+                                                        </p>
                                                     </div>
                                                 </div>
-                                                <div className="text-right">
-                                                    <p className="text-xs text-white/80 mb-1">Vence em</p>
-                                                    <p className="text-sm font-bold text-white bg-white/20 px-3 py-1 rounded-md backdrop-blur-sm">
-                                                        {formattedDueDate}
-                                                    </p>
+                                                <div className="pt-4 border-t border-white/20 flex justify-between items-center">
+                                                    <span 
+                                                        className="text-xs font-semibold px-2 py-1 rounded text-white"
+                                                        style={{ backgroundColor: style.badgeBg }}
+                                                    >
+                                                        Fatura Aberta
+                                                    </span>
+                                                    <button 
+                                                        onClick={onOpenInvoices}
+                                                        className="flex items-center gap-2 text-xs font-semibold text-white hover:bg-white/20 px-3 py-2 rounded-lg transition-colors"
+                                                    >
+                                                        Ver Detalhes <Eye size={14} />
+                                                    </button>
                                                 </div>
-                                            </div>
-                                            <div className="pt-4 border-t border-white/20 flex justify-between items-center">
-                                                <span 
-                                                    className="text-xs font-semibold px-2 py-1 rounded text-white"
-                                                    style={{ backgroundColor: style.badgeBg }}
-                                                >
-                                                    Fatura Aberta
-                                                </span>
-                                                <button 
-                                                    onClick={onOpenInvoices}
-                                                    className="flex items-center gap-2 text-xs font-semibold text-white hover:bg-white/20 px-3 py-2 rounded-lg transition-colors"
-                                                >
-                                                    Ver Detalhes <Eye size={14} />
-                                                </button>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <div className="bg-white dark:bg-[#151517] rounded-2xl p-10 text-center border border-zinc-200 dark:border-zinc-800 border-dashed">
-                        <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-400">
-                            <CreditCard size={32} />
+                                );
+                            })}
                         </div>
-                        <h3 className="text-zinc-900 dark:text-white font-bold mb-1">Nenhum cartão cadastrado</h3>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400">Adicione seus cartões de crédito nas configurações.</p>
-                    </div>
-                )}
+                    ) : (
+                        <div className="bg-white dark:bg-[#151517] rounded-2xl p-10 text-center border border-zinc-200 dark:border-zinc-800 border-dashed">
+                            <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-400">
+                                <CreditCard size={32} />
+                            </div>
+                            <h3 className="text-zinc-900 dark:text-white font-bold mb-1">Nenhum cartão cadastrado</h3>
+                            <p className="text-sm text-zinc-500 dark:text-zinc-400">Adicione seus cartões de crédito nas configurações.</p>
+                        </div>
+                    )}
+                </div>
             </section>
             </SortableBlock>
         )}
@@ -1331,8 +1418,11 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 label={blockLabels.expense_breakdown}
                 disabled={layoutLoading}
                 style={{ order: orderMap.expense_breakdown }}
+                isCollapsed={isExpenseBreakdownCollapsed}
+                onToggleCollapse={() => setIsExpenseBreakdownCollapsed((prev) => !prev)}
+                renderCollapsedChildren
             >
-            <section className="bg-white dark:bg-[#151517] rounded-2xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
+            <section className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
                 <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
                     <div>
                         <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
@@ -1344,13 +1434,6 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         </p>
                     </div>
                     <div className="text-right text-xs text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
-                        <button
-                            type="button"
-                            onClick={handleManualRecalc}
-                            className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                        >
-                            Recalcular
-                        </button>
                         <span className="uppercase tracking-wide font-semibold">Total do mês</span>
                         <div className="text-sm font-semibold text-zinc-900 dark:text-white">
                             {formatCurrency(categoryTotals.totalSum)}
@@ -1363,7 +1446,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 {categoryTotals.displayItems.length > 0 && categoryTotals.totalSum > 0 ? (
                     <div className="space-y-4">
                         <ul className="space-y-3">
-                            {categoryTotals.items.map((item, index) => {
+                            {visibleCategoryItems.map((item, index) => {
                                 const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
                                 const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
                                 const barColor =
@@ -1490,10 +1573,6 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
             </SortableContext>
         </DndContext>
 
-        <footer className="text-center text-xs text-zinc-500 dark:text-zinc-400 pt-4 border-t border-zinc-100 dark:border-zinc-800">
-            versão 1.0.0
-        </footer>
-
     </div>
   );
 };
@@ -1503,14 +1582,19 @@ const SortableBlock: React.FC<{
     label: string;
     disabled: boolean;
     style?: React.CSSProperties;
+    isCollapsed?: boolean;
+    onToggleCollapse?: () => void;
+    renderCollapsedChildren?: boolean;
     children: React.ReactNode;
-}> = ({ id, label, disabled, style, children }) => {
+}> = ({ id, label, disabled, style, isCollapsed, onToggleCollapse, renderCollapsedChildren = false, children }) => {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
     const mergedStyle = {
         transform: CSS.Transform.toString(transform),
         transition,
         ...style
     };
+    const collapsed = Boolean(isCollapsed);
+    const toggleLabel = collapsed ? `Expandir ${label}` : `Recolher ${label}`;
 
     return (
         <div
@@ -1530,7 +1614,34 @@ const SortableBlock: React.FC<{
                     <GripVertical size={16} />
                 </button>
             </div>
-            {children}
+            <div className="absolute -right-3 -top-3 z-10">
+                <button
+                    type="button"
+                    onClick={onToggleCollapse}
+                    aria-label={toggleLabel}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
+                >
+                    <ChevronDown size={16} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />
+                </button>
+            </div>
+            {collapsed && !renderCollapsedChildren ? (
+                <button
+                    type="button"
+                    onClick={onToggleCollapse}
+                    className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-5 py-4 shadow-sm text-left hover:border-indigo-200 dark:hover:border-indigo-600/50 transition"
+                    aria-label={toggleLabel}
+                >
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-[11px] uppercase tracking-wider text-zinc-400">Recolhido</p>
+                            <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{label}</p>
+                        </div>
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">Clique para expandir</span>
+                    </div>
+                </button>
+            ) : (
+                children
+            )}
         </div>
     );
 };
@@ -1569,7 +1680,7 @@ const SummaryCard: React.FC<{
     subtext?: string,
     isExpense?: boolean
 }> = ({ title, value, icon, colorClass, bgClass, subtext, isExpense }) => (
-    <div className={`${bgClass} rounded-2xl p-6 border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between shadow-sm transition-all duration-300 hover:border-zinc-300 dark:hover:border-zinc-700`}>
+    <div className={`${bgClass} rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between shadow-sm transition-all duration-300 hover:border-zinc-300 dark:hover:border-zinc-700`}>
         <div className="flex justify-between items-start mb-4">
             <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400">
                 {icon}

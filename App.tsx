@@ -15,6 +15,8 @@ import CalculatorModal from './components/CalculatorModal';
 import AuditLogModal from './components/AuditLogModal';
 import FaturasErrorBoundary from './components/FaturasErrorBoundary';
 import InstallAppModal from './components/InstallAppModal';
+import MobileQuickAccessFooter from './components/mobile/MobileQuickAccessFooter';
+import DesktopQuickAccessFooter from './components/desktop/DesktopQuickAccessFooter';
 import Landing from './Pages/Landing';
 import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference } from './types';
 import { COMPANY_DATA, DEFAULT_COMPANY_INFO, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_TYPES, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES } from './constants';
@@ -29,7 +31,23 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
  
 import { auth, db, firebaseDebugInfo } from './services/firebase';
 import { preferencesService } from './services/preferencesService';
-import { Loader2, ShieldOff, LogOut, ExternalLink, Eye, EyeOff } from 'lucide-react';
+import {
+  ArrowUpCircle,
+  BarChart3,
+  CreditCard as CreditCardIcon,
+  FileText,
+  Home,
+  Loader2,
+  LogOut,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  ShieldOff,
+  ShoppingCart,
+  TrendingUp,
+  User,
+  Wallet
+} from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { normalizeEmail } from './utils/normalizeEmail';
 import { resetCurrentSession } from './services/resetService';
@@ -41,6 +59,7 @@ import useIsMobile from './hooks/useIsMobile';
 import useMobileTopOffset from './hooks/useMobileTopOffset';
 import useIsMobileLandscape from './hooks/useIsMobileLandscape';
 import APP_VERSION from './appVersion';
+import type { AuditEntityType } from './services/auditService';
 import { APP_VERSION as LOGIN_APP_VERSION, BUILD_TIME } from './version';
 import { BUILD_ID } from './utils/buildInfo';
 
@@ -243,6 +262,88 @@ const AppInner: React.FC = () => {
   const isMobile = useIsMobile();
   const isMobileLandscape = useIsMobileLandscape();
   useMobileTopOffset();
+  const mobileQuickAccessItems = useMemo(
+    () => [
+      {
+        id: 'home',
+        label: 'Início',
+        shortLabel: 'Início',
+        icon: <Home size={18} className="text-indigo-500 dark:text-indigo-400" />,
+        onClick: () => setCurrentView(ViewState.DASHBOARD),
+        showWhen: currentView !== ViewState.DASHBOARD
+      },
+      {
+        id: 'accounts',
+        label: 'Contas Bancárias',
+        shortLabel: 'Contas',
+        icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
+        onClick: () => setCurrentView(ViewState.ACCOUNTS)
+      },
+      {
+        id: 'incomes',
+        label: 'Entradas',
+        shortLabel: 'Entradas',
+        icon: <ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />,
+        onClick: () => setCurrentView(ViewState.INCOMES)
+      },
+      {
+        id: 'fixed_expenses',
+        label: 'Despesas Fixas',
+        shortLabel: 'Fixas',
+        icon: <Home size={18} className="text-amber-500 dark:text-amber-400" />,
+        onClick: () => setCurrentView(ViewState.FIXED_EXPENSES)
+      },
+      {
+        id: 'variable_expenses',
+        label: 'Despesas Variáveis',
+        shortLabel: 'Variáveis',
+        icon: <ShoppingCart size={18} className="text-pink-500 dark:text-pink-400" />,
+        onClick: () => setCurrentView(ViewState.VARIABLE_EXPENSES)
+      },
+      {
+        id: 'personal_expenses',
+        label: 'Despesas Pessoais',
+        shortLabel: 'Pessoais',
+        icon: <User size={18} className="text-cyan-500 dark:text-cyan-400" />,
+        onClick: () => setCurrentView(ViewState.PERSONAL_EXPENSES)
+      },
+      {
+        id: 'yields',
+        label: 'Rendimentos',
+        shortLabel: 'Rend.',
+        icon: <TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />,
+        onClick: () => setCurrentView(ViewState.YIELDS)
+      },
+      {
+        id: 'invoices',
+        label: 'Faturas',
+        shortLabel: 'Faturas',
+        icon: <CreditCardIcon size={18} className="text-rose-500 dark:text-rose-400" />,
+        onClick: () => setCurrentView(ViewState.INVOICES)
+      },
+      {
+        id: 'reports',
+        label: 'Relatórios',
+        shortLabel: 'Relatórios',
+        icon: <BarChart3 size={18} className="text-zinc-500 dark:text-zinc-400" />,
+        onClick: () => setCurrentView(ViewState.REPORTS)
+      },
+      {
+        id: 'das',
+        label: 'Emissão DAS',
+        shortLabel: 'DAS',
+        icon: <FileText size={18} className="text-teal-500 dark:text-teal-400" />,
+        onClick: () => setCurrentView(ViewState.DAS)
+      }
+    ],
+    [currentView, setCurrentView]
+  );
+  const desktopQuickAccessItems = useMemo(
+    () => mobileQuickAccessItems.map(item => (
+      item.id === 'home' ? { ...item, showWhen: true } : item
+    )),
+    [mobileQuickAccessItems]
+  );
   const isBetaHost = useMemo(() => {
       if (typeof window === 'undefined') return false;
       const host = window.location.hostname;
@@ -1210,7 +1311,10 @@ const AppInner: React.FC = () => {
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [yields, setYields] = useState<YieldRecord[]>([]);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
-  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [auditModalState, setAuditModalState] = useState<{
+    isOpen: boolean;
+    entityTypes?: AuditEntityType[] | null;
+  }>({ isOpen: false, entityTypes: null });
   const [licenseMeta, setLicenseMeta] = useState<LicenseRecord | null>(null);
   const [licenseCryptoEpoch, setLicenseCryptoEpoch] = useState<number | null>(null);
 
@@ -1235,14 +1339,6 @@ const AppInner: React.FC = () => {
 
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const resolveInitialTheme = (): ThemePreference => {
-      try {
-          const stored = localStorage.getItem('meumei_theme');
-          if (stored === 'light' || stored === 'dark') {
-              return stored;
-          }
-      } catch {
-          // ignore localStorage failures
-      }
       if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
           return 'dark';
       }
@@ -1253,6 +1349,8 @@ const AppInner: React.FC = () => {
   const { registerHandlers, setHighlightTarget } = useGlobalActions();
   const canAccessSettings = Boolean(currentUser);
   const onboardingCompleted = onboardingSettings?.onboardingCompleted === true;
+  const viewHistoryRef = useRef<ViewState[]>([]);
+  const prevViewRef = useRef<ViewState | null>(null);
   const {
     isOpen: isPwaInstallOpen,
     isInstalled: isPwaInstalled,
@@ -1262,6 +1360,79 @@ const AppInner: React.FC = () => {
     closePwaModal,
     triggerInstall
   } = usePwaInstallPrompt();
+
+  useEffect(() => {
+    const prev = prevViewRef.current;
+    if (!prev) {
+      prevViewRef.current = currentView;
+      return;
+    }
+    if (prev === currentView) return;
+    if (currentView === ViewState.LOGIN) {
+      viewHistoryRef.current = [];
+    } else if (prev !== ViewState.LOGIN) {
+      viewHistoryRef.current.push(prev);
+    }
+    prevViewRef.current = currentView;
+  }, [currentView]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (event.defaultPrevented) return;
+      if (isCalculatorOpen) {
+        setIsCalculatorOpen(false);
+        return;
+      }
+      if (auditModalState.isOpen) {
+        setAuditModalState(prev => ({ ...prev, isOpen: false }));
+        return;
+      }
+      if (installHelpOpen) {
+        setInstallHelpOpen(false);
+        return;
+      }
+      if (isPwaInstallOpen) {
+        closePwaModal();
+        return;
+      }
+      if (document.querySelector('[data-modal-root="true"]')) {
+        return;
+      }
+      if (currentView !== ViewState.DASHBOARD && currentView !== ViewState.LOGIN) {
+        const previous = viewHistoryRef.current.pop();
+        setCurrentView(previous || ViewState.DASHBOARD);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [
+    closePwaModal,
+    currentView,
+    installHelpOpen,
+    auditModalState.isOpen,
+    isCalculatorOpen,
+    isPwaInstallOpen
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyTheme = () => setTheme(media.matches ? 'dark' : 'light');
+    applyTheme();
+    if (media.addEventListener) {
+      media.addEventListener('change', applyTheme);
+    } else {
+      media.addListener(applyTheme);
+    }
+    return () => {
+      if (media.removeEventListener) {
+        media.removeEventListener('change', applyTheme);
+      } else {
+        media.removeListener(applyTheme);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (isBetaHost) {
@@ -2470,6 +2641,8 @@ const AppInner: React.FC = () => {
       if (account?.locked) {
           return;
       }
+      const incomesToDelete = incomes.filter(inc => inc.accountId === id);
+      const expensesToDelete = expenses.filter(exp => exp.accountId === id);
       if (account) {
           handleAuditLog({
               actionType: 'account_deleted',
@@ -2483,8 +2656,24 @@ const AppInner: React.FC = () => {
               }
           });
       }
+      if (incomesToDelete.length) {
+          setIncomes(prev => prev.filter(inc => inc.accountId !== id));
+      }
+      if (expensesToDelete.length) {
+          applyExpenses(prev => prev.filter(exp => exp.accountId !== id));
+      }
       setAccounts(prev => prev.filter(a => a.id !== id));
-      dataService.deleteAccount(id, currentUser.licenseId);
+      const deleteOps: Promise<void>[] = [
+          dataService.deleteAccount(id, currentUser.licenseId),
+          ...incomesToDelete.map(inc => dataService.deleteIncome(inc.id, currentUser.licenseId)),
+          ...expensesToDelete.map(exp => dataService.deleteExpense(exp.id, currentUser.licenseId))
+      ];
+      Promise.all(deleteOps).catch((error) => {
+          console.error('[accounts][delete] cascade_failed', {
+              accountId: id,
+              message: (error as Error)?.message || error
+          });
+      });
   };
 
   const handleUpdateExpenses = (updated: Expense[]) => {
@@ -2750,6 +2939,14 @@ const AppInner: React.FC = () => {
   const totalExpenses = monthExpenseData.totalAll;
   const pendingIncome = currentMonthIncomes.filter(i => i.status === 'pending').reduce((acc, curr) => acc + curr.amount, 0);
   const pendingExpenses = monthExpenseData.totalPending;
+  const headerSummary = useMemo(
+      () => ({
+          income: totalIncome,
+          expenses: totalExpenses,
+          available: totalIncome - totalExpenses
+      }),
+      [totalIncome, totalExpenses]
+  );
   
   // PJ Annual Revenue (MEI Limit Check)
   const annualMeiRevenue = incomes
@@ -2822,12 +3019,14 @@ const AppInner: React.FC = () => {
 
 const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: boolean }) => {
     const shouldOffset = isMobile && !options?.skipMobileOffset;
+    const layoutPaddingClass = isMobile ? 'pb-20' : 'pb-28';
     return (
-        <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 pb-20">
+        <div className={`min-h-screen bg-zinc-100 dark:bg-[#09090b] text-zinc-950 dark:text-white font-inter transition-colors duration-300 ${layoutPaddingClass}`}>
             <GlobalHeader 
                 companyName={companyInfo.name}
                 username={currentUser?.email || ''}
                 viewDate={viewDate}
+                summary={headerSummary}
                 onMonthChange={handleMonthChange}
                 canGoBack={true}
                 theme={theme}
@@ -2837,7 +3036,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 onLogout={handleLogout}
                 onCompanyClick={() => setCurrentView(ViewState.COMPANY_DETAILS)}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
-                onOpenAudit={() => setIsAuditModalOpen(true)}
+                onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: null })}
                 canAccessSettings={canAccessSettings}
             />
             <div style={shouldOffset ? { paddingTop: 'var(--mm-mobile-top, 92px)' } : undefined}>
@@ -3396,10 +3595,12 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              accounts={accounts}
              onUpdateAccounts={handleUpdateAccounts}
              onDeleteAccount={handleDeleteAccount}
+             incomes={incomes}
+             expenses={expenses}
              accountTypes={accountTypes}
              onUpdateAccountTypes={setAccountTypes}
              onAuditLog={handleAuditLog}
-             onOpenAudit={() => setIsAuditModalOpen(true)}
+             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['account'] })}
              balanceSnapshot={balanceSnapshot}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
@@ -3420,6 +3621,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('incomes', name)}
              onRemoveCategory={(name) => handleRemoveCategory('incomes', name)}
              onResetCategories={handleResetCategories}
+             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['income'] })}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
@@ -3433,6 +3635,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              licenseId={currentUser?.licenseId || null}
              licenseCryptoEpoch={licenseCryptoEpoch}
              onAuditLog={handleAuditLog}
+             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['yield'] })}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
@@ -3480,6 +3683,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
+             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
@@ -3504,6 +3708,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
+             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
@@ -3528,6 +3733,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
+             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
@@ -3558,9 +3764,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           onClose={() => setIsCalculatorOpen(false)}
       />
       <AuditLogModal
-          isOpen={isAuditModalOpen}
-          onClose={() => setIsAuditModalOpen(false)}
+          isOpen={auditModalState.isOpen}
+          onClose={() => setAuditModalState(prev => ({ ...prev, isOpen: false }))}
           licenseId={currentUser?.licenseId || null}
+          entityTypes={auditModalState.entityTypes ?? undefined}
       />
       {installBannerVisible && (
           <div className="fixed bottom-4 left-4 right-4 z-[85] md:left-auto md:right-6">
@@ -3634,6 +3841,12 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           onInstall={triggerInstall}
           onClose={closePwaModal}
       />
+      {isMobile && (
+          <MobileQuickAccessFooter items={mobileQuickAccessItems} />
+      )}
+      {!isMobile && (
+          <DesktopQuickAccessFooter items={desktopQuickAccessItems} />
+      )}
       {isMobileLandscape && (
           <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
               <div className="w-full max-w-xs rounded-2xl bg-white dark:bg-[#111114] border border-white/10 dark:border-zinc-800 shadow-2xl px-5 py-4 text-center">

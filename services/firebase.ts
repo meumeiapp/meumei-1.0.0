@@ -58,3 +58,4 @@ export const auth = getAuth(app);
 export const functions = functionsRegion
   ? getFunctions(app, functionsRegion)
   : getFunctions(app);
+export const firebaseApp = app;

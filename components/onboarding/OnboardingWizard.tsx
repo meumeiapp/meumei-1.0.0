@@ -4,6 +4,8 @@ import { Account, CompanyInfo, CreditCard as CreditCardType } from '../../types'
 import NewAccountModal from '../NewAccountModal';
 import NewCreditCardModal from '../NewCreditCardModal';
 import type { OnboardingSettings } from '../../services/onboardingService';
+import useIsMobile from '../../hooks/useIsMobile';
+import MobileSelect from '../mobile/MobileSelect';
 
 interface OnboardingWizardProps {
   companyInfo: CompanyInfo;
@@ -103,6 +105,14 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const touchedAccountsRef = useRef(false);
+  const isMobile = useIsMobile();
+  const natureOptions = useMemo(
+    () => [
+      { value: 'PJ', label: 'PJ' },
+      { value: 'PF', label: 'PF' }
+    ],
+    []
+  );
 
   useEffect(() => {
     console.info('[onboarding] step', { step });
@@ -340,7 +350,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const renderStepContent = () => {
     if (step === 1) {
       return (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           <div className="rounded-2xl border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10 p-4 flex gap-3 text-sm text-indigo-700 dark:text-indigo-200">
             <Info size={18} className="mt-0.5" />
             <p>
@@ -476,7 +486,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 
     if (step === 2) {
       return (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           <div className="rounded-2xl border border-emerald-100 dark:border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-500/10 p-4 flex gap-3 text-sm text-emerald-700 dark:text-emerald-200">
             <Info size={18} className="mt-0.5" />
             <p>
@@ -549,14 +559,24 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                   </div>
                   <div className="flex flex-col gap-2 md:items-center text-center">
                     <label className="text-[10px] uppercase tracking-wide text-zinc-400">Natureza</label>
-                    <select
-                      value={account.nature || DEFAULT_NATURE}
-                      onChange={(e) => handleAccountNatureChange(account.id, e.target.value as 'PJ' | 'PF')}
-                      className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-xs text-zinc-700 dark:text-zinc-100 text-center"
-                    >
-                      <option value="PJ">PJ</option>
-                      <option value="PF">PF</option>
-                    </select>
+                    {isMobile ? (
+                      <MobileSelect
+                        value={account.nature || DEFAULT_NATURE}
+                        options={natureOptions}
+                        onChange={(value) => handleAccountNatureChange(account.id, value as 'PJ' | 'PF')}
+                        size="compact"
+                        buttonClassName="bg-white dark:bg-[#121216] border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-100 text-center focus:ring-indigo-500"
+                      />
+                    ) : (
+                      <select
+                        value={account.nature || DEFAULT_NATURE}
+                        onChange={(e) => handleAccountNatureChange(account.id, e.target.value as 'PJ' | 'PF')}
+                        className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-xs text-zinc-700 dark:text-zinc-100 text-center"
+                      >
+                        <option value="PJ">PJ</option>
+                        <option value="PF">PF</option>
+                      </select>
+                    )}
                   </div>
                   <div className="flex flex-col gap-2 md:items-center text-center">
                     <label className="text-[10px] uppercase tracking-wide text-zinc-400">Saldo inicial</label>
@@ -653,9 +673,9 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center px-4 py-10 overflow-y-auto">
-      <div className="w-full max-w-4xl bg-white dark:bg-[#0f0f13] rounded-[28px] border border-white/10 dark:border-zinc-800 shadow-2xl overflow-hidden">
-        <div className="px-6 sm:px-10 py-6 border-b border-zinc-200 dark:border-zinc-800">
+    <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center px-3 sm:px-4 py-4 sm:py-10 overflow-y-auto">
+      <div className="w-full max-w-4xl bg-white dark:bg-[#0f0f13] rounded-[28px] border border-white/10 dark:border-zinc-800 shadow-2xl overflow-hidden flex flex-col max-h-[calc(var(--app-height,100vh)-32px)]">
+        <div className="px-4 sm:px-10 py-4 sm:py-6 border-b border-zinc-200 dark:border-zinc-800">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-indigo-500/80">Primeiros passos</p>
@@ -673,7 +693,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           </div>
         </div>
 
-        <div className="px-6 sm:px-10 py-8 space-y-6">
+        <div className="px-4 sm:px-10 py-5 sm:py-8 space-y-4 sm:space-y-6 overflow-y-auto">
           {renderStepContent()}
           {error && (
             <div className="rounded-2xl border border-rose-200 dark:border-rose-500/40 bg-rose-50/70 dark:bg-rose-500/10 px-4 py-3 text-sm text-rose-600 dark:text-rose-200">
@@ -682,7 +702,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           )}
         </div>
 
-        <div className="px-6 sm:px-10 py-6 border-t border-zinc-200 dark:border-zinc-800 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+        <div className="px-4 sm:px-10 py-4 sm:py-6 border-t border-zinc-200 dark:border-zinc-800 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
           <button
             type="button"
             onClick={handleBack}

@@ -1,10 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { X, Calendar, TrendingUp } from 'lucide-react';
 import { Account } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import useIsMobile from '../hooks/useIsMobile';
 import MobileModalShell from './mobile/MobileModalShell';
+import MobileSelect from './mobile/MobileSelect';
 import { getPrimaryActionLabel } from '../utils/formLabels';
 
 interface NewYieldModalProps {
@@ -142,6 +143,14 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
   };
 
   const selectedAccount = investmentAccounts.find(a => a.id === accountId);
+  const accountOptions = useMemo(
+    () =>
+      investmentAccounts.map((acc) => ({
+        value: acc.id,
+        label: acc.name
+      })),
+    [investmentAccounts]
+  );
 
   const formFields = (
     <>
@@ -168,16 +177,28 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
           <label htmlFor={fieldId('account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
             Conta
           </label>
-          <select
-            id={fieldId('account')}
-            name="accountId"
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            disabled={isEditing}
-            className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all appearance-none ${isEditing ? 'opacity-60 cursor-not-allowed' : ''}`}
-          >
-            {investmentAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-          </select>
+          {isMobile ? (
+            <MobileSelect
+              id={fieldId('account')}
+              name="accountId"
+              value={accountId}
+              options={accountOptions}
+              onChange={setAccountId}
+              disabled={isEditing}
+              buttonClassName={`bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-indigo-500 ${isEditing ? 'opacity-60 cursor-not-allowed' : ''}`}
+            />
+          ) : (
+            <select
+              id={fieldId('account')}
+              name="accountId"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              disabled={isEditing}
+              className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all appearance-none ${isEditing ? 'opacity-60 cursor-not-allowed' : ''}`}
+            >
+              {investmentAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+            </select>
+          )}
         </div>
       </div>
 
@@ -226,14 +247,14 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
       <button
         type="button"
         onClick={onClose}
-        className="px-6 py-3 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+        className="h-11 px-6 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
       >
         Cancelar
       </button>
       <button
         type="button"
         onClick={handleSave}
-        className="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-900/20 transition-all active:scale-95"
+        className="h-11 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-900/20 transition-all active:scale-95"
       >
         {primaryLabel}
       </button>

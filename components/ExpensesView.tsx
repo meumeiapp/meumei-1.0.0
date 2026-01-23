@@ -1,14 +1,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Plus, CreditCard as CardIcon, Wallet, Trash2, X, AlertTriangle, CheckSquare, Square, CheckCircle2, Circle, UserCircle, Pencil, Lock } from 'lucide-react';
+import { Wallet, Trash2, X, AlertTriangle, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown } from 'lucide-react';
 import { Expense, Account, CreditCard, ExpenseType } from '../types';
 import NewExpenseModal from './NewExpenseModal';
-import CardTag from './CardTag';
-import { getAccountColor } from '../services/cardColorUtils';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import useIsMobile from '../hooks/useIsMobile';
 import MobileTransactionCard from './mobile/MobileTransactionCard';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
+import MobileEmptyState from './mobile/MobileEmptyState';
 import MobilePageShell from './mobile/MobilePageShell';
 import { buildInstallmentDescription, getExpenseInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
@@ -33,6 +32,7 @@ interface ExpensesViewProps {
   onRemoveCategory: (name: string) => Promise<void> | void;
   onResetCategories: () => Promise<void> | void;
   minDate: string;
+  onOpenAudit?: () => void; // CORREÇÃO: Adicionado onOpenAudit à interface
 }
 
 const ExpensesView: React.FC<ExpensesViewProps> = ({ 
@@ -52,9 +52,12 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   onAddCategory,
   onRemoveCategory,
   onResetCategories,
-  minDate
+  minDate,
+  onOpenAudit // CORREÇÃO: Adicionado onOpenAudit às props desestruturadas
 }) => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [inlineNewOpen, setInlineNewOpen] = useState(false);
+  const [inlineEditExpenseId, setInlineEditExpenseId] = useState<string | null>(null);
+  const [isExpenseListExpanded, setIsExpenseListExpanded] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
@@ -105,6 +108,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   const totalAmount = filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
   const totalPaid = filteredExpenses.filter(e => e.status === 'paid').reduce((acc, curr) => acc + curr.amount, 0);
+  const shouldCollapseExpenses = filteredExpenses.length > 2;
+  const visibleExpenses = shouldCollapseExpenses && !isExpenseListExpanded
+      ? filteredExpenses.slice(0, 2)
+      : filteredExpenses;
+  const extraExpenseCount = Math.max(filteredExpenses.length - visibleExpenses.length, 0);
 
   // --- SELECTION CALCULATIONS ---
   const selectedExpenses = filteredExpenses.filter(e => selectedIds.includes(e.id));
@@ -121,7 +129,6 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   };
   const theme = getThemeClasses();
 
-  // ... rest of handlers ...
   const getSingularTitle = () => {
       switch(expenseType) {
           case 'fixed': return 'Despesa Fixa';
@@ -200,7 +207,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   };
 
   const closeExpenseModal = () => {
-      setIsModalOpen(false);
+      setInlineNewOpen(false);
+      setInlineEditExpenseId(null);
       setEditingExpense(null);
   };
 
@@ -233,212 +241,146 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                       const baseDescription = normalizeInstallmentDescription(updatedExpense.description);
                       const groupId =
                           previousExpense.installmentGroupId ||
-                          (seriesResult.source === 'heuristic' ? generateId() : undefined);
+                          `group-${Math.random().toString(36).substr(2, 9)}`;
 
-                      const updatedSeries = targetItems.map(item => {
-                          const baseUpdate: Expense = {
-                              ...item,
-                              description: buildInstallmentDescription(
-                                  baseDescription,
-                                  item.installmentNumber,
-                                  item.totalInstallments
-                              ),
-                              category: updatedExpense.category,
-                              amount: updatedExpense.amount,
-                              accountId: updatedExpense.accountId,
-                              cardId: updatedExpense.cardId,
-                              paymentMethod: updatedExpense.paymentMethod,
-                              notes: updatedExpense.notes,
-                              taxStatus: updatedExpense.taxStatus,
-                              installmentGroupId: groupId || item.installmentGroupId
-                          };
-                          return item.id === updatedExpense.id ? { ...baseUpdate, ...updatedExpense } : baseUpdate;
+                      const updatedSeries = targetItems.map(item => ({
+                          ...item,
+                          ...payload,
+                          id: item.id,
+                          description: buildInstallmentDescription(baseDescription, item.installmentNumber, item.totalInstallments),
+                          installmentGroupId: groupId,
+                          installmentNumber: item.installmentNumber,
+                          totalInstallments: item.totalInstallments,
+                          installments: true
+                      }));
+
+                      updatedList = expenses.map(e => {
+                          const seriesMatch = updatedSeries.find(s => s.id === e.id);
+                          return seriesMatch || e;
                       });
-
-                      const updatedMap = new Map(updatedSeries.map(item => [item.id, item]));
-                      updatedList = expenses.map(exp => updatedMap.get(exp.id) ?? exp);
-                      newItems = updatedSeries;
-                      applyNewTransactionImpact = false;
                       seriesUpdated = true;
-
-                      if (onUpdateAccounts) {
-                          let nextAccounts = accounts;
-                          let accountsChanged = false;
-                          updatedSeries.forEach(item => {
-                              const previousItem = expenses.find(exp => exp.id === item.id) || null;
-                              const result = applyExpenseAccountAdjustments(previousItem, item, nextAccounts);
-                              nextAccounts = result.accounts;
-                              if (result.accountsChanged) accountsChanged = true;
-                          });
-                          if (accountsChanged) {
-                              onUpdateAccounts(nextAccounts);
-                          }
-                      }
-
-                      console.info('[series-edit]', {
-                          entityName: 'Despesa',
-                          applyScope,
-                          updatedCount: updatedSeries.length
-                      });
                   }
               }
 
               if (!seriesUpdated) {
-                  updatedList = expenses.map(exp => exp.id === updatedExpense.id ? updatedExpense : exp);
+                  updatedList = expenses.map(e => (e.id === payload.id ? updatedExpense : e));
+              }
 
-                  if (onUpdateAccounts) {
-                      const { accounts: updatedAccounts, accountsChanged } = applyExpenseAccountAdjustments(previousExpense, updatedExpense);
-                      if (accountsChanged) {
-                          onUpdateAccounts(updatedAccounts);
-                      }
-                  }
-                  newItems = [updatedExpense];
-                  applyNewTransactionImpact = false;
-
-                  if (applyScope) {
-                      console.info('[series-edit]', {
-                          entityName: 'Despesa',
-                          applyScope,
-                          updatedCount: 1
-                      });
-                  }
+              if (onUpdateAccounts) {
+                  const { accounts: newAccounts, accountsChanged } = applyExpenseAccountAdjustments(
+                      previousExpense,
+                      updatedExpense
+                  );
+                  if (accountsChanged) onUpdateAccounts(newAccounts);
               }
           } else {
-              const newItem = { ...payload, type: expenseType, id: payload.id || generateId() };
-              newItems = [newItem];
-              updatedList = [...expenses, newItem];
-          }
-      }
-      
-      if (applyNewTransactionImpact && onUpdateAccounts) {
-          const newAccounts = [...accounts];
-          let accountsChanged = false;
+              const newExpense: Expense = {
+                  ...payload,
+                  id: payload.id || generateId(),
+                  type: expenseType,
+                  date: payload.date || new Date().toISOString().split('T')[0],
+                  status: payload.status || 'pending'
+              };
+              newItems = [newExpense];
+              updatedList = [...expenses, newExpense];
 
-          const processTransaction = (exp: any) => {
-              if (exp.accountId && exp.status === 'paid') {
-                  const accIdx = newAccounts.findIndex(a => a.id === exp.accountId);
-                  if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                      const mutationId = `expense:new:${exp.id}:${exp.accountId}:${exp.amount}:${exp.status}`;
-                      const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
-                          source: 'expenses_view',
-                          action: 'create_paid',
-                          accountId: exp.accountId,
-                          entityId: exp.id,
-                          amount: exp.amount,
-                          status: exp.status
-                      });
-                      if (shouldApply) {
-                          newAccounts[accIdx].currentBalance -= exp.amount;
-                          accountsChanged = true;
-                      }
-                  }
+              if (onUpdateAccounts && newExpense.status === 'paid' && newExpense.accountId) {
+                  const { accounts: newAccounts, accountsChanged } = applyExpenseAccountAdjustments(null, newExpense);
+                  if (accountsChanged) onUpdateAccounts(newAccounts);
               }
-          };
-
-          newItems.forEach(item => {
-              processTransaction(item);
-          });
-
-          if (accountsChanged) {
-              onUpdateAccounts(newAccounts);
           }
       }
 
       onUpdateExpenses(updatedList);
       closeExpenseModal();
-      if (isMobile) {
-          setMobileScreen('list');
-          console.info('[mobile-ui] expenses', { screen: 'list', action: 'saved', type: expenseType });
-      }
   };
 
-  const handleBulkStatusChange = (newStatus: 'paid' | 'pending') => {
-      if (selectedIds.length === 0) return;
-
-      const newAccounts = [...accounts];
-      let accountsChanged = false;
-
-      const updatedExpenses = expenses.map(exp => {
-          if (!selectedIds.includes(exp.id)) return exp;
-          if (exp.status === newStatus) return exp;
-
-          if (exp.accountId) {
-              const accIdx = newAccounts.findIndex(a => a.id === exp.accountId);
-              if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                  const mutationId = `expense:bulk_status:${exp.id}:${exp.accountId}:${exp.amount}:${newStatus}`;
-                  const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
-                      source: 'expenses_view',
-                      action: 'bulk_status',
-                      accountId: exp.accountId,
-                      entityId: exp.id,
-                      amount: exp.amount,
-                      status: newStatus
-                  });
-                  if (shouldApply) {
-                      if (newStatus === 'paid') {
-                          newAccounts[accIdx].currentBalance -= exp.amount;
-                      } else {
-                          newAccounts[accIdx].currentBalance += exp.amount;
-                      }
-                      accountsChanged = true;
-                  }
-              }
-          }
-
-          return { ...exp, status: newStatus };
-      });
-
-      onUpdateExpenses(updatedExpenses);
-      if (accountsChanged && onUpdateAccounts) {
-          onUpdateAccounts(newAccounts);
-      }
-  };
-
-  const handleBulkDeleteConfirm = () => {
-      const newAccounts = [...accounts];
-      let accountsChanged = false;
-
-      selectedExpenses.forEach(exp => {
-          if (exp.status === 'paid' && exp.accountId) {
-              const accIdx = newAccounts.findIndex(a => a.id === exp.accountId);
-              if (accIdx > -1 && canAdjustAccount(newAccounts[accIdx])) {
-                  const mutationId = `expense:bulk_delete:${exp.id}:${exp.accountId}:${exp.amount}:${exp.status}`;
-                  const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
-                      source: 'expenses_view',
-                      action: 'bulk_delete',
-                      accountId: exp.accountId,
-                      entityId: exp.id,
-                      amount: exp.amount,
-                      status: exp.status
-                  });
-                  if (shouldApply) {
-                      newAccounts[accIdx].currentBalance += exp.amount;
-                      accountsChanged = true;
-                  }
-              }
-          }
-      });
-
-      const remainingExpenses = expenses.filter(exp => !selectedIds.includes(exp.id));
-
-      onUpdateExpenses(remainingExpenses);
-      if (accountsChanged && onUpdateAccounts) {
-          onUpdateAccounts(newAccounts);
-      }
-      
-      setSelectedIds([]);
-      setIsBulkDeleteModalOpen(false);
+  const handleEditExpense = (expense: Expense) => {
+      if (expense.locked) return;
+      setEditingExpense(expense);
+      setInlineEditExpenseId(expense.id);
+      setInlineNewOpen(false);
   };
 
   const requestDelete = (expense: Expense) => {
+      if (expense.locked) return;
       setExpenseToDelete(expense);
   };
 
   const confirmDelete = () => {
-      if (expenseToDelete) {
-          onDeleteExpense(expenseToDelete.id);
-          setExpenseToDelete(null);
+      if (!expenseToDelete) return;
+
+      if (onUpdateAccounts && expenseToDelete.status === 'paid' && expenseToDelete.accountId) {
+          const { accounts: newAccounts, accountsChanged } = applyExpenseAccountAdjustments(expenseToDelete, null);
+          if (accountsChanged) onUpdateAccounts(newAccounts);
       }
+
+      onDeleteExpense(expenseToDelete.id);
+      setExpenseToDelete(null);
+      setDrawerExpense(null);
+  };
+
+  const handleBulkDeleteConfirm = () => {
+      const toDelete = filteredExpenses.filter(e => selectedIds.includes(e.id));
+      let currentAccounts = [...accounts];
+      let anyAccountChanged = false;
+
+      toDelete.forEach(exp => {
+          if (exp.status === 'paid' && exp.accountId) {
+              const { accounts: nextAccounts, accountsChanged } = applyExpenseAccountAdjustments(
+                  exp,
+                  null,
+                  currentAccounts
+              );
+              if (accountsChanged) {
+                  currentAccounts = nextAccounts;
+                  anyAccountChanged = true;
+              }
+          }
+          onDeleteExpense(exp.id);
+      });
+
+      if (anyAccountChanged && onUpdateAccounts) {
+          onUpdateAccounts(currentAccounts);
+      }
+
+      setSelectedIds([]);
+      setIsBulkDeleteModalOpen(false);
+  };
+
+  const handleBulkStatusChange = (newStatus: 'paid' | 'pending') => {
+      const toUpdate = filteredExpenses.filter(e => selectedIds.includes(e.id) && e.status !== newStatus);
+      if (toUpdate.length === 0) {
+          setSelectedIds([]);
+          return;
+      }
+
+      let currentExpenses = [...expenses];
+      let currentAccounts = [...accounts];
+      let anyAccountChanged = false;
+
+      toUpdate.forEach(exp => {
+          const updatedExp = { ...exp, status: newStatus };
+          currentExpenses = currentExpenses.map(e => (e.id === exp.id ? updatedExp : e));
+
+          if (onUpdateAccounts) {
+              const { accounts: nextAccounts, accountsChanged } = applyExpenseAccountAdjustments(
+                  exp,
+                  updatedExp,
+                  currentAccounts
+              );
+              if (accountsChanged) {
+                  currentAccounts = nextAccounts;
+                  anyAccountChanged = true;
+              }
+          }
+      });
+
+      onUpdateExpenses(currentExpenses);
+      if (anyAccountChanged && onUpdateAccounts) {
+          onUpdateAccounts(currentAccounts);
+      }
+      setSelectedIds([]);
   };
 
   const handleNew = () => {
@@ -448,31 +390,70 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           console.info('[mobile-ui] expenses', { screen: 'form', action: 'new', type: expenseType });
           return;
       }
+      setInlineNewOpen(true);
+      setInlineEditExpenseId(null);
       setEditingExpense(null);
-      setIsModalOpen(true);
-  };
-  const handleEditExpense = (expense: Expense) => {
-      if (isMobile) {
-          setEditingExpense(expense);
-          setMobileScreen('form');
-          console.info('[mobile-ui] expenses', { screen: 'form', action: 'edit', id: expense.id, type: expenseType });
-          return;
-      }
-      setEditingExpense(expense);
-      setIsModalOpen(true);
   };
 
   const getSourceInfo = (expense: Expense) => {
-      if (expense.paymentMethod === 'Crédito' && expense.cardId) {
-          const card = creditCards.find(c => c.id === expense.cardId);
-          return { type: 'card' as const, card, name: card?.name || 'Cartão Deletado' };
+      if (expense.creditCardId) {
+          const card = creditCards.find(c => c.id === expense.creditCardId);
+          return { name: card?.name || 'Cartão', icon: <Wallet size={14} /> };
       }
-      if (expense.accountId) {
-          const acc = accounts.find(a => a.id === expense.accountId);
-          return { type: 'account' as const, name: acc?.name || 'Conta Deletada', color: getAccountColor(acc) };
-      }
-      return { type: 'other' as const, name: expense.paymentMethod };
+      const account = accounts.find(a => a.id === expense.accountId);
+      return { name: account?.name || 'Conta', icon: <Wallet size={14} /> };
   };
+
+  const getExpenseStatusMeta = (expense: Expense) => {
+      const normalized = normalizeExpenseStatus(expense.status);
+      const label = expenseStatusLabel(expense.status);
+      const className =
+          normalized === 'paid'
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
+      return { statusLabel: label, statusClassName: className };
+  };
+
+  const buildExpenseDetails = (expense: Expense) => {
+      const { statusLabel, statusClassName } = getExpenseStatusMeta(expense);
+      return [
+          {
+              label: 'Status',
+              value: (
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusClassName}`}>
+                      {statusLabel}
+                  </span>
+              )
+          },
+          {
+              label: 'Lançamento',
+              value: new Date(expense.date + 'T12:00:00').toLocaleDateString('pt-BR')
+          },
+          {
+              label: 'Vencimento',
+              value: new Date(expense.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')
+          },
+          {
+              label: 'Categoria',
+              value: expense.category || '-'
+          },
+          {
+              label: 'Conta/Cartão',
+              value: getSourceInfo(expense).name
+          },
+          expense.paymentMethod ? { label: 'Forma', value: expense.paymentMethod } : null,
+          expense.taxStatus ? { label: 'Natureza', value: expense.taxStatus } : null,
+          expense.installments
+              ? {
+                    label: 'Parcela',
+                    value: `${expense.installmentNumber}/${expense.totalInstallments}`
+                }
+              : null,
+          expense.createdBy ? { label: 'Lançado por', value: expense.createdBy } : null,
+          expense.notes ? { label: 'Observações', value: expense.notes } : null
+      ].filter(Boolean) as { label: string; value: React.ReactNode }[];
+  };
+
   const handleMobileBack = () => {
       if (mobileScreen === 'form') {
           setMobileScreen('list');
@@ -482,14 +463,36 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       }
       onBack();
   };
+
   const openDrawer = (expense: Expense) => {
-      setDrawerExpense(expense);
-      console.info('[mobile-ui] expenses', { screen: 'drawer', action: 'open', id: expense.id, type: expenseType });
+      if (isMobile) {
+          setDrawerExpense(expense);
+          console.info('[mobile-ui] expenses', { screen: 'drawer', action: 'open', id: expense.id, type: expenseType });
+          return;
+      }
+      setDrawerExpense(prev => (prev?.id === expense.id ? null : expense));
   };
+
   const closeDrawer = () => {
       setDrawerExpense(null);
       console.info('[mobile-ui] expenses', { screen: 'drawer', action: 'close', type: expenseType });
   };
+
+  useEffect(() => {
+      if (!drawerExpense) {
+          setInlineEditExpenseId(null);
+          return;
+      }
+      if (inlineEditExpenseId && inlineEditExpenseId !== drawerExpense.id) {
+          setInlineEditExpenseId(null);
+      }
+  }, [drawerExpense, inlineEditExpenseId]);
+
+  useEffect(() => {
+      if (inlineNewOpen) {
+          setInlineEditExpenseId(null);
+      }
+  }, [inlineNewOpen]);
 
   if (isMobile) {
       const listSubtitle = `${filteredExpenses.length} despesas`;
@@ -599,7 +602,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                                   subtitle={source.name}
                                                   isHighlighted={highlightedId === expense.id}
                                                   isLocked={isLocked || expense.lockedReason === 'epoch_mismatch'}
-                                                  onClick={() => openDrawer(expense)}
+                                                  lockedLabel={expense.lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida'}
+                                                  onClick={isLocked ? undefined : () => openDrawer(expense)}
                                               />
                                           </div>
                                       );
@@ -720,337 +724,403 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       );
   }
 
+  const listSubtitle = `${filteredExpenses.length} despesas`;
+  const allSelectableSelected =
+      selectableExpenses.length > 0 && selectedIds.length === selectableExpenses.length;
+  const desktopHeader = (
+      <div className="space-y-2">
+          <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
+              <button
+                  type="button"
+                  onClick={onBack}
+                  className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+                  aria-label="Voltar para o início"
+              >
+                  <Home size={16} />
+              </button>
+              <div className="min-w-0 text-center">
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{title}</p>
+                  <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{listSubtitle}</p>
+              </div>
+              <div className="min-w-[32px]" />
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
+                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{filteredExpenses.length}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total</p>
+                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+                      R$ {totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Pago</p>
+                  <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
+                      R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+              </div>
+          </div>
+
+          <div className={`grid ${onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+              {onOpenAudit && (
+                  <button
+                      onClick={onOpenAudit}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+                      title="Auditoria do dia"
+                  >
+                      <History size={14} />
+                      Auditoria
+                  </button>
+              )}
+              <button
+                  onClick={handleNew}
+                  className={`w-full rounded-2xl text-white font-semibold py-2.5 text-sm shadow-lg ${theme.btn}`}
+              >
+                  Nova {getSingularTitle()}
+              </button>
+          </div>
+      </div>
+  );
+
+  const summarySection = (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
+          <div className="rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+              {desktopHeader}
+          </div>
+      </div>
+  );
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
-        
-        {/* ... Header Summary ... */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6 relative z-10 -mt-6">
-            <button 
-                onClick={onBack}
-                className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-            >
-                <ArrowLeft size={16} /> Voltar ao Dashboard
-            </button>
+      <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+          {summarySection}
 
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white dark:bg-[#151517] p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                <div>
-                    <h1 className="text-2xl font-bold mb-1">{title}</h1>
-                    <p className="text-sm text-zinc-500">
-                        {filteredExpenses.length} despesas • Total: <strong className="text-zinc-900 dark:text-white">R$ {totalAmount.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</strong> • Pago: <span className="text-emerald-600">R$ {totalPaid.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
-                    </p>
-                </div>
-                <button 
-                    onClick={handleNew}
-                    className={`${theme.btn} text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-all shadow-lg`}
-                >
-                    <Plus size={20} /> Nova {getSingularTitle()}
-                </button>
-            </div>
-        </div>
+          {selectedIds.length > 0 && (
+              <div className="fixed bottom-24 left-4 right-4 z-50 animate-in slide-in-from-bottom-10 duration-300">
+                  <div className="max-w-3xl mx-auto bg-indigo-600 dark:bg-indigo-500 text-white rounded-2xl shadow-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                          <span className="bg-white/20 px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-2">
+                              <CheckSquare size={16} /> {selectedIds.length} selecionados
+                          </span>
+                          <div className="h-6 w-px bg-white/20 hidden sm:block"></div>
+                          <span className="text-sm font-medium">
+                              Soma: <strong className="text-lg ml-1">R$ {selectedTotalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                          </span>
+                      </div>
 
-        {/* ... Bulk Actions ... */}
-        {selectedIds.length > 0 && (
-             <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-4 animate-in fade-in slide-in-from-top-2">
-                <div className="bg-indigo-600 dark:bg-indigo-900 text-white p-3 rounded-xl shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                        <span className="bg-white/20 px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-2">
-                             <CheckSquare size={16} /> {selectedIds.length} selecionados
-                        </span>
-                        <div className="h-6 w-px bg-white/20 hidden sm:block"></div>
-                        <span className="text-sm font-medium">
-                            Soma: <strong className="text-lg ml-1">R$ {selectedTotalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
-                        </span>
-                    </div>
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <button
+                              onClick={() => handleBulkStatusChange('paid')}
+                              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-lg text-xs font-bold transition-colors"
+                          >
+                              <CheckCircle2 size={14} /> Marcar Pagos
+                          </button>
+                          <button
+                              onClick={() => handleBulkStatusChange('pending')}
+                              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-bold transition-colors"
+                          >
+                              <Circle size={14} /> Marcar Pendentes
+                          </button>
+                          <button
+                              onClick={() => setIsBulkDeleteModalOpen(true)}
+                              aria-label="Excluir selecionados"
+                              className="flex-none p-1.5 bg-white/10 hover:bg-red-500 text-white rounded-lg transition-colors"
+                              title="Excluir Selecionados"
+                          >
+                              <Trash2 size={16} />
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          )}
 
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                        <button 
-                            onClick={() => handleBulkStatusChange('paid')}
-                            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-lg text-xs font-bold transition-colors"
-                        >
-                            <CheckCircle2 size={14} /> Marcar Pagos
-                        </button>
-                        <button 
-                            onClick={() => handleBulkStatusChange('pending')}
-                            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-bold transition-colors"
-                        >
-                            <Circle size={14} /> Marcar Pendentes
-                        </button>
-                        <button 
-                            onClick={() => setIsBulkDeleteModalOpen(true)}
-                            aria-label="Excluir selecionados"
-                            className="flex-none p-1.5 bg-white/10 hover:bg-red-500 text-white rounded-lg transition-colors"
-                            title="Excluir Selecionados"
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                    </div>
-                </div>
-             </div>
-        )}
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 py-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="space-y-3">
+                  {inlineNewOpen && (
+                      <NewExpenseModal
+                          isOpen
+                          variant="inline"
+                          onClose={closeExpenseModal}
+                          onSave={handleSaveExpense}
+                          initialData={null}
+                          accounts={accounts}
+                          creditCards={creditCards}
+                          categories={categories}
+                          userId={userId}
+                          categoryType="expenses"
+                          onAddCategory={onAddCategory}
+                          onRemoveCategory={onRemoveCategory}
+                          onResetCategories={onResetCategories}
+                          expenseType={expenseType}
+                          themeColor={themeColor}
+                          defaultDate={viewDate}
+                          minDate={minDate}
+                      />
+                  )}
 
-        {/* Table List */}
-        <main className="max-w-7xl mx-auto px-4 sm:px-6">
-            <div className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-zinc-500 uppercase bg-zinc-50 dark:bg-[#1a1a1a] border-b border-zinc-200 dark:border-zinc-800">
-                            <tr>
-                                <th className="px-4 py-4 w-12 text-center">
-                                    <button 
-                                        onClick={toggleSelectAll}
-                                        aria-label="Selecionar todas as despesas"
-                                        className="text-zinc-400 hover:text-indigo-600 transition-colors"
-                                    >
-                                        {selectedIds.length > 0 && selectedIds.length === selectableExpenses.length 
-                                            ? <CheckSquare size={18} className="text-indigo-600" /> 
-                                            : <Square size={18} />
-                                        }
-                                    </button>
-                                </th>
-                                <th className="px-6 py-4 font-semibold">Status</th>
-                                <th className="px-6 py-4 font-semibold">Data de Lançamento</th>
-                                <th className="px-6 py-4 font-semibold">Descrição</th>
-                                <th className="px-6 py-4 font-semibold">Conta / Cartão</th>
-                                <th className="px-6 py-4 font-semibold">Categoria</th>
-                                <th className="px-6 py-4 font-semibold">Vencimento</th>
-                                <th className="px-6 py-4 font-semibold text-right">Valor</th>
-                                <th className="px-6 py-4 font-semibold text-center">Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                            {filteredExpenses.length > 0 ? (
-                                filteredExpenses.map(expense => {
-                                    const source = getSourceInfo(expense);
-                                    const isSelected = selectedIds.includes(expense.id);
-                                    const isHighlighted = highlightedId === expense.id;
-                                    const isLocked = Boolean(expense.locked);
-                                    const normalizedStatus = normalizeExpenseStatus(expense.status);
-                                    const statusLabel = expenseStatusLabel(expense.status);
+                  {filteredExpenses.length > 0 ? (
+                      <>
+                          <div className="flex items-center justify-between rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+                              <button
+                                  type="button"
+                                  onClick={toggleSelectAll}
+                                  disabled={selectableExpenses.length === 0}
+                                  className="flex items-center gap-2 font-semibold disabled:opacity-50"
+                              >
+                                  {allSelectableSelected ? (
+                                      <CheckSquare size={14} className="text-rose-600" />
+                                  ) : (
+                                      <Square size={14} />
+                                  )}
+                                  <span>{allSelectableSelected ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                              </button>
+                              <span className="text-[11px]">{selectedIds.length} selecionados</span>
+                          </div>
 
-                                    return (
-                                    <tr 
-                                        key={expense.id}
-                                        id={`expense-${expense.id}`}
-                                        className={`transition-colors group ${isHighlighted ? 'ring-2 ring-indigo-400/70 bg-indigo-50/80 dark:bg-indigo-900/30 shadow-lg shadow-indigo-500/20' : isSelected ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : 'hover:bg-zinc-50 dark:hover:bg-[#1a1a1a]'} ${isLocked ? 'opacity-80 cursor-not-allowed' : ''}`}
-                                    >
-                                        <td className="px-4 py-4 text-center">
-                                            <button 
-                                                onClick={() => toggleSelection(expense.id)}
-                                                className="text-zinc-400 hover:text-indigo-600 transition-colors disabled:opacity-60"
-                                                disabled={isLocked}
-                                            >
-                                                {isLocked ? (
-                                                    <Lock size={16} className="text-amber-500" />
-                                                ) : isSelected 
-                                                    ? <CheckSquare size={18} className="text-indigo-600" /> 
-                                                    : <Square size={18} />
-                                                }
-                                            </button>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                                                    normalizedStatus === 'paid' 
-                                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' 
-                                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-                                                }`}>
-                                                    {statusLabel}
-                                                </span>
-                                                {expense.lockedReason === 'epoch_mismatch' && (
-                                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                                                        Arquivado
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-zinc-600 dark:text-zinc-300">
-                                            {new Date(expense.date + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                        </td>
-                                        <td className="px-6 py-4 font-medium text-zinc-900 dark:text-white">
-                                            {expense.description}
-                                            {expense.createdBy && (
-                                                <span className="block text-[10px] text-zinc-400 font-normal mt-0.5 flex items-center gap-1">
-                                                    <UserCircle size={10} /> Lançado por: {expense.createdBy}
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-zinc-600 dark:text-zinc-300">
-                                            {source.type === 'card' ? (
-                                                <CardTag card={source.card || undefined} />
-                                            ) : (
-                                                <div className="flex items-center gap-2">
-                                                    {source.type === 'account' ? (
-                                                        <CardTag label={source.name} color={source.color} />
-                                                    ) : (
-                                                        <>
-                                                            <CardIcon size={14} className="text-zinc-400" />
-                                                            <span className="text-xs">{source.name}</span>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-zinc-600 dark:text-zinc-300">
-                                            {expense.category}
-                                        </td>
-                                        <td className="px-6 py-4 text-zinc-600 dark:text-zinc-300">
-                                            {new Date(expense.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                        </td>
-                                        <td className={`px-6 py-4 text-right font-bold ${isLocked ? 'text-zinc-400 dark:text-zinc-500' : 'text-red-600 dark:text-red-400'}`}>
-                                            R$ {expense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            {!isLocked && (
-                                                <div className="flex items-center justify-center gap-2">
-                                                    <button
-                                                        onClick={() => handleEditExpense(expense)}
-                                                        aria-label={`Editar despesa ${expense.description}`}
-                                                        className="p-2 text-zinc-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                                                        title="Editar Despesa"
-                                                    >
-                                                        <Pencil size={16} />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => requestDelete(expense)}
-                                                        aria-label={`Excluir despesa ${expense.description}`}
-                                                        className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                                                        title="Excluir Despesa"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </td>
-                                    </tr>
-                                )})
-                            ) : (
-                                <tr>
-                                    <td colSpan={9} className="px-6 py-12 text-center text-zinc-500">
-                                        Nenhuma despesa encontrada para este mês.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </main>
+                          {visibleExpenses.map(expense => {
+                              const isSelected = selectedIds.includes(expense.id);
+                              const isHighlighted = highlightedId === expense.id;
+                              const lockedReason = expense.lockedReason;
+                              const isLocked = Boolean(expense.locked || lockedReason === 'epoch_mismatch');
+                              const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
+                              const { statusLabel, statusClassName } = getExpenseStatusMeta(expense);
+                              const dueLabel = `Vence ${new Date(expense.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}`;
+                              const source = getSourceInfo(expense);
+                              const isExpanded = drawerExpense?.id === expense.id;
+                              const isInlineEditing = inlineEditExpenseId === expense.id;
+                              const details = isExpanded ? buildExpenseDetails(expense) : [];
 
-        <NewExpenseModal 
-            isOpen={isModalOpen}
-            onClose={closeExpenseModal}
-            onSave={handleSaveExpense}
-            initialData={editingExpense}
-            accounts={accounts}
-            creditCards={creditCards}
-            categories={categories}
-            userId={userId}
-            categoryType="expenses"
-            onAddCategory={onAddCategory}
-            onRemoveCategory={onRemoveCategory}
-            onResetCategories={onResetCategories}
-            expenseType={expenseType}
-            themeColor={themeColor}
-            defaultDate={viewDate} // PASS VIEW DATE
-            minDate={minDate}
-        />
+                              return (
+                                  <div key={expense.id} id={`expense-${expense.id}`} className="space-y-3">
+                                      <div className="relative">
+                                          <MobileTransactionCard
+                                              title={expense.description}
+                                              amount={`- R$ ${expense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                                              amountClassName={
+                                                  isLocked
+                                                      ? 'text-zinc-400 dark:text-zinc-500'
+                                                      : 'text-red-600 dark:text-red-400'
+                                              }
+                                              dateLabel={dueLabel}
+                                              statusLabel={statusLabel}
+                                              statusClassName={statusClassName}
+                                              category={expense.category}
+                                              subtitle={source.name}
+                                              isHighlighted={isHighlighted || isSelected}
+                                              isLocked={isLocked}
+                                              lockedLabel={lockedLabel}
+                                              onClick={isLocked ? undefined : () => openDrawer(expense)}
+                                          />
+                                          <button
+                                              type="button"
+                                              onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  toggleSelection(expense.id);
+                                              }}
+                                              disabled={isLocked}
+                                              className="absolute right-3 top-3 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-[#151517]/90 p-1.5 text-zinc-500 hover:text-rose-600 disabled:opacity-60"
+                                              aria-label={`Selecionar despesa ${expense.description}`}
+                                          >
+                                              {isLocked ? (
+                                                  <Lock size={14} className="text-amber-500" />
+                                              ) : isSelected ? (
+                                                  <CheckSquare size={14} className="text-rose-600" />
+                                              ) : (
+                                                  <Square size={14} />
+                                              )}
+                                          </button>
+                                      </div>
 
-        {/* ... Modal Components ... */}
-        {expenseToDelete && (
-            <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
-                    <button 
-                        onClick={() => setExpenseToDelete(null)}
-                        aria-label="Fechar confirmação de exclusão"
-                        className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
-                    >
-                        <X size={20} />
-                    </button>
+                                      {isExpanded && (
+                                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
+                                              <div className="flex items-center justify-between">
+                                                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => setDrawerExpense(null)}
+                                                      className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
+                                                      aria-label="Fechar detalhes"
+                                                  >
+                                                      <X size={14} className="mx-auto" />
+                                                  </button>
+                                              </div>
+                                              <div className="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
+                                                  {details.map(item => (
+                                                      <div key={item.label} className="flex items-start justify-between gap-3">
+                                                          <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                                                              {item.label}
+                                                          </span>
+                                                          <span className="text-right">{item.value}</span>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                              {!isLocked && (
+                                                  <div className="mt-4 flex flex-wrap gap-2">
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => handleEditExpense(expense)}
+                                                          className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
+                                                      >
+                                                          Editar
+                                                      </button>
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => requestDelete(expense)}
+                                                          className="rounded-xl border border-rose-200 dark:border-rose-900/40 px-4 py-2 text-xs font-semibold text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition"
+                                                      >
+                                                          Excluir
+                                                      </button>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      )}
 
-                    <div className="flex flex-col items-center text-center mb-6">
-                        <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mb-4 text-red-600 dark:text-red-500">
-                            <Trash2 size={24} />
-                        </div>
-                        <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Excluir Despesa?</h3>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                            Você está prestes a excluir <strong>{expenseToDelete.description}</strong> no valor de <strong>R$ {expenseToDelete.amount.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</strong>.
-                        </p>
-                    </div>
+                                      {!isLocked && isInlineEditing && (
+                                          <NewExpenseModal
+                                              isOpen
+                                              variant="inline"
+                                              onClose={closeExpenseModal}
+                                              onSave={handleSaveExpense}
+                                              initialData={editingExpense ?? expense}
+                                              accounts={accounts}
+                                              creditCards={creditCards}
+                                              categories={categories}
+                                              userId={userId}
+                                              categoryType="expenses"
+                                              onAddCategory={onAddCategory}
+                                              onRemoveCategory={onRemoveCategory}
+                                              onResetCategories={onResetCategories}
+                                              expenseType={expenseType}
+                                              themeColor={themeColor}
+                                              defaultDate={viewDate}
+                                              minDate={minDate}
+                                          />
+                                      )}
+                                  </div>
+                              );
+                          })}
 
-                    {expenseToDelete.status === 'paid' && expenseToDelete.accountId && (
-                        <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-3 rounded-lg flex gap-3 items-start mb-6 text-left">
-                            <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                                Como esta despesa já foi paga, o valor será <strong>estornado (devolvido)</strong> ao saldo da conta de origem.
-                            </p>
-                        </div>
-                    )}
+                          {shouldCollapseExpenses && (
+                              <button
+                                  type="button"
+                                  onClick={() => setIsExpenseListExpanded(prev => !prev)}
+                                  className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[12px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                              >
+                                  {isExpenseListExpanded
+                                      ? 'Clique para recolher'
+                                      : `Clique para expandir (+${extraExpenseCount})`}
+                                  <ChevronDown
+                                      size={14}
+                                      className={`transition-transform ${isExpenseListExpanded ? 'rotate-180' : ''}`}
+                                  />
+                              </button>
+                          )}
+                      </>
+                  ) : (
+                      <MobileEmptyState
+                          icon={<Wallet size={18} />}
+                          message="Nenhuma despesa encontrada para este mês."
+                      />
+                  )}
+              </div>
+          </main>
 
-                    <div className="flex gap-3">
-                        <button 
-                            onClick={() => setExpenseToDelete(null)}
-                            className="flex-1 py-3 rounded-xl font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-sm"
-                        >
-                            Cancelar
-                        </button>
-                        <button 
-                            onClick={confirmDelete}
-                            className="flex-1 py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-900/20 transition-colors text-sm"
-                        >
-                            Sim, Excluir
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )}
+          {expenseToDelete && (
+              <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                  <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
+                      <button 
+                          onClick={() => setExpenseToDelete(null)}
+                          aria-label="Fechar confirmação de exclusão"
+                          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
+                      >
+                          <X size={20} />
+                      </button>
 
-        {isBulkDeleteModalOpen && (
-            <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
-                    <button 
-                        onClick={() => setIsBulkDeleteModalOpen(false)}
-                        aria-label="Fechar exclusão em lote"
-                        className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
-                    >
-                        <X size={20} />
-                    </button>
+                      <div className="flex flex-col items-center text-center mb-6">
+                          <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mb-4 text-red-600 dark:text-red-500">
+                              <Trash2 size={24} />
+                          </div>
+                          <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Excluir Despesa?</h3>
+                          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                              Você está prestes a excluir <strong>{expenseToDelete.description}</strong> no valor de <strong>R$ {expenseToDelete.amount.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</strong>.
+                          </p>
+                      </div>
 
-                    <div className="flex flex-col items-center text-center mb-6">
-                        <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mb-4 text-red-600 dark:text-red-500">
-                            <Trash2 size={24} />
-                        </div>
-                        <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Excluir {selectedIds.length} Itens?</h3>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                            Total selecionado: <strong>R$ {selectedTotalAmount.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</strong>.
-                        </p>
-                    </div>
+                      {expenseToDelete.status === 'paid' && expenseToDelete.accountId && (
+                          <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-3 rounded-lg flex gap-3 items-start mb-6 text-left">
+                              <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
+                              <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                                  Como esta despesa já foi paga, o valor será <strong>estornado (devolvido)</strong> ao saldo da conta de origem.
+                              </p>
+                          </div>
+                      )}
 
-                    <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-3 rounded-lg flex gap-3 items-start mb-6 text-left">
-                        <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
-                        <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                            Itens marcados como <strong>Pagos</strong> terão seus valores estornados (devolvidos) para as contas de origem.
-                        </p>
-                    </div>
+                      <div className="flex gap-3">
+                          <button 
+                              onClick={() => setExpenseToDelete(null)}
+                              className="flex-1 py-3 rounded-xl font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-sm"
+                          >
+                              Cancelar
+                          </button>
+                          <button 
+                              onClick={confirmDelete}
+                              className="flex-1 py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-900/20 transition-colors text-sm"
+                          >
+                              Sim, Excluir
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          )}
 
-                    <div className="flex gap-3">
-                        <button 
-                            onClick={() => setIsBulkDeleteModalOpen(false)}
-                            className="flex-1 py-3 rounded-xl font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-sm"
-                        >
-                            Cancelar
-                        </button>
-                        <button 
-                            onClick={handleBulkDeleteConfirm}
-                            className="flex-1 py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-900/20 transition-colors text-sm"
-                        >
-                            Confirmar Exclusão
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )}
+          {isBulkDeleteModalOpen && (
+              <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                  <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
+                      <button 
+                          onClick={() => setIsBulkDeleteModalOpen(false)}
+                          aria-label="Fechar exclusão em lote"
+                          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
+                      >
+                          <X size={20} />
+                      </button>
 
-    </div>
+                      <div className="flex flex-col items-center text-center mb-6">
+                          <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mb-4 text-red-600 dark:text-red-500">
+                              <Trash2 size={24} />
+                          </div>
+                          <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Excluir {selectedIds.length} Itens?</h3>
+                          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                              Total selecionado: <strong>R$ {selectedTotalAmount.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</strong>.
+                          </p>
+                      </div>
+
+                      <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-3 rounded-lg flex gap-3 items-start mb-6 text-left">
+                          <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
+                          <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                              Itens marcados como <strong>Pagos</strong> terão seus valores estornados (devolvidos) para as contas de origem.
+                          </p>
+                      </div>
+
+                      <div className="flex gap-3">
+                          <button 
+                              onClick={() => setIsBulkDeleteModalOpen(false)}
+                              className="flex-1 py-3 rounded-xl font-bold text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-sm"
+                          >
+                              Cancelar
+                          </button>
+                          <button 
+                              onClick={handleBulkDeleteConfirm}
+                              className="flex-1 py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-900/20 transition-colors text-sm"
+                          >
+                              Confirmar Exclusão
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          )}
+      </div>
   );
 };
 

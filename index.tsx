@@ -33,9 +33,85 @@ const applyThemeClass = (theme: 'light' | 'dark') => {
   root.classList.add(theme);
 };
 
+const updateAppViewportMetrics = () => {
+  if (typeof window === 'undefined') return;
+  const width =
+    window.visualViewport?.width ||
+    window.innerWidth ||
+    document.documentElement.clientWidth;
+  const height =
+    window.visualViewport?.height ||
+    window.innerHeight ||
+    document.documentElement.clientHeight;
+  document.documentElement.style.setProperty('--app-height', `${height}px`);
+  document.documentElement.style.setProperty('--app-width', `${width}px`);
+  const minSide = Math.min(width, height);
+  document.documentElement.classList.toggle('is-mobile', minSide <= 767);
+};
+
+const getScrollableAncestor = (el: Element | null) => {
+  if (!el || typeof window === 'undefined') return null;
+  let node: HTMLElement | null = el as HTMLElement;
+  while (node) {
+    const style = window.getComputedStyle(node);
+    const overflowY = style.overflowY;
+    const isScrollable =
+      (overflowY === 'auto' || overflowY === 'scroll') &&
+      node.scrollHeight > node.clientHeight;
+    if (isScrollable) return node;
+    if (node === document.body) break;
+    node = node.parentElement;
+  }
+  return (document.scrollingElement as HTMLElement | null) || document.body;
+};
+
+const setupMobileScrollLock = () => {
+  if (typeof window === 'undefined') return;
+  let startX = 0;
+  let startY = 0;
+
+  const onTouchStart = (event: TouchEvent) => {
+    if (!document.documentElement.classList.contains('is-mobile')) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    startX = touch.clientX;
+    startY = touch.clientY;
+  };
+
+  const onTouchMove = (event: TouchEvent) => {
+    if (!document.documentElement.classList.contains('is-mobile')) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    const dy = touch.clientY - startY;
+    const dx = touch.clientX - startX;
+    if (Math.abs(dy) < Math.abs(dx)) return;
+    if (dy <= 0) return;
+    const target = event.target as Element | null;
+    const scrollParent = getScrollableAncestor(target);
+    if (!scrollParent) {
+      event.preventDefault();
+      return;
+    }
+    if (scrollParent.scrollTop <= 0) {
+      event.preventDefault();
+    }
+  };
+
+  document.addEventListener('touchstart', onTouchStart, { passive: true });
+  document.addEventListener('touchmove', onTouchMove, { passive: false });
+};
+
 const initialTheme = resolveInitialTheme();
 applyThemeClass(initialTheme.theme);
 console.info('[theme] init', { theme: initialTheme.theme, source: initialTheme.source });
+
+updateAppViewportMetrics();
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', updateAppViewportMetrics);
+  window.addEventListener('orientationchange', updateAppViewportMetrics);
+  window.visualViewport?.addEventListener('resize', updateAppViewportMetrics);
+}
+setupMobileScrollLock();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

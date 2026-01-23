@@ -33,7 +33,7 @@ const MobileModalShell: React.FC<MobileModalShellProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm" data-modal-root="true">
       <button
         type="button"
         onClick={onClose}

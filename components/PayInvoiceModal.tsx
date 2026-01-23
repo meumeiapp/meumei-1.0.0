@@ -1,7 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { X, Wallet, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Account, CreditCard } from '../types';
+import useIsMobile from '../hooks/useIsMobile';
+import MobileSelect from './mobile/MobileSelect';
 
 interface PayInvoiceModalProps {
   isOpen: boolean;
@@ -25,9 +27,21 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [error, setError] = useState('');
+  const isMobile = useIsMobile();
   const availableAccounts = accounts.filter(acc => !acc.locked);
   const fieldIdPrefix = selectedCard?.id ? `invoice-pay-${selectedCard.id}` : 'invoice-pay';
   const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
+  const accountOptions = useMemo(
+    () => [
+      { value: '', label: 'Selecione a conta...', disabled: true },
+      ...availableAccounts.map((acc) => ({
+        value: acc.id,
+        label: acc.name,
+        description: `R$ ${acc.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+      }))
+    ],
+    [availableAccounts]
+  );
 
   if (!isOpen) return null;
 
@@ -82,20 +96,35 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
                 <label htmlFor={fieldId('account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
                     <Wallet size={12} /> Debitar da Conta
                 </label>
-                <select 
-                    id={fieldId('account')}
-                    name="accountId"
-                    value={selectedAccountId}
-                    onChange={(e) => { setSelectedAccountId(e.target.value); setError(''); }}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all appearance-none"
-                >
-                    <option value="">Selecione a conta...</option>
-                    {availableAccounts.map(acc => (
-                        <option key={acc.id} value={acc.id}>
-                            {acc.name} (R$ {acc.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
-                        </option>
-                    ))}
-                </select>
+                {isMobile ? (
+                    <MobileSelect
+                        id={fieldId('account')}
+                        name="accountId"
+                        value={selectedAccountId}
+                        options={accountOptions}
+                        onChange={(value) => {
+                          setSelectedAccountId(value);
+                          setError('');
+                        }}
+                        disabled={availableAccounts.length === 0}
+                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-rose-500"
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('account')}
+                        name="accountId"
+                        value={selectedAccountId}
+                        onChange={(e) => { setSelectedAccountId(e.target.value); setError(''); }}
+                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all appearance-none"
+                    >
+                        <option value="">Selecione a conta...</option>
+                        {availableAccounts.map(acc => (
+                            <option key={acc.id} value={acc.id}>
+                                {acc.name} (R$ {acc.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                            </option>
+                        ))}
+                    </select>
+                )}
             </div>
 
             <div className="space-y-2">
@@ -120,7 +149,7 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
 
             <button 
                 onClick={handleConfirm}
-                className="w-full py-3.5 rounded-xl font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-lg shadow-rose-900/20 transition-all active:scale-95"
+                className="w-full h-11 rounded-xl font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-lg shadow-rose-900/20 transition-all active:scale-95"
             >
                 Confirmar Pagamento
             </button>

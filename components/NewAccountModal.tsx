@@ -119,14 +119,18 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      const hasInlineOpen = isDropdownOpen || isAddTypeOpen || isManageTypesOpen || Boolean(pendingDeleteType);
       setIsDropdownOpen(false);
       setIsAddTypeOpen(false);
       setIsManageTypesOpen(false);
       setPendingDeleteType(null);
+      if (!hasInlineOpen) {
+        onClose();
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
+  }, [isAddTypeOpen, isDropdownOpen, isManageTypesOpen, isOpen, onClose, pendingDeleteType]);
 
   // Click outside to close dropdown
   useEffect(() => {
@@ -210,12 +214,18 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
   };
 
   return (
-    <PremiumModalShell isOpen={isOpen} onClose={onClose} zIndexClass="z-[60]" maxWidthClass="max-w-3xl">
+    <PremiumModalShell
+      isOpen={isOpen}
+      onClose={onClose}
+      zIndexClass="z-[1200]"
+      fullScreen
+    >
       <PremiumModalHeader
         eyebrow="Contas Financeiras"
         title={isEditMode ? 'Editar Conta' : 'Nova Conta Financeira'}
         subtitle="Ajuste os dados principais da conta e a cor para facilitar a leitura."
         onClose={onClose}
+        fullScreen
       />
       <div className="px-8 py-8 space-y-7 relative z-30">
             
@@ -543,7 +553,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
           </div>
 
-      <PremiumModalFooter>
+      <PremiumModalFooter fullScreen>
         <button onClick={onClose} className={modalSecondaryButtonClass}>
           Cancelar
         </button>

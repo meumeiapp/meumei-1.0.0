@@ -1,10 +1,12 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { X, Calendar, Plus, Edit2, Trash2, ArrowUpCircle, Briefcase } from 'lucide-react';
 import { Income, Account } from '../types';
 import { categoryService } from '../services/categoryService';
 import { useAuth } from '../contexts/AuthContext';
 import { getPrimaryActionLabel } from '../utils/formLabels';
+import useIsMobile from '../hooks/useIsMobile';
+import MobileSelect from './mobile/MobileSelect';
 
 interface NewIncomeModalProps {
   isOpen: boolean;
@@ -53,10 +55,12 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const [notes, setNotes] = useState('');
   const [taxStatus, setTaxStatus] = useState<'PJ' | 'PF'>('PJ');
   const { user: authUser } = useAuth();
+  const modalRootRef = useRef<HTMLDivElement | null>(null);
   const availableAccounts = accounts.filter(acc => !acc.locked);
+  const isMobile = useIsMobile();
   const isInline = variant === 'inline';
-  const contentPadding = isInline ? 'p-4' : 'p-6';
-  const footerPadding = isInline ? 'p-4' : 'p-6';
+  const contentPadding = isInline ? 'p-4' : 'px-8 py-8';
+  const footerPadding = isInline ? 'p-4' : 'px-8 py-6';
   const isEditing = Boolean(initialData);
   const entityName = 'Entrada';
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
@@ -79,6 +83,48 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   
   // Installment Dates Summary
   const [lastInstallmentDate, setLastInstallmentDate] = useState('');
+
+  const taxStatusOptions = useMemo(
+      () => [
+          { value: 'PJ', label: 'PJ (Empresarial/MEI)' },
+          { value: 'PF', label: 'PF (Pessoal)' }
+      ],
+      []
+  );
+
+  const categoryOptions = useMemo(() => {
+      const options = [] as { value: string; label: string; disabled?: boolean }[];
+      if (category && !categories.includes(category)) {
+          options.push({ value: category, label: category });
+      }
+      if (categories.length === 0) {
+          options.push({ value: '', label: 'Sem categorias, crie uma', disabled: true });
+      }
+      categories.forEach((cat) => options.push({ value: cat, label: cat }));
+      return options;
+  }, [category, categories]);
+
+  const paymentMethodOptions = useMemo(
+      () => [
+          { value: 'Pix', label: 'Pix' },
+          { value: 'Dinheiro', label: 'Dinheiro' },
+          { value: 'Transferência', label: 'Transferência' },
+          { value: 'Boleto', label: 'Boleto' },
+          { value: 'Crédito', label: 'Crédito' },
+          { value: 'Débito', label: 'Débito' }
+      ],
+      []
+  );
+
+  const accountOptions = useMemo(
+      () => {
+          if (availableAccounts.length === 0) {
+              return [{ value: '', label: 'Nenhuma conta disponível', disabled: true }];
+          }
+          return availableAccounts.map((acc) => ({ value: acc.id, label: acc.name }));
+      },
+      [availableAccounts]
+  );
 
   const clampToMinDate = (value: string) => {
       if (!value) return minDate;
@@ -143,6 +189,14 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     }
   }, [isOpen, initialData, accounts, categories, defaultDate, minDate]);
 
+  useEffect(() => {
+    if (!isInline && isOpen) {
+      requestAnimationFrame(() => {
+        modalRootRef.current?.focus();
+      });
+    }
+  }, [isInline, isOpen]);
+
   // Calculate Last Installment Date for preview
   useEffect(() => {
     if (isInstallment && installmentCount > 0 && date) {
@@ -156,8 +210,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   }, [isInstallment, installmentCount, date]);
 
   // --- LÓGICA DE STATUS AUTOMÁTICO ---
-  const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const newMethod = e.target.value;
+  const handlePaymentMethodSelect = (newMethod: string) => {
       setPaymentMethod(newMethod);
 
       if (newMethod === 'Crédito' || newMethod === 'Boleto') {
@@ -166,6 +219,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
           setStatus('received');
       }
   };
+  const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) =>
+      handlePaymentMethodSelect(e.target.value);
 
   if (!isOpen) return null;
 
@@ -373,18 +428,23 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const formContent = (
     <>
       {!isInline && (
-        <div className="flex items-center justify-between p-6 border-b border-zinc-100 dark:border-zinc-800">
-          <h2 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+        <div className="flex items-center justify-between px-8 py-6 border-b border-white/10">
+          <h2 className="text-2xl font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
               <ArrowUpCircle className="text-emerald-500" />
               {initialData ? 'Editar Entrada' : 'Nova Entrada'}
           </h2>
-          <button
-            onClick={onClose}
-            aria-label="Fechar modal"
-            className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-zinc-400 dark:text-zinc-400">
+              ESC fecha
+            </span>
+            <button
+              onClick={onClose}
+              aria-label="Fechar modal"
+              className="p-2 text-zinc-400 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -426,16 +486,27 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 <label htmlFor={fieldId('taxStatus')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
                     <Briefcase size={12} /> Natureza Fiscal
                 </label>
-                <select 
-                    id={fieldId('taxStatus')}
-                    name="taxStatus"
-                    value={taxStatus}
-                    onChange={(e) => setTaxStatus(e.target.value as 'PJ' | 'PF')}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
-                >
-                    <option value="PJ">PJ (Empresarial/MEI)</option>
-                    <option value="PF">PF (Pessoal)</option>
-                </select>
+                {isMobile ? (
+                    <MobileSelect
+                        id={fieldId('taxStatus')}
+                        name="taxStatus"
+                        value={taxStatus}
+                        options={taxStatusOptions}
+                        onChange={(value) => setTaxStatus(value as 'PJ' | 'PF')}
+                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('taxStatus')}
+                        name="taxStatus"
+                        value={taxStatus}
+                        onChange={(e) => setTaxStatus(e.target.value as 'PJ' | 'PF')}
+                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
+                    >
+                        <option value="PJ">PJ (Empresarial/MEI)</option>
+                        <option value="PF">PF (Pessoal)</option>
+                    </select>
+                )}
             </div>
         </div>
 
@@ -510,22 +581,34 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     )}
                     </div>
             ) : (
-                <select 
-                    id={fieldId('category')}
-                    name="category"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    disabled={categories.length === 0}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
-                >
-                    {category && !categories.includes(category) && (
-                        <option value={category}>{category}</option>
-                    )}
-                    {categories.length === 0 && (
-                        <option value="" disabled>Sem categorias, crie uma</option>
-                    )}
-                    {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                </select>
+                isMobile ? (
+                    <MobileSelect
+                        id={fieldId('category')}
+                        name="category"
+                        value={category}
+                        options={categoryOptions}
+                        onChange={setCategory}
+                        disabled={categories.length === 0}
+                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('category')}
+                        name="category"
+                        value={category}
+                        onChange={(e) => setCategory(e.target.value)}
+                        disabled={categories.length === 0}
+                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
+                    >
+                        {category && !categories.includes(category) && (
+                            <option value={category}>{category}</option>
+                        )}
+                        {categories.length === 0 && (
+                            <option value="" disabled>Sem categorias, crie uma</option>
+                        )}
+                        {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    </select>
+                )
             )}
         </div>
 
@@ -550,40 +633,63 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
              {/* NOVO CAMPO: Forma de Pagamento */}
-             <div className="space-y-2">
+            <div className="space-y-2">
                 <label htmlFor={fieldId('payment-method')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
                   Forma de Pagamento
                 </label>
-                <select 
-                    id={fieldId('payment-method')}
-                    name="paymentMethod"
-                    value={paymentMethod}
-                    onChange={handlePaymentMethodChange}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
-                >
-                    <option>Pix</option>
-                    <option>Dinheiro</option>
-                    <option>Transferência</option>
-                    <option>Boleto</option>
-                    <option>Crédito</option>
-                    <option>Débito</option>
-                </select>
+                {isMobile ? (
+                    <MobileSelect
+                        id={fieldId('payment-method')}
+                        name="paymentMethod"
+                        value={paymentMethod}
+                        options={paymentMethodOptions}
+                        onChange={handlePaymentMethodSelect}
+                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('payment-method')}
+                        name="paymentMethod"
+                        value={paymentMethod}
+                        onChange={handlePaymentMethodChange}
+                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
+                    >
+                        <option>Pix</option>
+                        <option>Dinheiro</option>
+                        <option>Transferência</option>
+                        <option>Boleto</option>
+                        <option>Crédito</option>
+                        <option>Débito</option>
+                    </select>
+                )}
             </div>
 
             <div className="space-y-2">
                 <label htmlFor={fieldId('account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
                   Conta de Destino
                 </label>
-                <select 
-                    id={fieldId('account')}
-                    name="accountId"
-                    value={selectedAccountId}
-                    onChange={(e) => setSelectedAccountId(e.target.value)}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
-                >
-                    {availableAccounts.length === 0 && <option value="">Nenhuma conta disponível</option>}
-                    {availableAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-                </select>
+                {isMobile ? (
+                    <MobileSelect
+                        id={fieldId('account')}
+                        name="accountId"
+                        value={selectedAccountId}
+                        options={accountOptions}
+                        onChange={setSelectedAccountId}
+                        disabled={availableAccounts.length === 0}
+                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('account')}
+                        name="accountId"
+                        value={selectedAccountId}
+                        onChange={(e) => setSelectedAccountId(e.target.value)}
+                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
+                    >
+                        {availableAccounts.length === 0 && <option value="">Nenhuma conta disponível</option>}
+                        {availableAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                    </select>
+                )}
             </div>
         </div>
 
@@ -778,11 +884,11 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
       </div>
 
-      <div className={`${footerPadding} border-t border-zinc-100 dark:border-zinc-800 flex justify-end gap-3 bg-white dark:bg-[#1a1a1a] rounded-b-2xl`}>
-          <button onClick={onClose} className="px-6 py-3 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+      <div className={`${footerPadding} border-t border-white/10 flex justify-end gap-3 bg-white/70 dark:bg-black/20`}>
+          <button onClick={onClose} className="h-11 px-6 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
               Cancelar
           </button>
-          <button onClick={handleSave} className="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-lg shadow-emerald-900/20 transition-all active:scale-95">
+          <button onClick={handleSave} className="h-11 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-lg shadow-emerald-900/20 transition-all active:scale-95">
               {primaryLabel}
           </button>
       </div>
@@ -798,10 +904,22 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] overflow-y-auto">
-      <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
-        <div className="relative w-full max-w-2xl transform rounded-2xl bg-white dark:bg-[#1a1a1a] text-left shadow-xl transition-all sm:my-8 border border-zinc-200 dark:border-zinc-800">
+    <div
+      className="fixed inset-0 z-[1200]"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+      tabIndex={-1}
+      data-modal-root="true"
+      ref={modalRootRef}
+    >
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
+      <div className="relative flex h-full w-full items-stretch justify-center px-4 sm:px-6 lg:px-10">
+        <div className="relative w-full h-full max-w-5xl bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all border border-white/10 dark:border-zinc-800/60 overflow-y-auto">
           {formContent}
         </div>
       </div>

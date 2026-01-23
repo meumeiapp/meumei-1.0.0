@@ -1,10 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { CreditCard, ChevronDown } from 'lucide-react';
 import { CreditCard as CreditCardType } from '../types';
 import { getCardColor, getCardGradient } from '../services/cardColorUtils';
 import { getPrimaryActionLabel } from '../utils/formLabels';
 import useIsMobile from '../hooks/useIsMobile';
+import MobileSelect from './mobile/MobileSelect';
 import {
   PremiumModalShell,
   PremiumModalHeader,
@@ -95,6 +96,10 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({ isOpen, onClose
   };
 
   const gradient = getCardGradient({ cardColor, name, brand } as CreditCardType);
+  const brandOptions = useMemo(
+    () => CARD_BRANDS.map((cardBrand) => ({ value: cardBrand, label: cardBrand })),
+    []
+  );
 
   return (
     <PremiumModalShell isOpen={isOpen} onClose={onClose} zIndexClass="z-[80]" maxWidthClass="max-w-3xl">
@@ -128,18 +133,31 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({ isOpen, onClose
                     Bandeira
                   </label>
                   <div className="relative">
-                    <select
-                      id={fieldId('brand')}
-                      name="brand"
-                      value={brand}
-                      onChange={(e) => setBrand(e.target.value)}
-                      className={modalSelectClass}
-                    >
-                      {CARD_BRANDS.map(b => (
-                          <option key={b} value={b}>{b}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    {isMobile ? (
+                      <MobileSelect
+                        id={fieldId('brand')}
+                        name="brand"
+                        value={brand}
+                        options={brandOptions}
+                        onChange={setBrand}
+                        buttonClassName={`${modalSelectClass} pr-10`}
+                      />
+                    ) : (
+                      <>
+                        <select
+                          id={fieldId('brand')}
+                          name="brand"
+                          value={brand}
+                          onChange={(e) => setBrand(e.target.value)}
+                          className={modalSelectClass}
+                        >
+                          {CARD_BRANDS.map(b => (
+                              <option key={b} value={b}>{b}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -213,8 +231,10 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({ isOpen, onClose
                     onClick={() => setIsPreviewOpen((prev) => !prev)}
                     className="w-full flex items-center justify-between text-sm font-semibold text-zinc-700 dark:text-zinc-200"
                   >
-                    Prévia
-                    <ChevronDown size={16} className={`transition-transform ${isPreviewOpen ? 'rotate-180' : ''}`} />
+                    <span>Prévia</span>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400">
+                      <ChevronDown size={16} className={`transition-transform ${isPreviewOpen ? 'rotate-180' : ''}`} />
+                    </span>
                   </button>
                   <div className={`overflow-hidden transition-[max-height,opacity] duration-200 ease-out ${isPreviewOpen ? 'max-h-40 opacity-100 mt-3' : 'max-h-0 opacity-0'}`}>
                     <div

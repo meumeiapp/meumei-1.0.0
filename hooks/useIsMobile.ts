@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react';
 
+const getViewportMetrics = () => {
+  const viewport = window.visualViewport;
+  const width = viewport?.width || window.innerWidth;
+  const height = viewport?.height || window.innerHeight;
+  return { width, height };
+};
+
 const getIsMobile = () => {
   if (typeof window === 'undefined') return false;
-  return window.matchMedia('(max-width: 767px)').matches;
+  const { width, height } = getViewportMetrics();
+  const minSide = Math.min(width, height);
+  return minSide <= 767;
 };
 
 const useIsMobile = () => {
@@ -10,28 +19,18 @@ const useIsMobile = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const media = window.matchMedia('(max-width: 767px)');
-    const update = () => setIsMobile(media.matches);
+    const update = () => setIsMobile(getIsMobile());
 
     update();
 
-    if (media.addEventListener) {
-      media.addEventListener('change', update);
-    } else {
-      media.addListener(update);
-    }
-
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
+    window.visualViewport?.addEventListener('resize', update);
 
     return () => {
-      if (media.removeEventListener) {
-        media.removeEventListener('change', update);
-      } else {
-        media.removeListener(update);
-      }
       window.removeEventListener('resize', update);
       window.removeEventListener('orientationchange', update);
+      window.visualViewport?.removeEventListener('resize', update);
     };
   }, []);
 

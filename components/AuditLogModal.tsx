@@ -9,12 +9,13 @@ import {
   CircleDollarSign,
   X
 } from 'lucide-react';
-import { auditService, AuditLog } from '../services/auditService';
+import { auditService, AuditLog, AuditEntityType } from '../services/auditService';
 
 interface AuditLogModalProps {
   isOpen: boolean;
   onClose: () => void;
   licenseId?: string | null;
+  entityTypes?: AuditEntityType[];
 }
 
 const actionIconMap: Record<string, React.ElementType> = {
@@ -40,10 +41,13 @@ const getDateLabel = () => {
   return today.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
 };
 
-const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, onClose, licenseId }) => {
+const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, onClose, licenseId, entityTypes }) => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const filteredLogs = entityTypes?.length
+    ? logs.filter(log => entityTypes.includes(log.entityType))
+    : logs;
 
   useEffect(() => {
     if (!isOpen || !licenseId) return;
@@ -99,7 +103,7 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, onClose, licenseI
             <div className="text-sm text-red-500">{error}</div>
           )}
 
-          {!loading && !error && logs.length === 0 && (
+          {!loading && !error && filteredLogs.length === 0 && (
             <div className="flex flex-col items-center justify-center text-center text-zinc-500 py-10">
               <div className="w-12 h-12 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center mb-4">
                 <Clock size={20} className="text-zinc-400" />
@@ -109,7 +113,7 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, onClose, licenseI
             </div>
           )}
 
-          {!loading && !error && logs.map(log => {
+          {!loading && !error && filteredLogs.map(log => {
             const Icon = actionIconMap[log.actionType] || Clock;
             return (
               <div key={log.id} className="flex items-start gap-4 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">

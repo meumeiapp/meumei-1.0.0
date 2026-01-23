@@ -16,10 +16,10 @@ export const modalTextareaClass =
   `${modalInputClass} resize-none`;
 
 export const modalSecondaryButtonClass =
-  'px-6 py-3 rounded-full border border-zinc-200/80 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:border-indigo-400/50 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors';
+  'h-11 px-6 rounded-xl border border-zinc-200/80 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:border-indigo-400/50 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors';
 
 export const modalPrimaryButtonClass =
-  'px-8 py-3 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-lg shadow-indigo-500/30 transition-all';
+  'h-11 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-lg shadow-indigo-500/30 transition-all';
 
 interface PremiumModalShellProps {
   isOpen: boolean;
@@ -28,6 +28,7 @@ interface PremiumModalShellProps {
   maxWidthClass?: string;
   zIndexClass?: string;
   panelClassName?: string;
+  fullScreen?: boolean;
 }
 
 export const PremiumModalShell: React.FC<PremiumModalShellProps> = ({
@@ -36,16 +37,27 @@ export const PremiumModalShell: React.FC<PremiumModalShellProps> = ({
   children,
   maxWidthClass = 'max-w-3xl',
   zIndexClass = 'z-[80]',
-  panelClassName
+  panelClassName,
+  fullScreen = false
 }) => {
   if (!isOpen) return null;
 
+  const resolvedMaxWidthClass = fullScreen && maxWidthClass === 'max-w-3xl'
+    ? 'max-w-5xl'
+    : maxWidthClass;
+  const wrapperClass = fullScreen
+    ? 'flex h-full items-stretch justify-center px-4 sm:px-6 lg:px-10 text-center'
+    : 'flex min-h-full items-center justify-center p-4 text-center sm:p-0';
+  const panelBaseClass = fullScreen
+    ? 'h-full w-full rounded-none sm:my-0 overflow-y-auto'
+    : 'rounded-[28px] sm:my-10 overflow-visible';
+
   return (
-    <div className={`fixed inset-0 ${zIndexClass} overflow-y-auto`}>
-      <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+    <div className={`fixed inset-0 ${zIndexClass} overflow-y-auto`} data-modal-root="true">
+      <div className={wrapperClass}>
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
         <div
-          className={`relative w-full ${maxWidthClass} transform rounded-[28px] bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all sm:my-10 border border-white/10 dark:border-zinc-800/60 overflow-visible ${panelClassName || ''}`}
+          className={`relative w-full ${resolvedMaxWidthClass} transform ${panelBaseClass} bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all border border-white/10 dark:border-zinc-800/60 ${panelClassName || ''}`}
         >
           {children}
         </div>
@@ -60,6 +72,7 @@ interface PremiumModalHeaderProps {
   subtitle?: string;
   icon?: React.ReactNode;
   onClose: () => void;
+  fullScreen?: boolean;
 }
 
 export const PremiumModalHeader: React.FC<PremiumModalHeaderProps> = ({
@@ -67,9 +80,14 @@ export const PremiumModalHeader: React.FC<PremiumModalHeaderProps> = ({
   title,
   subtitle,
   icon,
-  onClose
+  onClose,
+  fullScreen = false
 }) => (
-  <div className="flex items-center justify-between px-8 py-6 border-b border-white/10 rounded-t-[28px] relative z-20">
+  <div
+    className={`flex items-center justify-between px-8 py-6 border-b border-white/10 relative z-20 ${
+      fullScreen ? 'rounded-none' : 'rounded-t-[28px]'
+    }`}
+  >
     <div>
       {eyebrow && (
         <p className="text-[11px] uppercase tracking-[0.35em] text-zinc-400 mb-2">
@@ -84,22 +102,33 @@ export const PremiumModalHeader: React.FC<PremiumModalHeaderProps> = ({
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">{subtitle}</p>
       )}
     </div>
-    <button
-      onClick={onClose}
-      aria-label="Fechar modal"
-      className="p-2 text-zinc-400 hover:text-white rounded-full hover:bg-white/10 transition-colors"
-    >
-      <X size={20} />
-    </button>
+    <div className="flex items-center gap-3">
+      <span className="text-[11px] text-zinc-400 dark:text-zinc-400">ESC fecha</span>
+      <button
+        onClick={onClose}
+        aria-label="Fechar modal"
+        className="p-2 text-zinc-400 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+      >
+        <X size={20} />
+      </button>
+    </div>
   </div>
 );
 
 interface PremiumModalFooterProps {
   children: React.ReactNode;
+  fullScreen?: boolean;
 }
 
-export const PremiumModalFooter: React.FC<PremiumModalFooterProps> = ({ children }) => (
-  <div className="px-8 py-6 border-t border-white/10 flex justify-end gap-4 rounded-b-[28px] bg-white/70 dark:bg-black/20 relative z-20">
+export const PremiumModalFooter: React.FC<PremiumModalFooterProps> = ({
+  children,
+  fullScreen = false
+}) => (
+  <div
+    className={`px-8 py-6 border-t border-white/10 flex justify-end gap-4 bg-white/70 dark:bg-black/20 relative z-20 ${
+      fullScreen ? 'rounded-none' : 'rounded-b-[28px]'
+    }`}
+  >
     {children}
   </div>
 );

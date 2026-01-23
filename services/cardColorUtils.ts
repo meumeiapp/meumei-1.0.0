@@ -103,7 +103,7 @@ export const getBrandIcon = (brand?: string) => {
     const b = (brand || '').toLowerCase();
     if (b.includes('visa')) return 'https://img.icons8.com/color/48/visa.png';
     if (b.includes('master')) return 'https://img.icons8.com/color/48/mastercard.png';
-    if (b.includes('elo')) return 'https://img.icons8.com/color/48/elo.png';
+    if (b.includes('elo')) return '/elo-icon.svg';
     if (b.includes('amex')) return 'https://img.icons8.com/color/48/amex.png';
     if (b.includes('hiper')) return 'https://img.icons8.com/color/48/bank-card-back-side.png';
     return 'https://img.icons8.com/color/48/bank-card-back-side.png';

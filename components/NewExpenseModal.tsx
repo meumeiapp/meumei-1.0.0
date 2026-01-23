@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { X, Calendar, Edit2, Plus, CreditCard, Home, ShoppingCart, User, Barcode, Briefcase, Trash2 } from 'lucide-react';
 import { Expense, Account, CreditCard as CreditCardType, ExpenseType } from '../types';
 import CardTag from './CardTag';
@@ -7,6 +7,8 @@ import { getAccountColor } from '../services/cardColorUtils';
 import { categoryService } from '../services/categoryService';
 import { useAuth } from '../contexts/AuthContext';
 import { getPrimaryActionLabel } from '../utils/formLabels';
+import useIsMobile from '../hooks/useIsMobile';
+import MobileSelect from './mobile/MobileSelect';
 
 interface NewExpenseModalProps {
   isOpen: boolean;
@@ -53,16 +55,19 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const [date, setDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Débito');
+  const isCredit = paymentMethod === 'Crédito';
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [selectedCardId, setSelectedCardId] = useState('');
   const [status, setStatus] = useState<'pending' | 'paid'>('pending');
   const [notes, setNotes] = useState('');
   const [taxStatus, setTaxStatus] = useState<'PJ' | 'PF'>('PJ');
   const { user: authUser } = useAuth();
+  const modalRootRef = useRef<HTMLDivElement | null>(null);
   const availableAccounts = accounts.filter(acc => !acc.locked);
+  const isMobile = useIsMobile();
   const isInline = variant === 'inline';
-  const contentPadding = isInline ? 'p-4' : 'p-6';
-  const footerPadding = isInline ? 'p-4' : 'p-6';
+  const contentPadding = isInline ? 'p-4' : 'px-8 py-8';
+  const footerPadding = isInline ? 'p-4' : 'px-8 py-6';
   
   // Category Management State
   const [isManagingCategories, setIsManagingCategories] = useState(false);
@@ -117,6 +122,59 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
   const fieldIdPrefix = initialData?.id ? `expense-${initialData.id}` : 'expense-new';
   const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
+
+  const taxStatusOptions = useMemo(
+      () => [
+          { value: 'PJ', label: 'PJ (Empresarial/MEI)' },
+          { value: 'PF', label: 'PF (Pessoal)' }
+      ],
+      []
+  );
+
+  const categoryOptions = useMemo(() => {
+      const options = [] as { value: string; label: string; disabled?: boolean }[];
+      if (category && !categories.includes(category)) {
+          options.push({ value: category, label: category });
+      }
+      if (categories.length === 0) {
+          options.push({ value: '', label: 'Sem categorias, crie uma', disabled: true });
+      }
+      categories.forEach((cat) => options.push({ value: cat, label: cat }));
+      return options;
+  }, [category, categories]);
+
+  const paymentMethodOptions = useMemo(
+      () => [
+          { value: 'Débito', label: 'Débito' },
+          { value: 'Crédito', label: 'Crédito' },
+          { value: 'PIX', label: 'PIX' },
+          { value: 'Boleto', label: 'Boleto' },
+          { value: 'Transferência', label: 'Transferência' },
+          { value: 'Dinheiro', label: 'Dinheiro' }
+      ],
+      []
+  );
+
+  const paymentAccountOptions = useMemo(() => {
+      if (isCredit) {
+          if (creditCards.length === 0) {
+              return [{ value: '', label: 'Nenhum cartão cadastrado', disabled: true }];
+          }
+          return creditCards.map((card) => ({
+              value: card.id,
+              label: card.name,
+              color: getCardColor(card)
+          }));
+      }
+      if (availableAccounts.length === 0) {
+          return [{ value: '', label: 'Nenhuma conta disponível', disabled: true }];
+      }
+      return availableAccounts.map((acc) => ({
+          value: acc.id,
+          label: acc.name,
+          color: getAccountColor(acc)
+      }));
+  }, [availableAccounts, creditCards, isCredit]);
 
   const clampToMinDate = (value: string) => {
       if (!value) return minDate;
@@ -190,6 +248,14 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
     }
   }, [isOpen, initialData, accounts, creditCards, expenseType, categories, defaultDate]);
 
+  useEffect(() => {
+    if (!isInline && isOpen) {
+      requestAnimationFrame(() => {
+        modalRootRef.current?.focus();
+      });
+    }
+  }, [isInline, isOpen]);
+
   // ... (rest of the component logic remains unchanged) ...
   // --- Auto-Calculate Due Date for Credit Cards (FIXED LOGIC) ---
   useEffect(() => {
@@ -250,8 +316,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   }, [isInstallment, installmentCount, dueDate]);
 
   // --- Handle Payment Method Change with Auto-Status Logic ---
-  const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const newMethod = e.target.value;
+  const handlePaymentMethodSelect = (newMethod: string) => {
       setPaymentMethod(newMethod);
 
       // AUTOMATIC STATUS LOGIC
@@ -261,6 +326,8 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
           setStatus('paid');
       }
   };
+  const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) =>
+      handlePaymentMethodSelect(e.target.value);
 
   const handleAddCategory = () => {
     const rawName = newCategoryName;
@@ -387,7 +454,6 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isCredit = paymentMethod === 'Crédito';
   // DEFINIÇÃO CHAVE: Parcelamento disponível para Crédito E Boleto
   const supportsInstallments = isCredit || paymentMethod === 'Boleto';
   const selectedAccount = availableAccounts.find(a => a.id === selectedAccountId);
@@ -487,18 +553,23 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const formContent = (
     <>
       {!isInline && (
-        <div className="flex items-center justify-between p-6 border-b border-zinc-100 dark:border-zinc-800">
-          <h2 className={`text-xl font-bold flex items-center gap-2 ${config.colorClass.split(' ')[0]} dark:text-white`}>
+        <div className="flex items-center justify-between px-8 py-6 border-b border-white/10">
+          <h2 className="text-2xl font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
             {config.icon}
             {initialData ? 'Editar Despesa' : config.title}
           </h2>
-          <button
-            onClick={onClose}
-            aria-label="Fechar modal"
-            className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-zinc-400 dark:text-zinc-400">
+              ESC fecha
+            </span>
+            <button
+              onClick={onClose}
+              aria-label="Fechar modal"
+              className="p-2 text-zinc-400 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -606,22 +677,34 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                         )}
                     </div>
                 ) : (
-                    <select 
-                        id={fieldId('category')}
-                        name="category"
-                        value={category}
-                        onChange={(e) => setCategory(e.target.value)}
-                        disabled={categories.length === 0}
-                        className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
-                    >
-                        {category && !categories.includes(category) && (
-                            <option value={category}>{category}</option>
-                        )}
-                        {categories.length === 0 && (
-                            <option value="" disabled>Sem categorias, crie uma</option>
-                        )}
-                        {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                    </select>
+                    isMobile ? (
+                        <MobileSelect
+                            id={fieldId('category')}
+                            name="category"
+                            value={category}
+                            options={categoryOptions}
+                            onChange={setCategory}
+                            disabled={categories.length === 0}
+                            buttonClassName={`bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 ${config.colorClass}`}
+                        />
+                    ) : (
+                        <select 
+                            id={fieldId('category')}
+                            name="category"
+                            value={category}
+                            onChange={(e) => setCategory(e.target.value)}
+                            disabled={categories.length === 0}
+                            className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
+                        >
+                            {category && !categories.includes(category) && (
+                                <option value={category}>{category}</option>
+                            )}
+                            {categories.length === 0 && (
+                                <option value="" disabled>Sem categorias, crie uma</option>
+                            )}
+                            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                        </select>
+                    )
                 )}
             </div>
         </div>
@@ -632,16 +715,27 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <label htmlFor={fieldId('taxStatus')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
                     <Briefcase size={12} /> Natureza Fiscal
                 </label>
-                <select 
-                    id={fieldId('taxStatus')}
-                    name="taxStatus"
-                    value={taxStatus}
-                    onChange={(e) => setTaxStatus(e.target.value as 'PJ' | 'PF')}
-                    className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
-                >
-                    <option value="PJ">PJ (Empresarial/MEI)</option>
-                    <option value="PF">PF (Pessoal)</option>
-                </select>
+                {isMobile ? (
+                    <MobileSelect
+                        id={fieldId('taxStatus')}
+                        name="taxStatus"
+                        value={taxStatus}
+                        options={taxStatusOptions}
+                        onChange={(value) => setTaxStatus(value as 'PJ' | 'PF')}
+                        buttonClassName={`bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 ${config.colorClass}`}
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('taxStatus')}
+                        name="taxStatus"
+                        value={taxStatus}
+                        onChange={(e) => setTaxStatus(e.target.value as 'PJ' | 'PF')}
+                        className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
+                    >
+                        <option value="PJ">PJ (Empresarial/MEI)</option>
+                        <option value="PF">PF (Pessoal)</option>
+                    </select>
+                )}
             </div>
 
             <div className="space-y-2">
@@ -668,23 +762,35 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <label htmlFor={fieldId('payment-account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
                   Conta de Pagamento
                 </label>
-                <select 
-                    id={fieldId('payment-account')}
-                    name="paymentAccount"
-                    value={isCredit ? selectedCardId : selectedAccountId}
-                    onChange={(e) => isCredit ? setSelectedCardId(e.target.value) : setSelectedAccountId(e.target.value)}
-                    className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
-                >
-                    {isCredit ? (
-                        creditCards.length > 0 ? (
-                            creditCards.map(card => <option key={card.id} value={card.id}>{card.name}</option>)
+                {isMobile ? (
+                    <MobileSelect
+                        id={fieldId('payment-account')}
+                        name="paymentAccount"
+                        value={isCredit ? selectedCardId : selectedAccountId}
+                        options={paymentAccountOptions}
+                        onChange={(value) => isCredit ? setSelectedCardId(value) : setSelectedAccountId(value)}
+                        disabled={paymentAccountOptions.length === 0 || (paymentAccountOptions.length === 1 && paymentAccountOptions[0].disabled)}
+                        buttonClassName={`bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 ${config.colorClass}`}
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('payment-account')}
+                        name="paymentAccount"
+                        value={isCredit ? selectedCardId : selectedAccountId}
+                        onChange={(e) => isCredit ? setSelectedCardId(e.target.value) : setSelectedAccountId(e.target.value)}
+                        className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
+                    >
+                        {isCredit ? (
+                            creditCards.length > 0 ? (
+                                creditCards.map(card => <option key={card.id} value={card.id}>{card.name}</option>)
+                            ) : (
+                                <option value="">Nenhum cartão cadastrado</option>
+                            )
                         ) : (
-                            <option value="">Nenhum cartão cadastrado</option>
-                        )
-                    ) : (
-                        availableAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)
-                    )}
-                </select>
+                            availableAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)
+                        )}
+                    </select>
+                )}
                 {isCredit && selectedCardId && (
                     <div className="mt-2">
                         <CardTag card={creditCards.find(c => c.id === selectedCardId)} />
@@ -701,20 +807,31 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <label htmlFor={fieldId('payment-method')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
                   Forma de Pagamento
                 </label>
-                <select 
-                    id={fieldId('payment-method')}
-                    name="paymentMethod"
-                    value={paymentMethod}
-                    onChange={handlePaymentMethodChange}
-                    className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
-                >
-                    <option>Débito</option>
-                    <option>Crédito</option>
-                    <option>PIX</option>
-                    <option>Boleto</option>
-                    <option>Transferência</option>
-                    <option>Dinheiro</option>
-                </select>
+                {isMobile ? (
+                    <MobileSelect
+                        id={fieldId('payment-method')}
+                        name="paymentMethod"
+                        value={paymentMethod}
+                        options={paymentMethodOptions}
+                        onChange={handlePaymentMethodSelect}
+                        buttonClassName={`bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 ${config.colorClass}`}
+                    />
+                ) : (
+                    <select 
+                        id={fieldId('payment-method')}
+                        name="paymentMethod"
+                        value={paymentMethod}
+                        onChange={handlePaymentMethodChange}
+                        className={`w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 ${config.colorClass} transition-all appearance-none`}
+                    >
+                        <option>Débito</option>
+                        <option>Crédito</option>
+                        <option>PIX</option>
+                        <option>Boleto</option>
+                        <option>Transferência</option>
+                        <option>Dinheiro</option>
+                    </select>
+                )}
             </div>
         </div>
 
@@ -923,11 +1040,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
 
       </div>
 
-      <div className={`${footerPadding} border-t border-zinc-100 dark:border-zinc-800 flex justify-end gap-3 bg-white dark:bg-[#1a1a1a] rounded-b-2xl`}>
-          <button onClick={onClose} className="px-6 py-3 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+      <div className={`${footerPadding} border-t border-white/10 flex justify-end gap-3 bg-white/70 dark:bg-black/20`}>
+          <button onClick={onClose} className="h-11 px-6 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
               Cancelar
           </button>
-          <button onClick={handleSave} className={`px-6 py-3 rounded-lg text-white font-bold transition-all active:scale-95 ${config.btnClass}`}>
+          <button onClick={handleSave} className={`h-11 px-6 rounded-xl text-white font-bold transition-all active:scale-95 ${config.btnClass}`}>
               {primaryLabel}
           </button>
       </div>
@@ -943,10 +1060,22 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] overflow-y-auto">
-      <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
-        <div className="relative w-full max-w-2xl transform rounded-2xl bg-white dark:bg-[#1a1a1a] text-left shadow-xl transition-all sm:my-8 border border-zinc-200 dark:border-zinc-800">
+    <div
+      className="fixed inset-0 z-[1200]"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+      tabIndex={-1}
+      data-modal-root="true"
+      ref={modalRootRef}
+    >
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
+      <div className="relative flex h-full w-full items-stretch justify-center px-4 sm:px-6 lg:px-10">
+        <div className="relative w-full h-full max-w-5xl bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all border border-white/10 dark:border-zinc-800/60 overflow-y-auto">
           {formContent}
         </div>
       </div>

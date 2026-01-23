@@ -10,7 +10,7 @@ const getUserPreferencesRef = (uid: string) =>
 export const preferencesService = {
   async getPreferences(
     uid: string | null | undefined
-  ): Promise<{ theme?: ThemePreference; tipsEnabled?: boolean }> {
+  ): Promise<{ theme?: ThemePreference; tipsEnabled?: boolean; mobileDashboardSubHeader?: number }> {
     if (!uid) {
       console.info('[prefs] load_skipped', { reason: 'missing_uid' });
       return {};
@@ -26,9 +26,14 @@ export const preferencesService = {
       const theme = data?.theme as ThemePreference | undefined;
       const tipsEnabled =
         typeof data?.tipsEnabled === 'boolean' ? (data.tipsEnabled as boolean) : undefined;
+      const mobileDashboardSubHeader =
+        typeof data?.mobileDashboardSubHeader === 'number'
+          ? (data.mobileDashboardSubHeader as number)
+          : undefined;
       return {
         ...(theme ? { theme } : {}),
-        ...(typeof tipsEnabled === 'boolean' ? { tipsEnabled } : {})
+        ...(typeof tipsEnabled === 'boolean' ? { tipsEnabled } : {}),
+        ...(typeof mobileDashboardSubHeader === 'number' ? { mobileDashboardSubHeader } : {})
       };
     } catch (error: any) {
       logPermissionDenied({
@@ -156,6 +161,33 @@ export const preferencesService = {
         licenseId: uid
       });
       console.error('[prefs] tips_error', { step: 'save', message: (error as any)?.message });
+      throw error;
+    }
+  },
+  async setMobileDashboardSubHeader(uid: string | null | undefined, index: number): Promise<void> {
+    if (!uid) {
+      console.error('[prefs] error', { step: 'mobile_subheader_save', message: 'missing_uid' });
+      return;
+    }
+    const ref = getUserPreferencesRef(uid);
+    const path = `users/${uid}/preferences/app`;
+    if (!guardUserPath(uid, path, 'prefs_mobile_subheader_set')) return;
+    try {
+      await setDoc(
+        ref,
+        { mobileDashboardSubHeader: index, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      console.info('[prefs] mobile_subheader_save', { path: ref.path, index });
+    } catch (error) {
+      logPermissionDenied({
+        step: 'preferences_set_mobile_subheader',
+        path: ref.path,
+        operation: 'setDoc',
+        error,
+        licenseId: uid
+      });
+      console.error('[prefs] mobile_subheader_error', { step: 'save', message: (error as any)?.message });
       throw error;
     }
   }

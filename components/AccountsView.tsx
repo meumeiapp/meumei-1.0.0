@@ -1,30 +1,25 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  ArrowLeft, 
-  Plus, 
-  Landmark, 
-  Smartphone, 
-  Globe, 
-  TrendingUp, 
-  Banknote,
-  Pencil,
-  CheckSquare,
+import {
+  Landmark,
   Trash2,
   X,
   AlertTriangle,
   History,
-  Lock,
-  Info
+  Info,
+  Home,
+  ChevronDown
 } from 'lucide-react';
 import NewAccountModal from './NewAccountModal';
-import { Account } from '../types';
+import { Account, Expense, Income } from '../types';
 import { AuditLogInput } from '../services/auditService';
-import CardTag from './CardTag';
-import { getAccountColor, withAlpha } from '../services/cardColorUtils';
+import { getAccountColor } from '../services/cardColorUtils';
+import { PREMIUM_COLOR_PRESETS } from './ui/colorPresets';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import useIsMobile from '../hooks/useIsMobile';
-import MobilePageShell from './mobile/MobilePageShell';
+import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
+import MobileTransactionCard from './mobile/MobileTransactionCard';
+import MobileEmptyState from './mobile/MobileEmptyState';
 import type { BalanceTrailEntry, RealBalanceDebug } from '../services/realBalanceEngine';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 
@@ -41,6 +36,8 @@ interface AccountsViewProps {
   accounts: Account[];
   onUpdateAccounts: (accounts: Account[]) => void;
   onDeleteAccount: (id: string) => void;
+  incomes?: Income[];
+  expenses?: Expense[];
   accountTypes: string[];
   onUpdateAccountTypes: (types: string[]) => void;
   onAuditLog?: (entry: AuditLogInput) => void;
@@ -60,6 +57,8 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   accounts, 
   onUpdateAccounts, 
   onDeleteAccount,
+  incomes,
+  expenses,
   accountTypes, 
   onUpdateAccountTypes,
   onAuditLog,
@@ -71,11 +70,38 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [accountToDelete, setAccountToDelete] = useState<Account | null>(null);
   const [auditAccountId, setAuditAccountId] = useState<string | null>(null);
+  const [drawerAccount, setDrawerAccount] = useState<Account | null>(null);
+  const [inlineEditAccountId, setInlineEditAccountId] = useState<string | null>(null);
+  const [inlineEditDraft, setInlineEditDraft] = useState({
+      name: '',
+      type: '',
+      initialBalance: '',
+      currentBalance: '',
+      nature: 'PJ' as 'PJ' | 'PF',
+      notes: '',
+      yieldRate: '',
+      color: ''
+  });
+  const [inlineNewOpen, setInlineNewOpen] = useState(false);
+  const [inlineNewDraft, setInlineNewDraft] = useState({
+      name: '',
+      type: '',
+      initialBalance: '',
+      currentBalance: '',
+      nature: 'PJ' as 'PJ' | 'PF',
+      notes: '',
+      yieldRate: '',
+      color: PREMIUM_COLOR_PRESETS[0] || '#0ea5e9'
+  });
+  const [isAccountListExpanded, setIsAccountListExpanded] = useState(false);
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const loggedLockedRef = useRef<Set<string>>(new Set());
   const renderLogRef = useRef<number | null>(null);
   const isMobile = useIsMobile();
+  const subHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [subHeaderHeight, setSubHeaderHeight] = useState(0);
+  const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
 
   useEffect(() => {
       console.info('[ui][accounts] mount', { count: accounts.length });
@@ -127,22 +153,53 @@ const AccountsView: React.FC<AccountsViewProps> = ({
     ? unlockedAccounts.filter(acc => selectedIds.includes(acc.id)).reduce((acc, curr) => acc + resolveRealBalance(curr), 0)
     : unlockedAccounts.reduce((acc, curr) => acc + resolveRealBalance(curr), 0);
 
+  const totalBalance = unlockedAccounts.reduce((acc, curr) => acc + resolveRealBalance(curr), 0);
   const displayCount = isSelectionMode ? selectedIds.length : accounts.length;
   const displayLabel = isSelectionMode ? 'Saldo Parcial (Selecionado)' : 'Saldo Total';
+  const listSubtitle = `${accounts.length} ${accounts.length === 1 ? 'conta' : 'contas'}`;
+  const ACCOUNT_COLLAPSE_LIMIT = 2;
+  const shouldCollapseAccounts = accounts.length > ACCOUNT_COLLAPSE_LIMIT;
+  const extraAccountCount = Math.max(accounts.length - ACCOUNT_COLLAPSE_LIMIT, 0);
+  const visibleAccounts =
+      shouldCollapseAccounts && !isAccountListExpanded
+          ? accounts.slice(0, ACCOUNT_COLLAPSE_LIMIT)
+          : accounts;
+  const expandVerb = isMobile ? 'Toque' : 'Clique';
   const auditAccount = auditAccountId ? accounts.find(acc => acc.id === auditAccountId) || null : null;
   const auditTrails = auditAccountId ? balanceSnapshot?.debug?.trailsByAccountId?.[auditAccountId] ?? [] : [];
   const sortedAuditTrails = React.useMemo(() => {
     if (!auditTrails.length) return [] as BalanceTrailEntry[];
     return [...auditTrails].sort((a, b) => a.date.localeCompare(b.date));
   }, [auditTrails]);
+  const relatedIncomes = accountToDelete
+      ? (incomes || []).filter(inc => inc.accountId === accountToDelete.id)
+      : [];
+  const relatedExpenses = accountToDelete
+      ? (expenses || []).filter(exp => exp.accountId === accountToDelete.id)
+      : [];
 
-  const getIconForType = (type: string) => {
-    if (type.includes('Carteira') || type.includes('Nubank')) return <Smartphone size={24} className="text-purple-600" />;
-    if (type.includes('Rendimentos') || type.includes('Investimento')) return <TrendingUp size={24} className="text-purple-600" />;
-    if (type.includes('Dinheiro')) return <Banknote size={24} className="text-purple-600" />;
-    if (type.includes('Internacional')) return <Globe size={24} className="text-purple-600" />;
-    return <Landmark size={24} className="text-purple-600" />;
-  };
+  const buildAccountDetails = (account: Account) =>
+      [
+          {
+              label: 'Saldo atual',
+              value: formatCurrency(resolveRealBalance(account))
+          },
+          {
+              label: 'Tipo',
+              value: account.type || 'Conta'
+          },
+          {
+              label: 'Natureza',
+              value: account.nature === 'PF' ? 'Pessoa Física' : 'Pessoa Jurídica'
+          },
+          account.yieldRate !== undefined
+              ? {
+                    label: 'Rendimento',
+                    value: `${account.yieldRate}% do ${account.yieldIndex || 'CDI'}`
+                }
+              : null,
+          account.notes ? { label: 'Observações', value: account.notes } : null
+      ].filter(Boolean) as { label: string; value: React.ReactNode }[];
 
   const normalizeLabel = (value?: string | null) => {
       return (value ?? '')
@@ -155,6 +212,19 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   };
 
   const includesAny = (value: string, terms: string[]) => terms.some(term => value.includes(term));
+
+  const isInvestmentType = (value: string) => {
+      const normalized = normalizeLabel(value);
+      return ['rendimento', 'investimento', 'aplica', 'aplicacao', 'aplicação', 'cdi', 'selic', 'yield']
+          .some(term => normalized.includes(term));
+  };
+
+  const buildColorOptions = (selected?: string) => {
+      if (selected && !PREMIUM_COLOR_PRESETS.includes(selected)) {
+          return [selected, ...PREMIUM_COLOR_PRESETS];
+      }
+      return PREMIUM_COLOR_PRESETS;
+  };
 
   const isInvestmentAccount = (account: Account) => {
       const normalizedType = normalizeLabel(account.type);
@@ -355,16 +425,116 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   };
 
   const handleOpenNew = () => {
+      setInlineEditAccountId(null);
+      setDrawerAccount(null);
+      setInlineNewDraft({
+          name: '',
+          type: '',
+          initialBalance: '',
+          currentBalance: '',
+          nature: 'PJ',
+          notes: '',
+          yieldRate: '',
+          color: PREMIUM_COLOR_PRESETS[0] || '#0ea5e9'
+      });
+      setInlineNewOpen(prev => !prev);
       setEditingAccount(null);
+  };
+
+  const handleEditAccountDirect = (account: Account) => {
+      if (account.locked) return;
+      console.info('[ui][accounts][edit]', { accountId: account.id, source: 'drawer' });
+      if (isMobile) {
+          setInlineNewOpen(false);
+          startInlineEdit(account);
+          return;
+      }
+      setEditingAccount(account);
       setIsModalOpen(true);
   };
 
-  const handleEditAccount = (e: React.MouseEvent, account: Account) => {
-      e.stopPropagation();
-      if (account.locked) return;
-      console.info('[ui][accounts][edit]', { accountId: account.id });
-      setEditingAccount(account);
-      setIsModalOpen(true);
+  const handleDeleteAccountDirect = (account: Account) => {
+      console.info('[ui][accounts][delete]', { accountId: account.id, source: 'drawer' });
+      setAccountToDelete(account);
+  };
+
+  const parseInlineNumber = (value: string) => {
+      const normalized = value.replace(',', '.').trim();
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const startInlineEdit = (account: Account) => {
+      setInlineEditAccountId(account.id);
+      setInlineEditDraft({
+          name: account.name || '',
+          type: account.type || '',
+          initialBalance: Number.isFinite(account.initialBalance) ? String(account.initialBalance) : '',
+          currentBalance: Number.isFinite(account.currentBalance) ? String(account.currentBalance) : '',
+          nature: account.nature || 'PJ',
+          notes: account.notes || '',
+          yieldRate: Number.isFinite(account.yieldRate) ? String(account.yieldRate) : '',
+          color: account.color || getAccountColor(account)
+      });
+  };
+
+  const handleInlineSave = (account: Account) => {
+      const nextName = inlineEditDraft.name.trim() || account.name;
+      const nextType = inlineEditDraft.type || account.type;
+      const parsedInitial = parseInlineNumber(inlineEditDraft.initialBalance);
+      const parsedCurrent = parseInlineNumber(inlineEditDraft.currentBalance);
+      const parsedYield = parseInlineNumber(inlineEditDraft.yieldRate);
+      const nextInitialBalance = parsedInitial ?? account.initialBalance;
+      const nextColor = inlineEditDraft.color || account.color || getAccountColor(account);
+      const nextYieldRate = parsedYield ?? account.yieldRate;
+
+      handleSaveAccount({
+          id: account.id,
+          name: nextName,
+          type: nextType,
+          balance: nextInitialBalance,
+          currentBalance: parsedCurrent ?? undefined,
+          notes: inlineEditDraft.notes ?? '',
+          nature: inlineEditDraft.nature || account.nature,
+          color: nextColor,
+          yieldRate: nextYieldRate,
+          yieldIndex: nextYieldRate !== undefined ? (account.yieldIndex || 'CDI') : undefined
+      });
+      setInlineEditAccountId(null);
+  };
+
+  const handleInlineCreate = () => {
+      const nextName = inlineNewDraft.name.trim();
+      if (!nextName || !inlineNewDraft.type) return;
+      const parsedInitial = parseInlineNumber(inlineNewDraft.initialBalance);
+      const parsedCurrent = parseInlineNumber(inlineNewDraft.currentBalance);
+      const parsedYield = parseInlineNumber(inlineNewDraft.yieldRate);
+      const nextInitialBalance = parsedInitial ?? 0;
+      const nextColor = inlineNewDraft.color || PREMIUM_COLOR_PRESETS[0] || '#0ea5e9';
+      const nextYieldRate = parsedYield ?? undefined;
+
+      handleSaveAccount({
+          name: nextName,
+          type: inlineNewDraft.type,
+          balance: nextInitialBalance,
+          currentBalance: parsedCurrent ?? undefined,
+          notes: inlineNewDraft.notes ?? '',
+          nature: inlineNewDraft.nature,
+          color: nextColor,
+          yieldRate: nextYieldRate,
+          yieldIndex: nextYieldRate !== undefined ? 'CDI' : undefined
+      });
+      setInlineNewOpen(false);
+      setInlineNewDraft({
+          name: '',
+          type: '',
+          initialBalance: '',
+          currentBalance: '',
+          nature: 'PJ',
+          notes: '',
+          yieldRate: '',
+          color: nextColor
+      });
   };
 
   const toggleSelection = (id: string) => {
@@ -384,205 +554,625 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       }
   }, [accounts, selectedIds]);
 
+  useEffect(() => {
+      if (!drawerAccount) {
+          if (!isMobile) {
+              setInlineEditAccountId(null);
+          }
+          return;
+      }
+      if (inlineEditAccountId && inlineEditAccountId !== drawerAccount.id) {
+          setInlineEditAccountId(null);
+      }
+  }, [drawerAccount, inlineEditAccountId, isMobile]);
+
+  useEffect(() => {
+      if (inlineNewOpen) {
+          setInlineEditAccountId(null);
+      }
+  }, [inlineNewOpen]);
+
+  useEffect(() => {
+      if (isMobile) return;
+      const handleKeyDown = (event: KeyboardEvent) => {
+          if (event.defaultPrevented || event.repeat) return;
+          if (event.ctrlKey || event.metaKey || event.altKey) return;
+          if (event.key !== 'Enter') return;
+          if (document.querySelector('[data-modal-root="true"]')) return;
+          const target = event.target as HTMLElement | null;
+          if (target) {
+              const tagName = target.tagName;
+              if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target.isContentEditable) {
+                  return;
+              }
+          }
+          if (isModalOpen || accountToDelete) return;
+          event.preventDefault();
+          handleOpenNew();
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [accountToDelete, handleOpenNew, isMobile, isModalOpen]);
+
+  useEffect(() => {
+      if (!isMobile) return;
+      const node = subHeaderRef.current;
+      if (!node) return;
+
+      const updateMetrics = () => {
+          const rect = node.getBoundingClientRect();
+          const height = Math.round(rect.height);
+          setSubHeaderHeight(prev => (prev === height ? prev : height));
+
+          const fillHeight = Math.max(0, Math.round(rect.top));
+          setHeaderFill(prev => (prev.top === 0 && prev.height === fillHeight ? prev : { top: 0, height: fillHeight }));
+      };
+
+      updateMetrics();
+
+      const observer =
+          typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateMetrics) : null;
+      observer?.observe(node);
+      window.addEventListener('resize', updateMetrics);
+
+      return () => {
+          observer?.disconnect();
+          window.removeEventListener('resize', updateMetrics);
+      };
+  }, [isMobile]);
+
   const summaryWrapperClass = isMobile
     ? 'relative z-20 space-y-4'
-    : 'max-w-7xl mx-auto px-4 sm:px-6 relative z-20 -mt-6 pt-10';
+    : 'max-w-7xl mx-auto px-4 sm:px-6 relative z-20 pt-6';
 
   const listWrapperClass = isMobile
     ? 'space-y-4'
     : 'max-w-7xl mx-auto px-4 sm:px-6 py-10 animate-in fade-in slide-in-from-bottom-4 duration-500';
 
-  const summarySection = (
-      <div className={summaryWrapperClass}>
-          {!isMobile && (
+  const accountsHeader = (
+      <div className="space-y-2">
+          <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
               <button
-                 onClick={onBack}
-                 className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+                  type="button"
+                  onClick={onBack}
+                  className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+                  aria-label="Voltar para o início"
               >
-                  <ArrowLeft size={16} /> Voltar ao Dashboard
+                  <Home size={16} />
               </button>
-          )}
-
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 transition-all duration-300">
-
-              {/* Dynamic Balance Display */}
-              <div className={`rounded-full px-6 py-3 shadow-lg border flex items-center gap-3 transition-all duration-300 ${isSelectionMode ? 'bg-indigo-600 border-indigo-500 text-white scale-105' : 'bg-white dark:bg-[#1a1a1a] border-zinc-200 dark:border-zinc-800'}`}>
-                  <div className="flex flex-col">
-                      <span className={`text-sm font-semibold ${isSelectionMode ? 'text-indigo-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
-                          {displayCount} {displayCount === 1 ? 'conta' : 'contas'} • {displayLabel}
-                      </span>
-                      <span className={`text-[10px] uppercase tracking-wide ${isSelectionMode ? 'text-indigo-200' : 'text-zinc-400 dark:text-zinc-500'}`}>
-                          Saldo atual
-                      </span>
-                  </div>
-                  <div className="flex flex-col items-end">
-                      <span className={`text-lg font-bold ${isSelectionMode ? 'text-white' : 'text-zinc-900 dark:text-white'}`}>
-                          R$ {displayBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </span>
-                  </div>
+              <div className="min-w-0 text-center">
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Contas Bancárias</p>
+                  <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{listSubtitle}</p>
               </div>
+              <div className="min-w-[32px]" />
+          </div>
 
-              {/* Action Button: Only New Account now */}
-              <div className="flex items-center gap-3">
-                  {onOpenAudit && (
-                      <button
-                          onClick={onOpenAudit}
-                          className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-indigo-500 hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-indigo-500/10 transition"
-                          title="Auditoria do dia"
-                      >
-                          <History size={18} />
-                      </button>
-                  )}
+          <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Contas</p>
+                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{accounts.length}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo total</p>
+                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+                      {formatCurrency(totalBalance)}
+                  </p>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo atual</p>
+                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+                      {formatCurrency(displayBalance)}
+                  </p>
+              </div>
+          </div>
+
+          <div className={`grid ${onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+              {onOpenAudit && (
                   <button
-                    onClick={handleOpenNew}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg shadow-blue-900/20 flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                      onClick={onOpenAudit}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+                      title="Auditoria do dia"
                   >
-                      <Plus size={20} />
-                      Nova Conta
+                      <History size={14} />
+                      Auditoria
                   </button>
-              </div>
+              )}
+              <button
+                  onClick={handleOpenNew}
+                  className="w-full rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-blue-900/20 transition active:scale-[0.98]"
+              >
+                  Nova Conta
+              </button>
           </div>
       </div>
   );
 
+  const summarySection = (
+      <div className={summaryWrapperClass}>
+          <div className="rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+              {accountsHeader}
+          </div>
+      </div>
+  );
+
+  const inlineNewCard = inlineNewOpen ? (
+      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
+          <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-400">Nova conta</span>
+              <button
+                  type="button"
+                  onClick={() => setInlineNewOpen(false)}
+                  className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
+                  aria-label="Fechar nova conta"
+              >
+                  <X size={14} className="mx-auto" />
+              </button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      Nome da conta
+                  </label>
+                  <input
+                      type="text"
+                      value={inlineNewDraft.name}
+                      onChange={(event) =>
+                          setInlineNewDraft(prev => ({ ...prev, name: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  />
+              </div>
+
+              <div>
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      Tipo
+                  </label>
+                  <select
+                      value={inlineNewDraft.type}
+                      onChange={(event) =>
+                          setInlineNewDraft(prev => ({ ...prev, type: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  >
+                      <option value="">Selecione</option>
+                      {accountTypes.map(type => (
+                          <option key={type} value={type}>
+                              {type}
+                          </option>
+                      ))}
+                  </select>
+              </div>
+
+              <div>
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      Natureza
+                  </label>
+                  <select
+                      value={inlineNewDraft.nature}
+                      onChange={(event) =>
+                          setInlineNewDraft(prev => ({
+                              ...prev,
+                              nature: event.target.value as 'PJ' | 'PF'
+                          }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  >
+                      <option value="PJ">Pessoa Jurídica</option>
+                      <option value="PF">Pessoa Física</option>
+                  </select>
+              </div>
+
+              <div>
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      Saldo inicial
+                  </label>
+                  <input
+                      type="text"
+                      value={inlineNewDraft.initialBalance}
+                      onChange={(event) =>
+                          setInlineNewDraft(prev => ({
+                              ...prev,
+                              initialBalance: event.target.value
+                          }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  />
+              </div>
+
+              <div>
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      Saldo atual
+                  </label>
+                  <input
+                      type="text"
+                      value={inlineNewDraft.currentBalance}
+                      onChange={(event) =>
+                          setInlineNewDraft(prev => ({
+                              ...prev,
+                              currentBalance: event.target.value
+                          }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  />
+              </div>
+
+              <div className="sm:col-span-2">
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      Cor da tag
+                  </label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                      {buildColorOptions(inlineNewDraft.color).map(color => (
+                          <button
+                              key={color}
+                              type="button"
+                              onClick={() => setInlineNewDraft(prev => ({ ...prev, color }))}
+                              className={`h-7 w-7 rounded-full border ${
+                                  inlineNewDraft.color === color
+                                      ? 'ring-2 ring-indigo-500 border-white'
+                                      : 'border-white/40'
+                              }`}
+                              style={{ backgroundColor: color }}
+                              aria-label={`Selecionar cor ${color}`}
+                          />
+                      ))}
+                  </div>
+              </div>
+
+              <div className="sm:col-span-2">
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      Observações
+                  </label>
+                  <textarea
+                      value={inlineNewDraft.notes}
+                      onChange={(event) =>
+                          setInlineNewDraft(prev => ({
+                              ...prev,
+                              notes: event.target.value
+                          }))
+                      }
+                      rows={3}
+                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
+                  />
+              </div>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+              <button
+                  type="button"
+                  onClick={() => setInlineNewOpen(false)}
+                  className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
+              >
+                  Cancelar
+              </button>
+              <button
+                  type="button"
+                  disabled={!inlineNewDraft.name.trim() || !inlineNewDraft.type}
+                  onClick={handleInlineCreate}
+                  className={`rounded-xl px-4 py-2 text-xs font-semibold text-white transition ${
+                      !inlineNewDraft.name.trim() || !inlineNewDraft.type
+                          ? 'bg-zinc-300 dark:bg-zinc-700 cursor-not-allowed'
+                          : 'bg-indigo-600 hover:bg-indigo-500'
+                  }`}
+              >
+                  Salvar
+              </button>
+          </div>
+      </div>
+  ) : null;
+
+  const renderInlineEditForm = (account: Account) => {
+      const typeOptions =
+          inlineEditDraft.type && !accountTypes.includes(inlineEditDraft.type)
+              ? [inlineEditDraft.type, ...accountTypes]
+              : accountTypes;
+      const showYieldField =
+          isInvestmentType(inlineEditDraft.type || account.type || '') ||
+          Number.isFinite(account.yieldRate);
+      const saveDisabled = !inlineEditDraft.name.trim() || !inlineEditDraft.type;
+
+      return (
+          <div className="mt-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#0f0f13] p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="sm:col-span-2">
+                      <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                          Nome da conta
+                      </label>
+                      <input
+                          type="text"
+                          value={inlineEditDraft.name}
+                          onChange={(event) =>
+                              setInlineEditDraft(prev => ({
+                                  ...prev,
+                                  name: event.target.value
+                              }))
+                          }
+                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      />
+                  </div>
+
+                  <div>
+                      <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                          Tipo
+                      </label>
+                      <select
+                          value={inlineEditDraft.type}
+                          onChange={(event) =>
+                              setInlineEditDraft(prev => ({
+                                  ...prev,
+                                  type: event.target.value
+                              }))
+                          }
+                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      >
+                          <option value="">Selecione</option>
+                          {typeOptions.map(type => (
+                              <option key={type} value={type}>
+                                  {type}
+                              </option>
+                          ))}
+                      </select>
+                  </div>
+
+                  <div>
+                      <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                          Natureza
+                      </label>
+                      <select
+                          value={inlineEditDraft.nature}
+                          onChange={(event) =>
+                              setInlineEditDraft(prev => ({
+                                  ...prev,
+                                  nature: event.target.value as 'PJ' | 'PF'
+                              }))
+                          }
+                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      >
+                          <option value="PJ">Pessoa Jurídica</option>
+                          <option value="PF">Pessoa Física</option>
+                      </select>
+                  </div>
+
+                  <div>
+                      <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                          Saldo inicial
+                      </label>
+                      <input
+                          type="text"
+                          value={inlineEditDraft.initialBalance}
+                          onChange={(event) =>
+                              setInlineEditDraft(prev => ({
+                                  ...prev,
+                                  initialBalance: event.target.value
+                              }))
+                          }
+                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      />
+                  </div>
+
+                  <div>
+                      <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                          Saldo atual
+                      </label>
+                      <input
+                          type="text"
+                          value={inlineEditDraft.currentBalance}
+                          onChange={(event) =>
+                              setInlineEditDraft(prev => ({
+                                  ...prev,
+                                  currentBalance: event.target.value
+                              }))
+                          }
+                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      />
+                  </div>
+
+                  {showYieldField && (
+                      <div className="sm:col-span-2">
+                          <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                              Rendimento (% CDI)
+                          </label>
+                          <input
+                              type="text"
+                              value={inlineEditDraft.yieldRate}
+                              onChange={(event) =>
+                                  setInlineEditDraft(prev => ({
+                                      ...prev,
+                                      yieldRate: event.target.value
+                                  }))
+                              }
+                              className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                          />
+                      </div>
+                  )}
+
+                  <div className="sm:col-span-2">
+                      <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                          Cor da tag
+                      </label>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                          {buildColorOptions(inlineEditDraft.color).map(color => (
+                              <button
+                                  key={color}
+                                  type="button"
+                                  onClick={() =>
+                                      setInlineEditDraft(prev => ({
+                                          ...prev,
+                                          color
+                                      }))
+                                  }
+                                  className={`h-7 w-7 rounded-full border ${
+                                      inlineEditDraft.color === color
+                                          ? 'ring-2 ring-indigo-500 border-white'
+                                          : 'border-white/40'
+                                  }`}
+                                  style={{ backgroundColor: color }}
+                                  aria-label={`Selecionar cor ${color}`}
+                              />
+                          ))}
+                      </div>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                      <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                          Observações
+                      </label>
+                      <textarea
+                          value={inlineEditDraft.notes}
+                          onChange={(event) =>
+                              setInlineEditDraft(prev => ({
+                                  ...prev,
+                                  notes: event.target.value
+                              }))
+                          }
+                          rows={3}
+                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
+                      />
+                  </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                  <button
+                      type="button"
+                      onClick={() => setInlineEditAccountId(null)}
+                      className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
+                  >
+                      Cancelar
+                  </button>
+                  <button
+                      type="button"
+                      disabled={saveDisabled}
+                      onClick={() => handleInlineSave(account)}
+                      className={`rounded-xl px-4 py-2 text-xs font-semibold text-white transition ${
+                          saveDisabled
+                              ? 'bg-zinc-300 dark:bg-zinc-700 cursor-not-allowed'
+                              : 'bg-indigo-600 hover:bg-indigo-500'
+                      }`}
+                  >
+                      Salvar
+                  </button>
+              </div>
+          </div>
+      );
+  };
+
   const listSection = (
       <main className={listWrapperClass}>
-          <div className="rounded-3xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#111113] overflow-hidden">
-              {accounts.map(account => {
-                  const isSelected = selectedIds.includes(account.id);
-                  const isHighlighted = highlightedId === account.id;
-                  const accountColor = getAccountColor(account);
-                  const iconBg = withAlpha(accountColor, 0.15);
-                  const canEditAccount = isEditableAccount(account);
-                  const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
-                  const isLocked = Boolean(account.locked || account.decryptError);
-                  const computedBalance = resolveRealBalance(account);
-                  const auditTrails = balanceSnapshot?.debug?.trailsByAccountId?.[account.id] ?? [];
-                  const canShowDetails = auditTrails.length > 0;
+          <div className="space-y-3">
+              {inlineNewCard}
 
-                  return (
-                    <div 
-                        key={account.id}
-                        id={`account-${account.id}`}
-                        onClick={() => {
-                            if (isLocked) return;
-                            toggleSelection(account.id);
-                        }}
-                        className={`
-                            w-full px-4 sm:px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 transition-colors duration-200 select-none group
-                            ${isLocked ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}
-                            ${isHighlighted
-                                ? 'bg-indigo-50/80 dark:bg-indigo-900/30 ring-2 ring-indigo-400/70'
-                                : isSelected 
-                                    ? 'bg-indigo-50/60 dark:bg-indigo-900/10 ring-1 ring-indigo-500/60' 
-                                    : 'bg-white dark:bg-[#111113] hover:bg-zinc-50 dark:hover:bg-white/5'}
-                        `}
-                    >
-                        <div className="grid grid-cols-[auto,1fr,auto] gap-4 items-start">
-                            <div className="flex items-center gap-3 pt-1">
-                                <div className={`
-                                    w-6 h-6 rounded-md border flex items-center justify-center transition-colors
-                                    ${isSelected 
-                                        ? 'bg-indigo-600 border-indigo-600 text-white' 
-                                        : 'bg-transparent border-zinc-300 dark:border-zinc-600 text-transparent group-hover:border-zinc-400'}
-                                `}>
-                                    {!isLocked && (
-                                        <CheckSquare size={16} fill="currentColor" className={isSelected ? 'block' : 'hidden'} />
-                                    )}
-                                    {isLocked && <Lock size={14} className="text-amber-500" />}
-                                </div>
+              {accounts.length > 0 ? (
+                  <>
+                      {visibleAccounts.map(account => {
+                          const isHighlighted = highlightedId === account.id;
+                          const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
+                          const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
+                          const isLocked = Boolean(account.locked || account.decryptError);
+                          const computedBalance = resolveRealBalance(account);
+                          const isExpanded = drawerAccount?.id === account.id;
+                          const isInlineEditing = inlineEditAccountId === account.id;
+                          const details = isExpanded ? buildAccountDetails(account) : [];
 
-                                <div 
-                                    className="p-3 rounded-xl"
-                                    style={{ backgroundColor: iconBg, color: accountColor }}
-                                >
-                                    {getIconForType(account.type)}
-                                </div>
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <h3 className="font-semibold text-base text-zinc-900 dark:text-white truncate" title={account.name}>
-                                        {account.name}
-                                    </h3>
-                                    <CardTag label={account.type} color={accountColor} size="sm" />
-                                </div>
-
-                                {isLocked ? (
-                                    <div className="mt-2 rounded-xl border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/60 dark:bg-amber-900/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
-                                        <Lock size={14} />
-                                        {lockedReason === 'epoch_mismatch'
-                                            ? 'Dados anteriores arquivados (atualização de segurança)'
-                                            : 'Conta protegida (dados criptografados)'}
-                                    </div>
-                                ) : (
-                                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
-                                        <span>Saldo Inicial: R$ {account.initialBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                                        {(account.yieldRate !== undefined) && (
-                                            <span className="text-blue-500 font-semibold">
-                                                {account.yieldRate}% do {account.yieldIndex || 'CDI'}
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="flex flex-col items-end gap-3 min-w-[104px]">
-                                <div className="flex items-center gap-2">
-                                    {canEditAccount && !isLocked && (
-                                        <button
-                                            type="button"
-                                            onClick={(e) => handleEditAccount(e, account)}
-                                            aria-label={`Editar conta ${account.name}`}
-                                            className="h-11 w-11 flex items-center justify-center rounded-full text-zinc-500 hover:text-indigo-600 hover:bg-indigo-500/10 transition-colors"
-                                            title="Editar conta"
-                                        >
-                                            <Pencil size={18} />
-                                        </button>
-                                    )}
-                                    {!isLocked && (
-                                        <button 
-                                            onClick={(e) => requestDelete(e, account)}
-                                            aria-label={`Excluir conta ${account.name}`}
-                                            className="h-11 w-11 flex items-center justify-center rounded-full text-zinc-500 hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                                            title="Excluir Conta"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
-                                    )}
-                                </div>
-
-                                {!isLocked && (
-                                    <div className="text-right space-y-1">
-                                        <div className="flex items-center justify-end gap-2">
-                                            <span className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo atual</span>
-                                        </div>
-                                        <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                                            R$ {computedBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                        </p>
-                                        {canShowDetails && (
-                                            <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setAuditAccountId(account.id);
-                                                }}
-                                                className="text-[11px] text-zinc-500 dark:text-zinc-400 underline underline-offset-4 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
-                                                title="Ver detalhamento do saldo"
-                                                aria-label={`Ver detalhamento do saldo da conta ${account.name}`}
-                                            >
-                                                Ver detalhamento do saldo
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-              )})}
+                          return (
+                              <div key={account.id} id={`account-${account.id}`}>
+                                  <MobileTransactionCard
+                                      title={account.name}
+                                      amount={formatCurrency(computedBalance)}
+                                      amountClassName={isLocked ? 'text-zinc-400 dark:text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}
+                                      dateLabel={account.type || 'Conta'}
+                                      category={`Inicial ${formatCurrency(account.initialBalance)}`}
+                                      isHighlighted={isHighlighted}
+                                      isLocked={isLocked}
+                                      lockedLabel={lockedLabel}
+                                      onClick={
+                                          isLocked
+                                              ? undefined
+                                              : () => {
+                                                    setDrawerAccount(prev => (prev?.id === account.id ? null : account));
+                                                }
+                                      }
+                                  />
+                                  {!isMobile && isExpanded && (
+                                      <div className="mt-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
+                                          <div className="flex items-center justify-between">
+                                              <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => setDrawerAccount(null)}
+                                                  className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
+                                                  aria-label="Fechar detalhes"
+                                              >
+                                                  <X size={14} className="mx-auto" />
+                                              </button>
+                                          </div>
+                                          <div className="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
+                                              {details.map(item => (
+                                                  <div key={item.label} className="flex items-start justify-between gap-3">
+                                                      <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                                                          {item.label}
+                                                      </span>
+                                                      <span className="text-right">{item.value}</span>
+                                                  </div>
+                                              ))}
+                                          </div>
+                                          {!isLocked && (
+                                              <div className="mt-4 grid grid-cols-2 gap-2">
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                          if (inlineEditAccountId === account.id) {
+                                                              setInlineEditAccountId(null);
+                                                              return;
+                                                          }
+                                                          startInlineEdit(account);
+                                                      }}
+                                                      className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                                                  >
+                                                      {isInlineEditing ? 'Fechar edição' : 'Editar'}
+                                                  </button>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => handleDeleteAccountDirect(account)}
+                                                      className="rounded-xl border border-red-200 dark:border-red-900/40 py-2 text-xs font-semibold text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition"
+                                                  >
+                                                      Excluir
+                                                  </button>
+                                              </div>
+                                          )}
+                                          {!isLocked && isInlineEditing && renderInlineEditForm(account)}
+                                      </div>
+                                  )}
+                              </div>
+                          );
+                      })}
+                      {shouldCollapseAccounts && (
+                          <button
+                              type="button"
+                              onClick={() => setIsAccountListExpanded(prev => !prev)}
+                              className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[12px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                          >
+                              {isAccountListExpanded
+                                  ? `${expandVerb} para recolher`
+                                  : `${expandVerb} para expandir (+${extraAccountCount})`}
+                              <ChevronDown
+                                  size={14}
+                                  className={`transition-transform ${isAccountListExpanded ? 'rotate-180' : ''}`}
+                              />
+                          </button>
+                      )}
+                  </>
+              ) : (
+                  <MobileEmptyState
+                      icon={<Landmark size={18} />}
+                      message="Nenhuma conta cadastrada."
+                  />
+              )}
           </div>
       </main>
   );
+
+  const drawerLocked = Boolean(drawerAccount?.locked || drawerAccount?.decryptError);
+  const drawerDetails = drawerAccount ? buildAccountDetails(drawerAccount) : [];
+  const desktopScrollPadding =
+      isAccountListExpanded || inlineNewOpen || inlineEditAccountId ? 'pb-28' : 'pb-6';
 
   const modals = (
       <>
@@ -687,9 +1277,63 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                         <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-3 rounded-lg flex gap-3 items-start mb-6 text-left">
                             <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
                             <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                                As transações antigas vinculadas a esta conta permanecerão no histórico, mas perderão a referência de origem.
+                                Ao excluir esta conta, todas as entradas e saídas vinculadas a ela também serão removidas.
                             </p>
                         </div>
+
+                        {(relatedIncomes.length > 0 || relatedExpenses.length > 0) && (
+                            <div className="mb-6 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#151517] p-3 text-xs text-zinc-600 dark:text-zinc-300">
+                                <p className="text-[11px] uppercase tracking-wide text-zinc-400 mb-2">Itens afetados</p>
+                                <div className="space-y-3">
+                                    <div>
+                                        <div className="flex items-center justify-between">
+                                            <span>Entradas vinculadas</span>
+                                            <span className="font-semibold text-zinc-900 dark:text-white">{relatedIncomes.length}</span>
+                                        </div>
+                                        {relatedIncomes.length > 0 && (
+                                            <div className="mt-2 space-y-1">
+                                                {relatedIncomes.slice(0, 3).map(inc => (
+                                                    <div key={inc.id} className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                        <span className="flex-1 min-w-0 truncate">{inc.description || 'Entrada'}</span>
+                                                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                                            + {formatCurrency(inc.amount)}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                                {relatedIncomes.length > 3 && (
+                                                    <p className="text-[10px] text-zinc-400">
+                                                        +{relatedIncomes.length - 3} outras entradas
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center justify-between">
+                                            <span>Saídas vinculadas</span>
+                                            <span className="font-semibold text-zinc-900 dark:text-white">{relatedExpenses.length}</span>
+                                        </div>
+                                        {relatedExpenses.length > 0 && (
+                                            <div className="mt-2 space-y-1">
+                                                {relatedExpenses.slice(0, 3).map(exp => (
+                                                    <div key={exp.id} className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                        <span className="flex-1 min-w-0 truncate">{exp.description || 'Saída'}</span>
+                                                        <span className="font-semibold text-rose-500">
+                                                            - {formatCurrency(exp.amount)}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                                {relatedExpenses.length > 3 && (
+                                                    <p className="text-[10px] text-zinc-400">
+                                                        +{relatedExpenses.length - 3} outras saídas
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="flex gap-3">
                             <button 
@@ -708,28 +1352,132 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                     </div>
                 </div>
             )}
+
+          <MobileTransactionDrawer
+              open={isMobile && Boolean(drawerAccount)}
+              title={drawerAccount?.name || ''}
+              amount={drawerAccount ? formatCurrency(resolveRealBalance(drawerAccount)) : undefined}
+              details={drawerDetails}
+              actionsDisabled={drawerLocked}
+              onClose={() => setDrawerAccount(null)}
+              onEdit={
+                  drawerAccount && !drawerLocked
+                      ? () => {
+                            handleEditAccountDirect(drawerAccount);
+                            setDrawerAccount(null);
+                        }
+                      : undefined
+              }
+              onDelete={
+                  drawerAccount && !drawerLocked
+                      ? () => {
+                            handleDeleteAccountDirect(drawerAccount);
+                            setDrawerAccount(null);
+                        }
+                      : undefined
+              }
+          />
       </>
   );
 
   if (isMobile) {
+      const mobileList = (
+          <div className="space-y-3">
+              {inlineNewCard}
+              {accounts.length > 0 ? (
+                  visibleAccounts.map(account => {
+                      const isHighlighted = highlightedId === account.id;
+                      const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
+                      const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
+                      const isLocked = Boolean(account.locked || account.decryptError);
+                      const isInlineEditing = inlineEditAccountId === account.id;
+                      const computedBalance = resolveRealBalance(account);
+
+                      return (
+                          <div key={account.id} id={`account-${account.id}`}>
+                              <MobileTransactionCard
+                                  title={account.name}
+                                  amount={formatCurrency(computedBalance)}
+                                  amountClassName={isLocked ? 'text-zinc-400 dark:text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}
+                                  dateLabel={account.type || 'Conta'}
+                                  category={`Inicial ${formatCurrency(account.initialBalance)}`}
+                                  isHighlighted={isHighlighted}
+                                  isLocked={isLocked}
+                                  lockedLabel={lockedLabel}
+                                  onClick={
+                                      isLocked
+                                          ? undefined
+                                          : () => {
+                                                setDrawerAccount(account);
+                                            }
+                                  }
+                              />
+                              {!isLocked && isInlineEditing && renderInlineEditForm(account)}
+                          </div>
+                      );
+                  })
+              ) : (
+                  <MobileEmptyState
+                      icon={<Landmark size={18} />}
+                      message="Nenhuma conta cadastrada."
+                  />
+              )}
+              {shouldCollapseAccounts && accounts.length > 0 && (
+                  <button
+                      type="button"
+                      onClick={() => setIsAccountListExpanded(prev => !prev)}
+                      className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                  >
+                      {isAccountListExpanded
+                          ? 'Toque para recolher'
+                          : `Toque para expandir (+${extraAccountCount})`}
+                      <ChevronDown
+                          size={14}
+                          className={`transition-transform ${isAccountListExpanded ? 'rotate-180' : ''}`}
+                      />
+                  </button>
+              )}
+          </div>
+      );
+
       return (
           <>
-              <MobilePageShell
-                  title="Contas Bancárias"
-                  subtitle={`${displayCount} ${displayCount === 1 ? 'conta' : 'contas'}`}
-                  onBack={onBack}
-                  contentClassName="space-y-4"
-              >
-                  {summarySection}
-                  {listSection}
-              </MobilePageShell>
+              <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+                  <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
+                      {headerFill.height > 0 && (
+                          <div
+                              className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+                              style={{ top: headerFill.top, height: headerFill.height }}
+                          />
+                      )}
+                      <div
+                          className="fixed left-0 right-0 z-30"
+                          style={{ top: 'var(--mm-mobile-top, 0px)' }}
+                      >
+                          <div
+                              ref={subHeaderRef}
+                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+                          >
+                              <div className="px-4 pb-3 pt-2">
+                                  {accountsHeader}
+                              </div>
+                          </div>
+                      </div>
+                      <div
+                          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+128px)]"
+                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
+                      >
+                          {mobileList}
+                      </div>
+                  </div>
+              </div>
               {modals}
           </>
       );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter ${desktopScrollPadding} transition-colors duration-300`}>
       {summarySection}
       {listSection}
       {modals}

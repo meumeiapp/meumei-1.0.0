@@ -19,7 +19,10 @@ const isDismissed = () => {
 
 const isIosDevice = () => {
   if (typeof navigator === 'undefined') return false;
-  return /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+  const ua = navigator.userAgent || '';
+  if (/iphone|ipad|ipod/i.test(ua)) return true;
+  const platform = navigator.platform || '';
+  return platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1;
 };
 
 const isInstalledNow = () => {
@@ -107,10 +110,10 @@ export const usePwaInstallPrompt = () => {
       event.preventDefault();
       deferredPromptRef.current = event as BeforeInstallPromptEvent;
       console.info('[pwa] beforeinstallprompt captured');
-      if (isOpenRef.current) return;
       if (isInstalledNow()) return;
       if (isDismissed()) return;
       setMode('installable');
+      if (isOpenRef.current) return;
       setIsOpen(true);
       console.info('[pwa] auto_open');
     };

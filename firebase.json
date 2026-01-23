@@ -66,6 +66,13 @@
           }
         },
         {
+          "source": "/api/sendPushNotification",
+          "function": {
+            "functionId": "sendPushNotification",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }

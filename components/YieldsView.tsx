@@ -95,6 +95,7 @@ interface YieldsViewProps {
   licenseId?: string | null;
   licenseCryptoEpoch?: number | null;
   onAuditLog?: (entry: AuditLogInput) => void;
+  onOpenAudit?: () => void;
 }
 
 const YieldsView: React.FC<YieldsViewProps> = ({ 
@@ -104,7 +105,8 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   viewDate,
   licenseId,
   licenseCryptoEpoch,
-  onAuditLog
+  onAuditLog,
+  onOpenAudit
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingYield, setEditingYield] = useState<{ accountId: string; amount: number; date: string; notes: string } | null>(null);
@@ -1092,6 +1094,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                   onEditYield={handleEditYield}
                   onOpenCalculator={() => setIsCalculatorOpen(true)}
                   onOpenGoal={handleOpenGoal}
+                  onOpenAudit={onOpenAudit}
               />
               {yieldModals}
           </>

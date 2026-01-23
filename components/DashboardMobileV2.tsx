@@ -1,14 +1,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { 
-  TrendingUp, 
-  Wallet, 
-  CreditCard, 
-  BarChart3, 
-  Home, 
-  ShoppingCart, 
-  User,
-  ArrowUpCircle,
+import {
+  CreditCard,
   ArrowDownCircle,
   ChevronRight,
   Eye,
@@ -23,24 +16,24 @@ import {
   Target,
   Flame,
   OctagonAlert,
-  FileText,
-  GripVertical,
   Lock,
   Download,
-  ChevronDown
+  ChevronDown,
+  Sparkles
 } from 'lucide-react';
-import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import MobileEmptyState from './mobile/MobileEmptyState';
+// Mobile layout does not support drag reordering.
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
+import { getHelperTips } from '../helpers/meumeiHelperEngine';
 import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 import SearchHelperBar from './SearchHelperBar';
-import QuickAccessHelp from './QuickAccessHelp';
+import { preferencesService } from '../services/preferencesService';
+import { auth } from '../services/firebase';
 
 interface FinancialData {
     balance: number;
@@ -263,6 +256,8 @@ const MEI_STATUS_CONFIG: Record<MeiStatusLevel, Omit<MeiStatus, 'level'>> = {
 };
 
 const formatCurrency = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const formatCurrencyCompact = (value: number) =>
+  value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
 const getMeiStatus = (percentage: number): MeiStatus => {
   if (percentage > 100) return { level: 'over', ...MEI_STATUS_CONFIG.over };
@@ -368,7 +363,8 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
           hasExpenses: expenses.length > 0,
           hasCategories: categoriesCount > 0,
           isPwaInstallable,
-          isStandalone
+          isStandalone,
+          isMobile: true
       }),
       [accounts.length, categoriesCount, expenses.length, incomes.length, isPwaInstallable, isStandalone]
   );
@@ -399,119 +395,34 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       ]
   );
 
-  const quickAccessItems = useMemo(
-      () => [
-          {
-              id: 'accounts',
-              label: 'Contas Bancárias',
-              icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
-              tipTitle: 'Contas Bancárias',
-              tipBody:
-                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.",
-              onClick: onOpenAccounts,
-              showWhen: canViewBalances
-          },
-          {
-              id: 'incomes',
-              label: 'Entradas',
-              icon: <ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />,
-              tipTitle: 'Entradas',
-              tipBody:
-                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.',
-              onClick: onOpenIncomes,
-              showWhen: canManageIncomes
-          },
-          {
-              id: 'fixed_expenses',
-              label: 'Despesas Fixas',
-              icon: <Home size={18} className="text-amber-500 dark:text-amber-400" />,
-              tipTitle: 'Despesas Fixas',
-              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.',
-              onClick: onOpenFixedExpenses,
-              showWhen: canManageExpenses
-          },
-          {
-              id: 'variable_expenses',
-              label: 'Despesas Variáveis',
-              icon: <ShoppingCart size={18} className="text-pink-500 dark:text-pink-400" />,
-              tipTitle: 'Despesas Variáveis',
-              tipBody:
-                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.',
-              onClick: onOpenVariableExpenses,
-              showWhen: canManageExpenses
-          },
-          {
-              id: 'personal_expenses',
-              label: 'Despesas Pessoais',
-              icon: <User size={18} className="text-cyan-500 dark:text-cyan-400" />,
-              tipTitle: 'Despesas Pessoais',
-              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.',
-              onClick: onOpenPersonalExpenses,
-              showWhen: canManageExpenses
-          },
-          {
-              id: 'yields',
-              label: 'Rendimentos',
-              icon: <TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />,
-              tipTitle: 'Rendimentos',
-              tipBody:
-                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.',
-              onClick: onOpenYields,
-              showWhen: canViewBalances
-          },
-          {
-              id: 'invoices',
-              label: 'Faturas',
-              icon: <CreditCard size={18} className="text-rose-500 dark:text-rose-400" />,
-              tipTitle: 'Faturas',
-              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.',
-              onClick: onOpenInvoices,
-              showWhen: canViewInvoices
-          },
-          {
-              id: 'reports',
-              label: 'Relatórios',
-              icon: <BarChart3 size={18} className="text-zinc-500 dark:text-zinc-400" />,
-              tipTitle: 'Relatórios',
-              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.',
-              onClick: onOpenReports,
-              showWhen: canViewReports && Boolean(onOpenReports)
-          },
-          {
-              id: 'das',
-              label: 'Emissão DAS',
-              icon: <FileText size={18} className="text-teal-500 dark:text-teal-400" />,
-              tipTitle: 'Emissão DAS',
-              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.',
-              onClick: onOpenDas,
-              showWhen: true
-          }
-      ],
-      [
-          canManageExpenses,
-          canManageIncomes,
-          canViewBalances,
-          canViewInvoices,
-          canViewReports,
-          onOpenAccounts,
-          onOpenDas,
-          onOpenFixedExpenses,
-          onOpenIncomes,
-          onOpenInvoices,
-          onOpenPersonalExpenses,
-          onOpenReports,
-          onOpenVariableExpenses,
-          onOpenYields
-      ]
-  );
-  
+  const mobileTips = useMemo(() => getHelperTips(helperSignals).slice(0, 8), [helperSignals]);
+
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
+  const [isCardsExpanded, setIsCardsExpanded] = useState(false);
+  const [isCategoryListExpanded, setIsCategoryListExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [isMeiDetailsOpen, setIsMeiDetailsOpen] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
+  const subHeaderRef = useRef<HTMLDivElement | null>(null);
+  const subHeaderScrollRef = useRef<HTMLDivElement | null>(null);
+  const subHeaderScrollTimer = useRef<number | null>(null);
+  const subHeaderJumpingRef = useRef(false);
+  const subHeaderIndexRef = useRef(0);
+  const [subHeaderIndex, setSubHeaderIndex] = useState(0);
+  const [subHeaderTipIndex, setSubHeaderTipIndex] = useState(0);
+  const tipsActive = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
+  const tipsCount = tipsActive ? mobileTips.length : 0;
+  const activeTip =
+      tipsActive && mobileTips.length > 0 ? mobileTips[subHeaderTipIndex % mobileTips.length] : null;
+  const tipAction = activeTip?.ctaId ? helperActions[activeTip.ctaId] : undefined;
+  const subHeaderPanelClass = 'h-[140px] flex flex-col gap-2';
+  const SUBHEADER_PANEL_COUNT = 3;
+  const SUBHEADER_RENDERED_COUNT = SUBHEADER_PANEL_COUNT + 2;
+  const [subHeaderHeight, setSubHeaderHeight] = useState(0);
+  const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
   const categoryNames = useMemo(() => {
       const names = new Set<string>();
       expenses.forEach(exp => {
@@ -709,6 +620,14 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       }, {});
   }, [creditCards, expenses, viewDate]);
 
+  const CARD_COLLAPSE_LIMIT = 2;
+  const CATEGORY_COLLAPSE_LIMIT = 2;
+  const shouldCollapseCards = creditCards.length > CARD_COLLAPSE_LIMIT;
+  const extraCardCount = Math.max(creditCards.length - CARD_COLLAPSE_LIMIT, 0);
+  const visibleCards = shouldCollapseCards && !isCardsExpanded
+      ? creditCards.slice(0, CARD_COLLAPSE_LIMIT)
+      : creditCards;
+
   const accountNameById = useMemo(() => {
       return accounts.reduce<Record<string, string>>((acc, account) => {
           acc[account.id] = account.name;
@@ -744,6 +663,12 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       () => Math.max(...categoryTotals.items.map(item => item.total), 0),
       [categoryTotals.items]
   );
+
+  const shouldCollapseCategories = categoryTotals.items.length > CATEGORY_COLLAPSE_LIMIT;
+  const extraCategoryCount = Math.max(categoryTotals.items.length - CATEGORY_COLLAPSE_LIMIT, 0);
+  const visibleCategoryItems = shouldCollapseCategories && !isCategoryListExpanded
+      ? categoryTotals.items.slice(0, CATEGORY_COLLAPSE_LIMIT)
+      : categoryTotals.items;
 
   const spendInsights = useMemo(() => {
       if (!categoryTotals.items.length || categoryTotals.totalSum <= 0) return [];
@@ -845,9 +770,15 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       }
   })();
   const calloutIcon = meiStatus.level === 'over' ? OctagonAlert : meiStatus.level === 'critical' ? Flame : meiStatus.level === 'attention' ? AlertTriangle : CheckCircle2;
+  const monthNet = financialData.income - financialData.expenses;
+  const expenseRatio = financialData.income > 0 ? (financialData.expenses / financialData.income) * 100 : 0;
+  const expenseRatioValue = Math.min(Math.max(expenseRatio, 0), 999);
+  const expenseRatioFill = Math.min(expenseRatioValue, 100);
+  const pendingIncome = financialData.pendingIncome || 0;
+  const pendingExpenses = financialData.pendingExpenses || 0;
 
   const { navigateToResult } = useGlobalActions();
-  const { layout, setOrder, loading: layoutLoading } = useDashboardLayout();
+  const { layout, loading: layoutLoading } = useDashboardLayout();
 
   const blockLabels: Record<DashboardBlockId, string> = {
       quick_access: 'Acesso rápido',
@@ -858,17 +789,12 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
   };
 
   const availableBlocks = useMemo<Record<DashboardBlockId, boolean>>(() => ({
-      quick_access: true,
+      quick_access: false,
       mei_limit: canViewMeiLimit,
-      financial_xray: true,
+      financial_xray: false,
       credit_cards: canViewInvoices,
       expense_breakdown: canManageExpenses
   }), [canViewMeiLimit, canViewInvoices, canManageExpenses]);
-
-  const visibleOrder = useMemo(
-      () => layout.order.filter((id) => availableBlocks[id]),
-      [layout.order, availableBlocks]
-  );
 
   const orderMap = useMemo(() => {
       const map: Record<DashboardBlockId, number> = {
@@ -884,167 +810,463 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       return map;
   }, [layout.order]);
 
-  const sensors = useSensors(
-      useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
-  );
+  useEffect(() => {
+      const node = subHeaderRef.current;
+      if (!node) return;
 
-  const handleDragEnd = (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      const oldIndex = visibleOrder.indexOf(active.id as DashboardBlockId);
-      const newIndex = visibleOrder.indexOf(over.id as DashboardBlockId);
-      if (oldIndex < 0 || newIndex < 0) return;
-      const nextVisible = arrayMove(visibleOrder, oldIndex, newIndex) as DashboardBlockId[];
-      const visibleSet = new Set(nextVisible);
-      let pointer = 0;
-      const merged = layout.order.map((id) => {
-          if (!visibleSet.has(id)) return id;
-          const nextId = nextVisible[pointer];
-          pointer += 1;
-          return nextId;
+      const updateMetrics = () => {
+          const rect = node.getBoundingClientRect();
+          const height = Math.round(rect.height);
+          setSubHeaderHeight(prev => (prev === height ? prev : height));
+          const fillHeight = Math.max(0, Math.round(rect.top));
+          setHeaderFill(prev => (prev.top === 0 && prev.height === fillHeight ? prev : { top: 0, height: fillHeight }));
+      };
+
+      updateMetrics();
+
+      const observer =
+          typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateMetrics) : null;
+      observer?.observe(node);
+      window.addEventListener('resize', updateMetrics);
+
+      return () => {
+          observer?.disconnect();
+          window.removeEventListener('resize', updateMetrics);
+      };
+  }, []);
+
+  useEffect(() => {
+      const uid = auth.currentUser?.uid || null;
+      if (!uid) return;
+      let isActive = true;
+      preferencesService.getPreferences(uid).then((pref) => {
+          if (!isActive) return;
+          if (typeof pref.mobileDashboardSubHeader !== 'number') return;
+          const nextIndex = Math.min(Math.max(pref.mobileDashboardSubHeader, 0), 2);
+          subHeaderIndexRef.current = nextIndex;
+          setSubHeaderIndex(nextIndex);
+          requestAnimationFrame(() => {
+              const node = subHeaderScrollRef.current;
+              if (!node) return;
+              node.scrollTo({ left: node.clientWidth * (nextIndex + 1), behavior: 'auto' });
+          });
+      }).catch((error) => {
+          console.error('[prefs] mobile_subheader_load', { message: (error as any)?.message });
       });
-      setOrder(merged as DashboardBlockId[]);
+      return () => {
+          isActive = false;
+      };
+  }, []);
+
+  useEffect(() => {
+      if (subHeaderIndex !== 0) {
+          setIsSearchActive(false);
+      }
+  }, [subHeaderIndex]);
+
+  useEffect(() => {
+      subHeaderIndexRef.current = subHeaderIndex;
+  }, [subHeaderIndex]);
+
+  useEffect(() => {
+      if (!tipsActive || tipsCount <= 1) return;
+      const timer = window.setInterval(() => {
+          setSubHeaderTipIndex(prev => prev + 1);
+      }, 10000);
+      return () => window.clearInterval(timer);
+  }, [tipsActive, tipsCount]);
+
+  useEffect(() => {
+      const node = subHeaderScrollRef.current;
+      if (!node) return;
+      requestAnimationFrame(() => {
+          const width = node.clientWidth || 1;
+          node.scrollTo({ left: width * (subHeaderIndexRef.current + 1), behavior: 'auto' });
+      });
+  }, []);
+
+  const persistSubHeaderIndex = (nextIndex: number) => {
+      const uid = auth.currentUser?.uid || null;
+      if (!uid) return;
+      preferencesService
+          .setMobileDashboardSubHeader(uid, nextIndex)
+          .catch((error) => {
+              console.error('[prefs] mobile_subheader_save', { message: (error as any)?.message });
+          });
   };
 
+  const handleSubHeaderScroll = () => {
+      const node = subHeaderScrollRef.current;
+      if (!node) return;
+      if (subHeaderJumpingRef.current) return;
+      if (subHeaderScrollTimer.current) {
+          window.clearTimeout(subHeaderScrollTimer.current);
+      }
+      subHeaderScrollTimer.current = window.setTimeout(() => {
+          const width = node.clientWidth || 1;
+          const rawIndex = Math.round(node.scrollLeft / width);
+          const maxRenderedIndex = SUBHEADER_RENDERED_COUNT - 1;
+          let nextIndex = 0;
+          let jumpTo: number | null = null;
+
+          if (rawIndex <= 0) {
+              nextIndex = SUBHEADER_PANEL_COUNT - 1;
+              jumpTo = SUBHEADER_PANEL_COUNT;
+          } else if (rawIndex >= maxRenderedIndex) {
+              nextIndex = 0;
+              jumpTo = 1;
+          } else {
+              nextIndex = rawIndex - 1;
+          }
+
+          if (nextIndex !== subHeaderIndexRef.current) {
+              subHeaderIndexRef.current = nextIndex;
+              setSubHeaderIndex(nextIndex);
+              persistSubHeaderIndex(nextIndex);
+          }
+
+          if (jumpTo !== null) {
+              subHeaderJumpingRef.current = true;
+              requestAnimationFrame(() => {
+                  node.scrollTo({ left: width * jumpTo, behavior: 'auto' });
+                  requestAnimationFrame(() => {
+                      subHeaderJumpingRef.current = false;
+                  });
+              });
+          }
+      }, 140);
+  };
+
+  const scrollSubHeader = (direction: 'prev' | 'next') => {
+      const node = subHeaderScrollRef.current;
+      if (!node) return;
+      const width = node.clientWidth || 1;
+      const delta = direction === 'next' ? width : -width;
+      node.scrollTo({ left: node.scrollLeft + delta, behavior: 'smooth' });
+  };
+
+  const searchResultsNode =
+      Boolean(trimmedSearchQuery) && isSearchActive ? (
+          <div className="absolute left-0 right-0 mt-3 bg-[#111114] border border-white/10 rounded-2xl shadow-2xl max-h-72 overflow-y-auto z-20">
+              {visibleInlineResults.length === 0 ? (
+                  <div className="text-xs text-zinc-500 px-4 py-3">Nenhum resultado encontrado.</div>
+              ) : (
+                  <ul>
+                      {visibleInlineResults.map((item, idx) => {
+                          const isActive = idx === activeSearchIndex;
+                          const statusMeta = getInlineExpenseStatusMeta(item);
+                          return (
+                              <li
+                                  key={`${item.entity}-${item.id}`}
+                                  className={`px-4 py-3 border-b border-white/5 cursor-pointer ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
+                                  onMouseEnter={() => setActiveSearchIndex(idx)}
+                                  onClick={() => handleSelectSearchResult(item)}
+                              >
+                                  <div className="flex items-center justify-between gap-3">
+                                      <div className="min-w-0">
+                                          <p className="text-xs font-semibold text-white flex items-center gap-2">
+                                              {item.entity === 'expense' && <span className="text-rose-400 text-[10px] uppercase">Despesa</span>}
+                                              {item.entity === 'income' && <span className="text-emerald-400 text-[10px] uppercase">Entrada</span>}
+                                              {item.entity === 'account' && <span className="text-blue-400 text-[10px] uppercase">Conta</span>}
+                                              {item.entity === 'card' && <span className="text-purple-400 text-[10px] uppercase">Cartão</span>}
+                                              {item.entity === 'category' && <span className="text-zinc-400 text-[10px] uppercase">Categoria</span>}
+                                              <span className="truncate">{item.title}</span>
+                                          </p>
+                                          {item.subtitle && <p className="text-[11px] text-zinc-500 truncate">{item.subtitle}</p>}
+                                      </div>
+                                      <div className="text-right shrink-0">
+                                          {statusMeta && (
+                                              <p className={`text-[10px] font-semibold flex items-center justify-end gap-1 ${statusMeta.textClass}`}>
+                                                  <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
+                                                  {statusMeta.label}
+                                              </p>
+                                          )}
+                                          {typeof item.amount === 'number' && (
+                                              <p className="text-xs font-bold text-white">
+                                                  {item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                              </p>
+                                          )}
+                                          {item.entity === 'expense' ? (
+                                              item.dateLabel ? (
+                                                  <p className="text-[10px] text-zinc-500">
+                                                      {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                  </p>
+                                              ) : (
+                                                  <p className="text-[10px] text-zinc-500">Sem vencimento</p>
+                                              )
+                                          ) : (
+                                              item.dateLabel && (
+                                                  <p className="text-[10px] text-zinc-500">
+                                                      {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                  </p>
+                                              )
+                                          )}
+                                     </div>
+                                 </div>
+                              </li>
+                          );
+                      })}
+                  </ul>
+              )}
+          </div>
+      ) : null;
+
+  const renderSearchPanel = (isClone: boolean) => (
+      <div className={`min-w-full snap-start ${isClone ? 'pointer-events-none' : ''}`} aria-hidden={isClone}>
+                  <div className={`${subHeaderPanelClass} justify-center`}>
+                      <div className="flex flex-col gap-1 px-1">
+                          <div className="relative" ref={isClone ? undefined : searchContainerRef}>
+                              <SearchHelperBar
+                          variant="mobile"
+                          appearance="subheader"
+                          modeToggle="button"
+                          assistantButtonLabel="Ajudante do meumei"
+                          assistantBackLabel="Voltar para busca"
+                          searchQuery={searchQuery}
+                          setSearchQuery={setSearchQuery}
+                          setActiveSearchIndex={setActiveSearchIndex}
+                          setIsSearchActive={setIsSearchActive}
+                          onSearchKeyDown={handleSearchKeyDown}
+                          signals={helperSignals}
+                          actions={helperActions}
+                          tipsEnabled={false}
+                          results={isClone ? null : searchResultsNode}
+                      />
+                          </div>
+                          <div className="mt-1 flex items-center justify-between w-full px-1">
+                              <button
+                                  type="button"
+                                  onClick={() => scrollSubHeader('prev')}
+                                  className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                                  aria-label="Voltar no carrossel"
+                              >
+                                  <ChevronRight size={16} className="rotate-180 text-zinc-400" />
+                              </button>
+                              <button
+                                  type="button"
+                                  onClick={() => scrollSubHeader('next')}
+                                  className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                                  aria-label="Avançar no carrossel"
+                              >
+                                  <ChevronRight size={16} className="text-zinc-400" />
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+      </div>
+  );
+
+  const renderSummaryPanel = (isClone: boolean) => (
+      <div className={`min-w-full snap-start ${isClone ? 'pointer-events-none' : ''}`} aria-hidden={isClone}>
+          <div className={`${subHeaderPanelClass} justify-between gap-2`}>
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900/95 via-zinc-900/85 to-indigo-900/70 text-white px-2.5 py-1.5 shadow-[0_18px_40px_rgba(0,0,0,0.35)]">
+                  <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-white/10 blur-2xl" />
+                  <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-400/70 via-white/40 to-rose-400/70" />
+                  <div className="relative flex items-start justify-between gap-3">
+                      <div>
+                          <p className="text-[8px] uppercase tracking-[0.28em] text-white/60">Resultado do mês</p>
+                          <p className={`mt-0.5 text-[16px] font-semibold leading-tight ${monthNet < 0 ? 'text-rose-200' : 'text-emerald-200'}`}>
+                              {formatCurrencyCompact(monthNet)}
+                          </p>
+                          <p className="text-[9px] text-white/60">Entradas - Saídas</p>
+                      </div>
+                      <div className="text-right">
+                          <p className="text-[8px] uppercase tracking-[0.2em] text-white/60">Margem</p>
+                          <p className="mt-0.5 text-[11px] font-semibold">
+                              {financialData.income > 0 ? `${Math.max(0, Math.round(100 - expenseRatioValue))}%` : '0%'}
+                          </p>
+                      </div>
+                  </div>
+                  <div className="relative mt-1.5 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                      <div
+                          className={`h-full ${expenseRatioValue > 100 ? 'bg-rose-400/90' : 'bg-emerald-300/90'}`}
+                          style={{ width: `${expenseRatioFill}%` }}
+                      />
+                  </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70">
+                  <div className="grid grid-cols-3 divide-x divide-zinc-200/70 dark:divide-zinc-800/70">
+                      {canViewBalances ? (
+                          <div className="px-2 py-1.5 text-center">
+                              <p className="text-[7px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saldo</p>
+                              <p className={`mt-0.5 text-[10px] font-semibold leading-tight ${financialData.balance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-white'}`}>
+                                  {formatCurrencyCompact(financialData.balance)}
+                              </p>
+                          </div>
+                      ) : (
+                          <div className="px-2 py-1.5 text-center text-zinc-400">
+                              <Lock size={14} className="mx-auto" />
+                              <p className="mt-1 text-[9px] leading-tight">Saldo oculto</p>
+                          </div>
+                      )}
+
+                      {canManageIncomes && (
+                          <div className="px-2 py-1.5 text-center">
+                              <p className="text-[7px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Entradas</p>
+                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-emerald-600 dark:text-emerald-400">
+                                  {formatCurrencyCompact(financialData.income)}
+                              </p>
+                          </div>
+                      )}
+
+                      {canManageExpenses && (
+                          <div className="px-2 py-1.5 text-center">
+                              <p className="text-[7px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saídas</p>
+                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-rose-600 dark:text-rose-400">
+                                  {formatCurrencyCompact(financialData.expenses)}
+                              </p>
+                          </div>
+                      )}
+                  </div>
+              </div>
+
+              <div className="flex items-center justify-between w-full px-1">
+                  <button
+                      type="button"
+                      onClick={() => scrollSubHeader('prev')}
+                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                      aria-label="Voltar no carrossel"
+                  >
+                      <ChevronRight size={16} className="rotate-180 text-zinc-400" />
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => scrollSubHeader('next')}
+                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                      aria-label="Avançar no carrossel"
+                  >
+                      <ChevronRight size={16} className="text-zinc-400" />
+                  </button>
+              </div>
+          </div>
+      </div>
+  );
+
+  const renderTipsPanel = (isClone: boolean) => (
+      <div className={`min-w-full snap-start ${isClone ? 'pointer-events-none' : ''}`} aria-hidden={isClone}>
+          <div className={subHeaderPanelClass}>
+                  <div className="flex-1 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/80 px-3 py-2 text-left shadow-sm relative overflow-hidden">
+                      <div>
+                          {activeTip ? (
+                              <>
+                                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white mb-1">{activeTip.title}</p>
+                                  <p
+                                      className="text-[11px] text-zinc-500 dark:text-zinc-400"
+                                      style={{
+                                          display: '-webkit-box',
+                                          WebkitLineClamp: 2,
+                                          WebkitBoxOrient: 'vertical',
+                                          overflow: 'hidden'
+                                      }}
+                                  >
+                                      {activeTip.body}
+                                  </p>
+                              </>
+                          ) : tipsActive ? (
+                              <p className="text-[11px] text-zinc-500">Nenhuma dica disponível agora.</p>
+                          ) : (
+                              <p className="text-[11px] text-zinc-500">Dicas desativadas nas Configurações.</p>
+                          )}
+                      </div>
+                  </div>
+                  {tipAction && (
+                      <button
+                          type="button"
+                          onClick={tipAction}
+                          className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 text-[11px] font-semibold shadow-lg shadow-indigo-900/20"
+                      >
+                          {activeTip?.ctaLabel || 'Abrir'}
+                      </button>
+                  )}
+              <div className="flex items-center justify-between w-full px-1">
+                  <button
+                      type="button"
+                      onClick={() => scrollSubHeader('prev')}
+                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                      aria-label="Voltar no carrossel"
+                  >
+                      <ChevronRight size={16} className="rotate-180 text-zinc-400" />
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => scrollSubHeader('next')}
+                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                      aria-label="Avançar no carrossel"
+                  >
+                      <ChevronRight size={16} className="text-zinc-400" />
+                  </button>
+              </div>
+          </div>
+      </div>
+  );
+
+  const mobileSubHeader = (
+      <div className="relative">
+          <div
+              ref={subHeaderScrollRef}
+              onScroll={handleSubHeaderScroll}
+              className="flex w-full items-stretch overflow-x-auto snap-x snap-mandatory"
+              style={{ touchAction: 'pan-x' }}
+          >
+              {renderTipsPanel(true)}
+              {renderSearchPanel(false)}
+              {renderSummaryPanel(false)}
+              {renderTipsPanel(false)}
+              {renderSearchPanel(true)}
+          </div>
+      </div>
+  );
+
   return (
-    <div className="w-full max-w-full px-4 py-4 flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="w-full mt-1">
-            <div className="relative" ref={searchContainerRef}>
-                <SearchHelperBar
-                    variant="mobile"
-                    searchQuery={searchQuery}
-                    setSearchQuery={setSearchQuery}
-                    setActiveSearchIndex={setActiveSearchIndex}
-                    setIsSearchActive={setIsSearchActive}
-                    onSearchKeyDown={handleSearchKeyDown}
-                    signals={helperSignals}
-                    actions={helperActions}
-                    tipsEnabled={tipsEnabled}
-                    results={
-                        Boolean(trimmedSearchQuery) && isSearchActive ? (
-                            <div className="absolute left-0 right-0 mt-3 bg-[#111114] border border-white/10 rounded-2xl shadow-2xl max-h-72 overflow-y-auto z-20">
-                                {visibleInlineResults.length === 0 ? (
-                                    <div className="text-xs text-zinc-500 px-4 py-3">Nenhum resultado encontrado.</div>
-                                ) : (
-                                    <ul>
-                                        {visibleInlineResults.map((item, idx) => {
-                                            const isActive = idx === activeSearchIndex;
-                                            const statusMeta = getInlineExpenseStatusMeta(item);
-                                            return (
-                                                <li
-                                                    key={`${item.entity}-${item.id}`}
-                                                    className={`px-4 py-3 border-b border-white/5 cursor-pointer ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
-                                                    onMouseEnter={() => setActiveSearchIndex(idx)}
-                                                    onClick={() => handleSelectSearchResult(item)}
-                                                >
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div className="min-w-0">
-                                                            <p className="text-xs font-semibold text-white flex items-center gap-2">
-                                                                {item.entity === 'expense' && <span className="text-rose-400 text-[10px] uppercase">Despesa</span>}
-                                                                {item.entity === 'income' && <span className="text-emerald-400 text-[10px] uppercase">Entrada</span>}
-                                                                {item.entity === 'account' && <span className="text-blue-400 text-[10px] uppercase">Conta</span>}
-                                                                {item.entity === 'card' && <span className="text-purple-400 text-[10px] uppercase">Cartão</span>}
-                                                                {item.entity === 'category' && <span className="text-zinc-400 text-[10px] uppercase">Categoria</span>}
-                                                                <span className="truncate">{item.title}</span>
-                                                            </p>
-                                                            {item.subtitle && <p className="text-[11px] text-zinc-500 truncate">{item.subtitle}</p>}
-                                                        </div>
-                                                        <div className="text-right shrink-0">
-                                                            {statusMeta && (
-                                                                <p className={`text-[10px] font-semibold flex items-center justify-end gap-1 ${statusMeta.textClass}`}>
-                                                                    <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
-                                                                    {statusMeta.label}
-                                                                </p>
-                                                            )}
-                                                            {typeof item.amount === 'number' && (
-                                                                <p className="text-xs font-bold text-white">
-                                                                    {item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                                </p>
-                                                            )}
-                                                            {item.entity === 'expense' ? (
-                                                                item.dateLabel ? (
-                                                                    <p className="text-[10px] text-zinc-500">
-                                                                        {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                                    </p>
-                                                                ) : (
-                                                                    <p className="text-[10px] text-zinc-500">Sem vencimento</p>
-                                                                )
-                                                            ) : (
-                                                                item.dateLabel && (
-                                                                    <p className="text-[10px] text-zinc-500">
-                                                                        {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                                    </p>
-                                                                )
-                                                            )}
-                                                       </div>
-                                                   </div>
-                                                </li>
-                                            );
-                                        })}
-                                    </ul>
-                                )}
-                            </div>
-                        ) : null
-                    }
+    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+        <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
+            {headerFill.height > 0 && (
+                <div
+                    className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+                    style={{ top: headerFill.top, height: headerFill.height }}
                 />
-            </div>
-        </div>
-
-        
-
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
-                <div className="flex flex-col gap-6">
-
-        {/* Quick Access */}
-        {availableBlocks.quick_access && (
-        <SortableBlock
-            id="quick_access"
-            label={blockLabels.quick_access}
-            disabled={layoutLoading}
-            style={{ order: orderMap.quick_access }}
-        >
-        <section>
-            <div className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
-                <div className="space-y-2">
-                {quickAccessItems
-                    .filter((item) => item.showWhen)
-                    .map((item) => (
-                        <MobileListItem
-                            key={item.id}
-                            icon={item.icon}
-                            label={item.label}
-                            tipTitle={item.tipTitle}
-                            tipBody={item.tipBody}
-                            onClick={item.onClick}
-                        />
-                    ))}
+            )}
+            <div
+                className="fixed left-0 right-0 z-30"
+                style={{ top: 'var(--mm-mobile-top, 0px)' }}
+            >
+                <div
+                    ref={subHeaderRef}
+                    className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+                >
+                    <div className="px-4 pb-3 pt-2">
+                        {mobileSubHeader}
+                    </div>
                 </div>
             </div>
-        </section>
-        </SortableBlock>
-        )}
-
-        {/* MEI Limit Monitor (GAMIFIED) - Conditionally Rendered */}
-        {canViewMeiLimit && (
-            <SortableBlock
-                id="mei_limit"
-                label={blockLabels.mei_limit}
-                disabled={layoutLoading}
-                style={{ order: orderMap.mei_limit }}
+            <div
+                className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+128px)]"
+                style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
             >
-            <section>
-                <div className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm transition-colors duration-300`}>
+                <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+                {/* MEI Limit Monitor (GAMIFIED) - Conditionally Rendered */}
+                {canViewMeiLimit && (
+                    <SortableBlock
+                        id="mei_limit"
+                        label={blockLabels.mei_limit}
+                        disabled={layoutLoading}
+                        style={{ order: orderMap.mei_limit }}
+                    >
+                    <section>
+                        <div className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm transition-colors duration-300`}>
                     <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                            <div className="p-1 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
-                                <Building2 size={14} />
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <div className="p-1 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
+                                    <Building2 size={14} />
+                                </div>
+                                <h3 className="text-[15px] font-semibold text-zinc-900 dark:text-white truncate">
+                                    Faturamento Fiscal MEI (PJ)
+                                </h3>
                             </div>
-                            <div className="min-w-0">
-                                <h3 className="font-semibold text-sm text-zinc-900 dark:text-white truncate">Faturamento Fiscal MEI (PJ)</h3>
-                                <p className={`text-[11px] font-semibold ${meiStatus.accentText}`}>{meiStatus.label}</p>
-                            </div>
+                            <p className={`text-[11px] font-semibold ${meiStatus.accentText}`}>{meiStatus.label}</p>
                         </div>
                         <div className={`text-[11px] font-semibold px-2 py-1 rounded-full ${meiStatus.badgeClass}`}>
                             {rawPercentage.toFixed(1)}%
@@ -1071,9 +1293,13 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                     <button
                         type="button"
                         onClick={() => setIsMeiDetailsOpen(prev => !prev)}
-                        className="mt-3 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
+                        className="mt-3 w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
                     >
-                        {isMeiDetailsOpen ? 'Ocultar detalhes' : 'Ver detalhes'}
+                        {isMeiDetailsOpen ? 'Toque para recolher' : 'Toque para expandir'}
+                        <ChevronDown
+                            size={12}
+                            className={`transition-transform ${isMeiDetailsOpen ? 'rotate-180' : ''}`}
+                        />
                     </button>
 
                     {isMeiDetailsOpen && (
@@ -1106,43 +1332,41 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
             disabled={layoutLoading}
             style={{ order: orderMap.financial_xray }}
         >
-        <section>
-            <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Indicadores do mês</h2>
-            <div className="space-y-2">
+        <section className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
+            <div className="border-y border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517]">
+            <div className="grid grid-cols-3 divide-x divide-zinc-200 dark:divide-zinc-800">
                 {canViewBalances ? (
-                    <MobileListItem
-                        icon={<Wallet size={18} className="text-indigo-500 dark:text-indigo-400" />}
-                        label="Saldo atual"
-                        description="Disponível em contas"
-                        value={`R$ ${financialData.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                        valueClassName={financialData.balance < 0 ? 'text-red-500' : 'text-zinc-900 dark:text-white'}
-                    />
+                    <div className="px-2 py-2 text-center flex flex-col justify-center">
+                        <p className="text-[8px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saldo</p>
+                        <p className={`mt-1 text-[11px] font-semibold leading-tight ${financialData.balance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-white'}`}>
+                            {formatCurrencyCompact(financialData.balance)}
+                        </p>
+                    </div>
                 ) : (
-                    <div className="bg-zinc-50 dark:bg-zinc-900 rounded-2xl p-4 border border-dashed border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center text-zinc-400">
-                        <Lock size={20} className="mb-2" />
-                        <p className="text-xs">Saldo Oculto</p>
+                    <div className="px-2 py-2 text-center text-zinc-400 flex flex-col justify-center">
+                        <Lock size={14} className="mx-auto" />
+                        <p className="mt-1 text-[9px] leading-tight">Saldo oculto</p>
                     </div>
                 )}
 
                 {canManageIncomes && (
-                    <MobileListItem 
-                        icon={<ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />}
-                        label="Entradas do mês"
-                        description={`R$ ${financialData.pendingIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} a receber`}
-                        value={`+ R$ ${financialData.income.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                        valueClassName="text-emerald-600 dark:text-emerald-400"
-                    />
+                    <div className="px-2 py-2 text-center flex flex-col justify-center">
+                        <p className="text-[8px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Entradas</p>
+                        <p className="mt-1 text-[11px] font-semibold leading-tight text-emerald-600 dark:text-emerald-400">
+                            {formatCurrencyCompact(financialData.income)}
+                        </p>
+                    </div>
                 )}
 
                 {canManageExpenses && (
-                    <MobileListItem 
-                        icon={<ArrowDownCircle size={18} className="text-rose-500 dark:text-rose-400" />}
-                        label="Saídas do mês"
-                        description={`R$ ${financialData.pendingExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} pendentes`}
-                        value={`- R$ ${financialData.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                        valueClassName="text-rose-600 dark:text-rose-400"
-                    />
+                    <div className="px-2 py-2 text-center flex flex-col justify-center">
+                        <p className="text-[8px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saídas</p>
+                        <p className="mt-1 text-[11px] font-semibold leading-tight text-rose-600 dark:text-rose-400">
+                            {formatCurrencyCompact(financialData.expenses)}
+                        </p>
+                    </div>
                 )}
+            </div>
             </div>
         </section>
         </SortableBlock>
@@ -1157,58 +1381,66 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                 style={{ order: orderMap.credit_cards }}
             >
             <section>
-                <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                        <CreditCard className="text-purple-600 dark:text-purple-500" size={18} />
-                        Faturas dos Cartões
-                    </h2>
-                    {onOpenInvoices && (
-                        <button onClick={onOpenInvoices} className="text-[11px] text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-white transition-colors">
-                            Ver todas
-                        </button>
+                <div className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                        <h2 className="text-[15px] font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
+                            <CreditCard className="text-purple-600 dark:text-purple-500" size={18} />
+                            Faturas dos Cartões
+                        </h2>
+                    </div>
+
+                    {creditCards.length > 0 ? (
+                        <div className="space-y-2">
+                            {visibleCards.map((card) => {
+                                const style = getCardStyle(card); 
+                                const invoiceTotal = cardTotals[card.id] ?? 0;
+                                const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
+                                if (card.dueDay < card.closingDay) {
+                                    dueDateObj.setMonth(dueDateObj.getMonth() + 1);
+                                }
+                                const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
+
+                                return (
+                                    <MobileListItem
+                                        key={card.id}
+                                        icon={
+                                            <div
+                                                className="h-10 w-10 rounded-xl flex items-center justify-center"
+                                                style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
+                                            >
+                                                <img src={style.icon} className="w-6 h-6" alt="Card Brand" />
+                                            </div>
+                                        }
+                                        label={card.name}
+                                        description={`Vence em ${formattedDueDate}`}
+                                        value={`R$ ${invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                                        iconContainerClassName="bg-transparent p-0"
+                                        onClick={onOpenInvoices}
+                                    />
+                                );
+                            })}
+                            {shouldCollapseCards && (
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCardsExpanded(prev => !prev)}
+                                    className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                                >
+                                    {isCardsExpanded ? 'Toque para recolher' : `Toque para expandir (+${extraCardCount})`}
+                                    <ChevronDown
+                                        size={12}
+                                        className={`transition-transform ${isCardsExpanded ? 'rotate-180' : ''}`}
+                                    />
+                                </button>
+                            )}
+                        </div>
+                    ) : (
+                        <MobileEmptyState
+                            icon={<CreditCard size={18} />}
+                            title="Nenhum cartão cadastrado"
+                            message="Adicione seus cartões de crédito nas configurações."
+                        />
                     )}
                 </div>
-
-                {creditCards.length > 0 ? (
-                    <div className="space-y-2">
-                        {creditCards.map((card) => {
-                            const style = getCardStyle(card); 
-                            const invoiceTotal = cardTotals[card.id] ?? 0;
-                            const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-                            if (card.dueDay < card.closingDay) {
-                                dueDateObj.setMonth(dueDateObj.getMonth() + 1);
-                            }
-                            const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
-
-                            return (
-                                <MobileListItem
-                                    key={card.id}
-                                    icon={
-                                        <div
-                                            className="h-10 w-10 rounded-xl flex items-center justify-center"
-                                            style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
-                                        >
-                                            <img src={style.icon} className="w-6 h-6" alt="Card Brand" />
-                                        </div>
-                                    }
-                                    label={card.name}
-                                    description={`Vence em ${formattedDueDate}`}
-                                    value={`R$ ${invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                                    iconContainerClassName="bg-transparent p-0"
-                                    onClick={onOpenInvoices}
-                                />
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <div className="bg-white dark:bg-[#151517] rounded-2xl p-6 text-center border border-zinc-200 dark:border-zinc-800 border-dashed">
-                        <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-3 text-zinc-400">
-                            <CreditCard size={24} />
-                        </div>
-                        <h3 className="text-zinc-900 dark:text-white font-bold mb-1">Nenhum cartão cadastrado</h3>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400">Adicione seus cartões de crédito nas configurações.</p>
-                    </div>
-                )}
             </section>
             </SortableBlock>
         )}
@@ -1224,7 +1456,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
             <section className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
                 <div className="flex items-start justify-between gap-3 mb-4">
                     <div>
-                        <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                        <h2 className="text-[15px] font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
                             <PieChart size={18} className="text-indigo-500" />
                             Onde foi parar seu dinheiro?
                         </h2>
@@ -1233,13 +1465,6 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                         </p>
                     </div>
                     <div className="text-right text-[11px] text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
-                        <button
-                            type="button"
-                            onClick={handleManualRecalc}
-                            className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                        >
-                            Recalcular
-                        </button>
                         <span className="uppercase tracking-wide font-semibold">Total</span>
                         <div className="text-xs font-semibold text-zinc-900 dark:text-white">
                             {formatCurrency(categoryTotals.totalSum)}
@@ -1252,7 +1477,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                 {categoryTotals.displayItems.length > 0 && categoryTotals.totalSum > 0 ? (
                     <div className="space-y-3">
                         <ul className="space-y-2.5">
-                            {categoryTotals.items.map((item, index) => {
+                            {visibleCategoryItems.map((item, index) => {
                                 const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
                                 const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
                                 const barColor =
@@ -1344,6 +1569,19 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                                 );
                             })}
                         </ul>
+                        {shouldCollapseCategories && (
+                            <button
+                                type="button"
+                                onClick={() => setIsCategoryListExpanded(prev => !prev)}
+                                className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+                            >
+                                {isCategoryListExpanded ? 'Toque para recolher' : `Toque para expandir (+${extraCategoryCount})`}
+                                <ChevronDown
+                                    size={12}
+                                    className={`transition-transform ${isCategoryListExpanded ? 'rotate-180' : ''}`}
+                                />
+                            </button>
+                        )}
                         {spendInsights.length > 0 && (
                             <div className="grid gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
                                 {spendInsights.map(insight => (
@@ -1366,25 +1604,18 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                         )}
                     </div>
                 ) : (
-                    <div className="flex flex-col items-center justify-center py-10 text-zinc-400">
-                        <PieChart size={32} className="mb-3 opacity-20" />
-                        <p className="text-xs text-center">Nenhuma despesa paga encontrada no mês.</p>
-                    </div>
+                    <MobileEmptyState
+                        icon={<PieChart size={18} />}
+                        message="Nenhuma despesa paga encontrada no mês."
+                    />
                 )}
             </section>
             </SortableBlock>
         )}
 
                 </div>
-            </SortableContext>
-        </DndContext>
-
-        <footer
-            className="text-center text-[10px] text-zinc-500 dark:text-zinc-400 pt-3 border-t border-zinc-100 dark:border-zinc-800"
-            style={{ order: 999 }}
-        >
-            versão 1.0.0
-        </footer>
+            </div>
+        </div>
     </div>
   );
 };
@@ -1395,50 +1626,18 @@ const SortableBlock: React.FC<{
     disabled: boolean;
     style?: React.CSSProperties;
     children: React.ReactNode;
-}> = ({ id, label, disabled, style, children }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-    const mergedStyle = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        ...style
-    };
-
+}> = ({ style, children }) => {
     return (
         <div
-            ref={setNodeRef}
-            style={mergedStyle}
-            className={`relative ${isDragging ? 'z-20' : ''}`}
+            style={style}
+            className="relative"
         >
-            <div className="absolute -left-2 top-4 z-10">
-                <button
-                    type="button"
-                    {...attributes}
-                    {...listeners}
-                    disabled={disabled}
-                    className="flex h-7 w-5 items-center justify-center rounded-r-lg border border-zinc-200 bg-white text-zinc-400 shadow-sm hover:text-zinc-600 dark:border-zinc-800 dark:bg-[#151517] dark:hover:text-zinc-200"
-                    aria-label={`Mover ${label}`}
-                >
-                    <GripVertical size={14} />
-                </button>
-            </div>
             {children}
         </div>
     );
 };
 
 // ... existing subcomponents ...
-const QuickAction: React.FC<{ icon: React.ReactNode, label: string, color: string, bg: string, border: string, onClick?: () => void }> = ({ icon, label, color, bg, border, onClick }) => (
-    <button 
-        onClick={onClick}
-        className={`flex flex-col items-center justify-center w-full min-h-[104px] p-4 rounded-2xl border bg-white dark:bg-[#1a1a1a] hover:bg-gray-50 dark:hover:bg-[#202022] transition-all group active:scale-95 ${border} shadow-sm dark:shadow-none`}
-    >
-        <div className={`p-3 rounded-full mb-2.5 ${bg} ${color} group-hover:scale-110 transition-transform`}>
-            {icon}
-        </div>
-        <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-white text-center leading-snug">{label}</span>
-    </button>
-);
-
 const MobileListItem: React.FC<{
     icon: React.ReactNode;
     label: string;

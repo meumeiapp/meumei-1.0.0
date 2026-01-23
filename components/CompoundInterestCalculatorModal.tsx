@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, X, Calculator, DollarSign, Percent, RefreshCw } from 'lucide-react';
 import useIsMobile from '../hooks/useIsMobile';
 import MobileModalShell from './mobile/MobileModalShell';
+import MobileSelect from './mobile/MobileSelect';
 
 export type RatePeriod = 'month' | 'year';
 export type DurationUnit = 'months' | 'years';
@@ -110,6 +111,20 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
   const [tooltip, setTooltip] = useState<{ x: number; y: number; month: number; invested: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const fieldId = (suffix: string) => `simulator-${suffix}`;
+  const ratePeriodOptions = useMemo(
+    () => [
+      { value: 'year', label: 'a.a.' },
+      { value: 'month', label: 'a.m.' }
+    ],
+    []
+  );
+  const durationUnitOptions = useMemo(
+    () => [
+      { value: 'years', label: 'anos' },
+      { value: 'months', label: 'meses' }
+    ],
+    []
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -360,17 +375,30 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
               className="flex-1 bg-transparent outline-none text-zinc-900 dark:text-white font-semibold"
               placeholder="0,0"
             />
-            <select
-              id={fieldId('rate-period')}
-              name="ratePeriod"
-              value={ratePeriod}
-              onChange={(e) => setRatePeriod(e.target.value as RatePeriod)}
-              className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
-              aria-label="Período da taxa"
-            >
-              <option value="year">a.a.</option>
-              <option value="month">a.m.</option>
-            </select>
+            {isMobile ? (
+              <MobileSelect
+                id={fieldId('rate-period')}
+                name="ratePeriod"
+                value={ratePeriod}
+                options={ratePeriodOptions}
+                onChange={(value) => setRatePeriod(value as RatePeriod)}
+                size="compact"
+                buttonClassName="w-auto bg-transparent border-0 shadow-none text-xs uppercase tracking-wide text-zinc-500 focus:ring-0 px-2 py-1"
+                menuClassName="min-w-[110px]"
+              />
+            ) : (
+              <select
+                id={fieldId('rate-period')}
+                name="ratePeriod"
+                value={ratePeriod}
+                onChange={(e) => setRatePeriod(e.target.value as RatePeriod)}
+                className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
+                aria-label="Período da taxa"
+              >
+                <option value="year">a.a.</option>
+                <option value="month">a.m.</option>
+              </select>
+            )}
           </div>
         </div>
 
@@ -391,17 +419,30 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
               className="flex-1 bg-transparent outline-none text-zinc-900 dark:text-white font-semibold"
               placeholder="1"
             />
-            <select
-              id={fieldId('duration-unit')}
-              name="durationUnit"
-              value={durationUnit}
-              onChange={(e) => setDurationUnit(e.target.value as DurationUnit)}
-              className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
-              aria-label="Unidade do período"
-            >
-              <option value="years">anos</option>
-              <option value="months">meses</option>
-            </select>
+            {isMobile ? (
+              <MobileSelect
+                id={fieldId('duration-unit')}
+                name="durationUnit"
+                value={durationUnit}
+                options={durationUnitOptions}
+                onChange={(value) => setDurationUnit(value as DurationUnit)}
+                size="compact"
+                buttonClassName="w-auto bg-transparent border-0 shadow-none text-xs uppercase tracking-wide text-zinc-500 focus:ring-0 px-2 py-1"
+                menuClassName="min-w-[120px]"
+              />
+            ) : (
+              <select
+                id={fieldId('duration-unit')}
+                name="durationUnit"
+                value={durationUnit}
+                onChange={(e) => setDurationUnit(e.target.value as DurationUnit)}
+                className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
+                aria-label="Unidade do período"
+              >
+                <option value="years">anos</option>
+                <option value="months">meses</option>
+              </select>
+            )}
           </div>
         </div>
       </div>
