@@ -8,9 +8,11 @@ import YieldsView from './components/YieldsView';
 import InvoicesView from './components/InvoicesView'; 
 import ReportsView from './components/ReportsView';
 import DasView from './components/DasView';
+import AgendaView from './components/AgendaView';
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import GlobalHeader from './components/GlobalHeader';
 import CompanyDetailsView from './components/CompanyDetailsView';
+import CompanyDetailsSheet from './components/CompanyDetailsSheet';
 import CalculatorModal from './components/CalculatorModal';
 import AuditLogModal from './components/AuditLogModal';
 import FaturasErrorBoundary from './components/FaturasErrorBoundary';
@@ -18,10 +20,12 @@ import InstallAppModal from './components/InstallAppModal';
 import MobileQuickAccessFooter from './components/mobile/MobileQuickAccessFooter';
 import DesktopQuickAccessFooter from './components/desktop/DesktopQuickAccessFooter';
 import Landing from './Pages/Landing';
-import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference } from './types';
-import { COMPANY_DATA, DEFAULT_COMPANY_INFO, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_TYPES, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES } from './constants';
+import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference, ExpenseType, ExpenseTypeOption, AgendaItem } from './types';
+import { COMPANY_DATA, DEFAULT_COMPANY_INFO, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_TYPES, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_EXPENSE_TYPES } from './constants';
 import { dataService } from './services/dataService';
+import { seedDevUserData } from './services/devSeedService';
 import { categoryService, CategoryType } from './services/categoryService';
+import NewExpenseModal from './components/NewExpenseModal';
 import { auditService, AuditLogInput } from './services/auditService';
 import { yieldsService, YieldRecord } from './services/yieldsService';
 import { computeRealBalances, RealBalanceResult } from './services/realBalanceEngine';
@@ -34,8 +38,11 @@ import { preferencesService } from './services/preferencesService';
 import {
   ArrowUpCircle,
   BarChart3,
+  CalendarDays,
+  Calculator,
   CreditCard as CreditCardIcon,
   FileText,
+  History,
   Home,
   Loader2,
   LogOut,
@@ -256,94 +263,16 @@ const AppInner: React.FC = () => {
     | 'error'
   >('idle');
   const [installBannerVisible, setInstallBannerVisible] = useState(false);
+
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const [pwaInstalledFlag, setPwaInstalledFlag] = useState(false);
   const [deferredPromptEvent, setDeferredPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const isMobile = useIsMobile();
   const isMobileLandscape = useIsMobileLandscape();
   useMobileTopOffset();
-  const mobileQuickAccessItems = useMemo(
-    () => [
-      {
-        id: 'home',
-        label: 'Início',
-        shortLabel: 'Início',
-        icon: <Home size={18} className="text-indigo-500 dark:text-indigo-400" />,
-        onClick: () => setCurrentView(ViewState.DASHBOARD),
-        showWhen: currentView !== ViewState.DASHBOARD
-      },
-      {
-        id: 'accounts',
-        label: 'Contas Bancárias',
-        shortLabel: 'Contas',
-        icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
-        onClick: () => setCurrentView(ViewState.ACCOUNTS)
-      },
-      {
-        id: 'incomes',
-        label: 'Entradas',
-        shortLabel: 'Entradas',
-        icon: <ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />,
-        onClick: () => setCurrentView(ViewState.INCOMES)
-      },
-      {
-        id: 'fixed_expenses',
-        label: 'Despesas Fixas',
-        shortLabel: 'Fixas',
-        icon: <Home size={18} className="text-amber-500 dark:text-amber-400" />,
-        onClick: () => setCurrentView(ViewState.FIXED_EXPENSES)
-      },
-      {
-        id: 'variable_expenses',
-        label: 'Despesas Variáveis',
-        shortLabel: 'Variáveis',
-        icon: <ShoppingCart size={18} className="text-pink-500 dark:text-pink-400" />,
-        onClick: () => setCurrentView(ViewState.VARIABLE_EXPENSES)
-      },
-      {
-        id: 'personal_expenses',
-        label: 'Despesas Pessoais',
-        shortLabel: 'Pessoais',
-        icon: <User size={18} className="text-cyan-500 dark:text-cyan-400" />,
-        onClick: () => setCurrentView(ViewState.PERSONAL_EXPENSES)
-      },
-      {
-        id: 'yields',
-        label: 'Rendimentos',
-        shortLabel: 'Rend.',
-        icon: <TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />,
-        onClick: () => setCurrentView(ViewState.YIELDS)
-      },
-      {
-        id: 'invoices',
-        label: 'Faturas',
-        shortLabel: 'Faturas',
-        icon: <CreditCardIcon size={18} className="text-rose-500 dark:text-rose-400" />,
-        onClick: () => setCurrentView(ViewState.INVOICES)
-      },
-      {
-        id: 'reports',
-        label: 'Relatórios',
-        shortLabel: 'Relatórios',
-        icon: <BarChart3 size={18} className="text-zinc-500 dark:text-zinc-400" />,
-        onClick: () => setCurrentView(ViewState.REPORTS)
-      },
-      {
-        id: 'das',
-        label: 'Emissão DAS',
-        shortLabel: 'DAS',
-        icon: <FileText size={18} className="text-teal-500 dark:text-teal-400" />,
-        onClick: () => setCurrentView(ViewState.DAS)
-      }
-    ],
-    [currentView, setCurrentView]
-  );
-  const desktopQuickAccessItems = useMemo(
-    () => mobileQuickAccessItems.map(item => (
-      item.id === 'home' ? { ...item, showWhen: true } : item
-    )),
-    [mobileQuickAccessItems]
-  );
+  const [isQuickExpenseOpen, setIsQuickExpenseOpen] = useState(false);
+  const [quickExpenseType, setQuickExpenseType] = useState<ExpenseType>('variable');
+  const [mobileExpensesScope, setMobileExpensesScope] = useState<ExpenseType | 'all'>('all');
   const isBetaHost = useMemo(() => {
       if (typeof window === 'undefined') return false;
       const host = window.location.hostname;
@@ -395,7 +324,8 @@ const AppInner: React.FC = () => {
       expenses: null as null | (() => void),
       incomes: null as null | (() => void),
       creditCards: null as null | (() => void),
-      yields: null as null | (() => void)
+      yields: null as null | (() => void),
+      agenda: null as null | (() => void)
   });
   const isStandalone =
     typeof window !== 'undefined' &&
@@ -1310,6 +1240,8 @@ const AppInner: React.FC = () => {
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [yields, setYields] = useState<YieldRecord[]>([]);
+  const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
+  const [companySheetOpen, setCompanySheetOpen] = useState(false);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [auditModalState, setAuditModalState] = useState<{
     isOpen: boolean;
@@ -1330,12 +1262,271 @@ const AppInner: React.FC = () => {
   const [accountTypes, setAccountTypes] = useState<string[]>(() => {
     try {
         const saved = localStorage.getItem('meumei_account_types');
-        return saved ? JSON.parse(saved) : DEFAULT_ACCOUNT_TYPES;
-    } catch { return DEFAULT_ACCOUNT_TYPES; }
+        const parsed = saved ? JSON.parse(saved) : [];
+        const merged = [...DEFAULT_ACCOUNT_TYPES, ...(Array.isArray(parsed) ? parsed : [])];
+        return Array.from(new Set(merged.map((item) => String(item).trim())))
+            .filter(Boolean)
+            .slice(0, 20);
+    } catch { return DEFAULT_ACCOUNT_TYPES.slice(0, 20); }
   });
 
   const [expenseCategories, setExpenseCategories] = useState<string[]>(DEFAULT_EXPENSE_CATEGORIES);
   const [incomeCategories, setIncomeCategories] = useState<string[]>(DEFAULT_INCOME_CATEGORIES);
+  const [expenseTypeOptions, setExpenseTypeOptions] = useState<ExpenseTypeOption[]>(() => {
+    try {
+      const saved = localStorage.getItem('meumei_expense_types');
+      const parsed = saved ? JSON.parse(saved) : [];
+      const byId = new Map<ExpenseTypeOption['id'], ExpenseTypeOption>();
+      DEFAULT_EXPENSE_TYPES.forEach((option) => {
+        byId.set(option.id, { ...option });
+      });
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item) => {
+          if (!item || typeof item !== 'object') return;
+          const id = item.id as ExpenseTypeOption['id'];
+          if (!byId.has(id)) return;
+          const current = byId.get(id);
+          if (!current) return;
+          byId.set(id, {
+            ...current,
+            label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : current.label,
+            enabled: typeof item.enabled === 'boolean' ? item.enabled : current.enabled,
+            nature: item.nature === 'PF' || item.nature === 'PJ' ? item.nature : current.nature,
+            color: typeof item.color === 'string' && item.color.trim() ? item.color.trim() : current.color
+          });
+        });
+      }
+      const merged = DEFAULT_EXPENSE_TYPES.map((option) => byId.get(option.id) || option);
+      if (!merged.some((option) => option.enabled)) {
+        merged[0] = { ...merged[0], enabled: true };
+      }
+      return merged;
+    } catch {
+      return DEFAULT_EXPENSE_TYPES;
+    }
+  });
+
+  const expenseTypeColorById = useMemo(() => {
+    const map = new Map<ExpenseType, string>();
+    expenseTypeOptions.forEach(option => {
+      if (option?.id && option?.color) map.set(option.id, option.color);
+    });
+    return map;
+  }, [expenseTypeOptions]);
+  const resolveExpenseColor = (type: ExpenseType) => expenseTypeColorById.get(type) || '#ef4444';
+
+  const viewAccent = useMemo(() => {
+    switch (currentView) {
+      case ViewState.DASHBOARD:
+        return '#6366f1';
+      case ViewState.ACCOUNTS:
+        return '#3b82f6';
+      case ViewState.INCOMES:
+        return '#10b981';
+      case ViewState.FIXED_EXPENSES:
+        return resolveExpenseColor('fixed');
+      case ViewState.VARIABLE_EXPENSES:
+        return resolveExpenseColor('variable');
+      case ViewState.PERSONAL_EXPENSES:
+        return resolveExpenseColor('personal');
+      case ViewState.YIELDS:
+        return '#8b5cf6';
+      case ViewState.INVOICES:
+        return '#f43f5e';
+      case ViewState.REPORTS:
+        return '#64748b';
+      case ViewState.DAS:
+        return '#14b8a6';
+      case ViewState.AGENDA:
+        return '#38bdf8';
+      default:
+        return '#6366f1';
+    }
+  }, [currentView, resolveExpenseColor]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    root.style.setProperty('--mm-view-accent', viewAccent);
+    root.style.setProperty('--mm-view-accent-strong', viewAccent);
+  }, [viewAccent]);
+
+  const mobileExpenseIconColor = useMemo(
+    () =>
+      mobileExpensesScope === 'all'
+        ? resolveExpenseColor('variable')
+        : resolveExpenseColor(mobileExpensesScope),
+    [mobileExpensesScope, resolveExpenseColor]
+  );
+
+  const mobileQuickAccessItems = useMemo(
+    () => [
+      {
+        id: 'accounts',
+        label: 'Contas Bancárias',
+        shortLabel: 'Contas',
+        icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
+        onClick: () => setCurrentView(ViewState.ACCOUNTS)
+      },
+      {
+        id: 'incomes',
+        label: 'Entradas',
+        shortLabel: 'Entradas',
+        icon: <ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />,
+        onClick: () => setCurrentView(ViewState.INCOMES)
+      },
+      {
+        id: 'expenses',
+        label: 'Despesas',
+        shortLabel: 'Despesas',
+        icon: <ShoppingCart size={18} style={{ color: mobileExpenseIconColor }} />,
+        onClick: () => {
+          setMobileExpensesScope('all');
+          setCurrentView(ViewState.VARIABLE_EXPENSES);
+        }
+      },
+      {
+        id: 'yields',
+        label: 'Rendimentos',
+        shortLabel: 'Rend.',
+        icon: <TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />,
+        onClick: () => setCurrentView(ViewState.YIELDS)
+      },
+      {
+        id: 'invoices',
+        label: 'Faturas',
+        shortLabel: 'Faturas',
+        icon: <CreditCardIcon size={18} className="text-rose-500 dark:text-rose-400" />,
+        onClick: () => setCurrentView(ViewState.INVOICES)
+      },
+      {
+        id: 'reports',
+        label: 'Relatórios',
+        shortLabel: 'Relatórios',
+        icon: <BarChart3 size={18} className="text-zinc-500 dark:text-zinc-400" />,
+        onClick: () => setCurrentView(ViewState.REPORTS)
+      },
+      {
+        id: 'das',
+        label: 'Emissão DAS',
+        shortLabel: 'DAS',
+        icon: <FileText size={18} className="text-teal-500 dark:text-teal-400" />,
+        onClick: () => setCurrentView(ViewState.DAS)
+      }
+    ],
+    [currentView, setCurrentView, mobileExpenseIconColor]
+  );
+
+  const desktopQuickAccessItems = useMemo(
+    () => [
+      {
+        id: 'home',
+        label: 'Início',
+        shortLabel: 'Início',
+        icon: <Home size={28} className="text-indigo-500 dark:text-indigo-400" />,
+        onClick: () => setCurrentView(ViewState.DASHBOARD),
+        showWhen: true,
+        isActive: currentView === ViewState.DASHBOARD
+      },
+      {
+        id: 'accounts',
+        label: 'Contas Bancárias',
+        shortLabel: 'Contas',
+        icon: <Wallet size={28} className="text-blue-500 dark:text-blue-400" />,
+        onClick: () => setCurrentView(ViewState.ACCOUNTS),
+        isActive: currentView === ViewState.ACCOUNTS
+      },
+      {
+        id: 'incomes',
+        label: 'Entradas',
+        shortLabel: 'Entradas',
+        icon: <ArrowUpCircle size={28} className="text-emerald-500 dark:text-emerald-400" />,
+        onClick: () => setCurrentView(ViewState.INCOMES),
+        isActive: currentView === ViewState.INCOMES
+      },
+      {
+        id: 'fixed_expenses',
+        label: 'Despesas Fixas',
+        shortLabel: 'Fixas',
+        icon: <Home size={28} style={{ color: resolveExpenseColor('fixed') }} />,
+        onClick: () => setCurrentView(ViewState.FIXED_EXPENSES),
+        isActive: currentView === ViewState.FIXED_EXPENSES
+      },
+      {
+        id: 'variable_expenses',
+        label: 'Despesas Variáveis',
+        shortLabel: 'Variáveis',
+        icon: <ShoppingCart size={28} style={{ color: resolveExpenseColor('variable') }} />,
+        onClick: () => setCurrentView(ViewState.VARIABLE_EXPENSES),
+        isActive: currentView === ViewState.VARIABLE_EXPENSES
+      },
+      {
+        id: 'personal_expenses',
+        label: 'Despesas Pessoais',
+        shortLabel: 'Pessoais',
+        icon: <User size={28} style={{ color: resolveExpenseColor('personal') }} />,
+        onClick: () => setCurrentView(ViewState.PERSONAL_EXPENSES),
+        isActive: currentView === ViewState.PERSONAL_EXPENSES
+      },
+      {
+        id: 'yields',
+        label: 'Rendimentos',
+        shortLabel: 'Rend.',
+        icon: <TrendingUp size={28} className="text-violet-500 dark:text-violet-400" />,
+        onClick: () => setCurrentView(ViewState.YIELDS),
+        isActive: currentView === ViewState.YIELDS
+      },
+      {
+        id: 'invoices',
+        label: 'Faturas',
+        shortLabel: 'Faturas',
+        icon: <CreditCardIcon size={28} className="text-rose-500 dark:text-rose-400" />,
+        onClick: () => setCurrentView(ViewState.INVOICES),
+        isActive: currentView === ViewState.INVOICES
+      },
+      {
+        id: 'reports',
+        label: 'Relatórios',
+        shortLabel: 'Relatórios',
+        icon: <BarChart3 size={28} className="text-zinc-500 dark:text-zinc-400" />,
+        onClick: () => setCurrentView(ViewState.REPORTS),
+        isActive: currentView === ViewState.REPORTS
+      },
+      {
+        id: 'das',
+        label: 'Emissão DAS',
+        shortLabel: 'DAS',
+        icon: <FileText size={28} className="text-teal-500 dark:text-teal-400" />,
+        onClick: () => setCurrentView(ViewState.DAS),
+        isActive: currentView === ViewState.DAS
+      },
+      {
+        id: 'agenda',
+        label: 'Agenda',
+        shortLabel: 'Agenda',
+        icon: <CalendarDays size={28} className="text-sky-500 dark:text-sky-400" />,
+        onClick: () => setCurrentView(ViewState.AGENDA),
+        isActive: currentView === ViewState.AGENDA
+      },
+      {
+        id: 'audit',
+        label: 'Auditoria',
+        shortLabel: 'Auditoria',
+        icon: <History size={28} className="text-zinc-500 dark:text-zinc-400" />,
+        onClick: () => setAuditModalState({ isOpen: true, entityTypes: null }),
+        isActive: auditModalState.isOpen
+      },
+      {
+        id: 'calculator',
+        label: 'Calculadora',
+        shortLabel: 'Calc.',
+        icon: <Calculator size={28} className="text-zinc-500 dark:text-zinc-400" />,
+        onClick: () => setIsCalculatorOpen(true),
+        isActive: isCalculatorOpen
+      }
+    ],
+    [currentView, setCurrentView, resolveExpenseColor, auditModalState.isOpen, isCalculatorOpen, setAuditModalState, setIsCalculatorOpen]
+  );
 
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const resolveInitialTheme = (): ThemePreference => {
@@ -1414,6 +1605,39 @@ const AppInner: React.FC = () => {
     isCalculatorOpen,
     isPwaInstallOpen
   ]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tagName = target.tagName;
+        if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target.isContentEditable) {
+          return;
+        }
+      }
+      if (!/^[0-9]$/.test(event.key)) return;
+      const shortcuts: Record<string, ViewState> = {
+        '0': ViewState.DASHBOARD,
+        '1': ViewState.ACCOUNTS,
+        '2': ViewState.INCOMES,
+        '3': ViewState.FIXED_EXPENSES,
+        '4': ViewState.VARIABLE_EXPENSES,
+        '5': ViewState.PERSONAL_EXPENSES,
+        '6': ViewState.YIELDS,
+        '7': ViewState.INVOICES,
+        '8': ViewState.REPORTS,
+        '9': ViewState.DAS
+      };
+      const nextView = shortcuts[event.key];
+      if (!nextView) return;
+      event.preventDefault();
+      setCurrentView(nextView);
+    };
+    document.addEventListener('keydown', handleShortcut);
+    return () => document.removeEventListener('keydown', handleShortcut);
+  }, [setCurrentView]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -2227,6 +2451,76 @@ const AppInner: React.FC = () => {
       run();
   }, [currentUser, isStandalone]);
 
+  useEffect(() => {
+      const uid = authUser?.uid || null;
+      if (!uid) return;
+      if (!import.meta.env.DEV) return;
+      if (uid !== 'ZbrLdQuqn4MlOK16MjBOr6GZM3l1') return;
+      if (cryptoStatus !== 'ready' || !licenseCryptoEpoch) return;
+      if (typeof window === 'undefined') return;
+      const seedKey = `dev-seed:${uid}:v4`;
+      if (window.localStorage.getItem(seedKey) === 'done') return;
+      let cancelled = false;
+      (async () => {
+          try {
+              await seedDevUserData({ uid, licenseEpoch: licenseCryptoEpoch });
+              if (!cancelled) {
+                  window.localStorage.setItem(seedKey, 'done');
+              }
+          } catch (error) {
+              console.error('[dev-seed] failed', error);
+          }
+      })();
+      return () => {
+          cancelled = true;
+      };
+  }, [authUser?.uid, cryptoStatus, licenseCryptoEpoch]);
+
+  useEffect(() => {
+      const uid = authUser?.uid || null;
+      if (!uid) return;
+      if (!import.meta.env.DEV) return;
+      if (uid !== 'ZbrLdQuqn4MlOK16MjBOr6GZM3l1') return;
+      if (typeof window === 'undefined') return;
+      const bootstrapKey = `dev-seed:bootstrap:${uid}:v2`;
+      if (window.localStorage.getItem(bootstrapKey) === 'done') return;
+      const run = async () => {
+          try {
+              if (!companyInfo?.name) {
+                  const fallbackCompany: CompanyInfo = {
+                      name: 'Meumei Testes LTDA',
+                      cnpj: '12.345.678/0001-90',
+                      startDate: new Date().toISOString().slice(0, 10),
+                      address: 'Av. Principal, 123 - Centro, São Paulo/SP',
+                      zipCode: '01000-000',
+                      phone: '(11) 99999-9999',
+                      email: 'meumei.testes@example.com',
+                      website: 'https://meumei.testes'
+                  };
+                  await dataService.saveCompany(fallbackCompany, uid);
+                  setCompanyInfo(fallbackCompany);
+              }
+              if (!onboardingSettings?.onboardingCompleted) {
+                  await onboardingService.saveStatus(uid, {
+                      onboardingCompleted: true,
+                      onboardingCompletedAt: new Date().toISOString(),
+                      onboardingVersion: 1
+                  });
+                  setOnboardingSettings(prev => ({
+                      ...(prev || {}),
+                      onboardingCompleted: true,
+                      onboardingCompletedAt: new Date().toISOString(),
+                      onboardingVersion: 1
+                  }));
+              }
+              window.localStorage.setItem(bootstrapKey, 'done');
+          } catch (error) {
+              console.error('[dev-seed] bootstrap_failed', error);
+          }
+      };
+      void run();
+  }, [authUser?.uid, companyInfo?.name, onboardingSettings?.onboardingCompleted]);
+
   const isExpenseView = [
       ViewState.VARIABLE_EXPENSES,
       ViewState.FIXED_EXPENSES,
@@ -2258,6 +2552,9 @@ const AppInner: React.FC = () => {
       currentView === ViewState.ACCOUNTS ||
       currentView === ViewState.REPORTS ||
       currentView === ViewState.YIELDS;
+  const needsAgenda =
+      currentView === ViewState.DASHBOARD ||
+      currentView === ViewState.AGENDA;
 
   useEffect(() => {
       const licenseId = currentUser?.licenseId;
@@ -2403,9 +2700,37 @@ const AppInner: React.FC = () => {
               realtimeUnsubRef.current.yields = null;
               unsubscribe();
           }
-          console.info('[realtime][yields] unsubscribe', { licenseId, view: currentView });
+      console.info('[realtime][yields] unsubscribe', { licenseId, view: currentView });
       };
   }, [currentUser?.licenseId, licenseCryptoEpoch, needsYields, currentView]);
+
+  useEffect(() => {
+      const licenseId = currentUser?.licenseId;
+      if (!licenseId || !needsAgenda) return;
+      console.info('[realtime][agenda] subscribe_start', { licenseId, view: currentView });
+      const unsubscribe = dataService.subscribeAgenda(
+          licenseId,
+          (items) => {
+              console.info('[realtime][agenda] snapshot', { count: items.length });
+              setAgendaItems(items);
+          },
+          (error) => {
+              console.error('[realtime][agenda] error', {
+                  licenseId,
+                  message: (error as Error)?.message || error
+              });
+          }
+      );
+      realtimeUnsubRef.current.agenda = unsubscribe;
+      return () => {
+          const shouldUnsub = realtimeUnsubRef.current.agenda === unsubscribe;
+          if (shouldUnsub) {
+              realtimeUnsubRef.current.agenda = null;
+              unsubscribe();
+          }
+          console.info('[realtime][agenda] unsubscribe', { licenseId, view: currentView });
+      };
+  }, [currentUser?.licenseId, needsAgenda, currentView]);
 
   useEffect(() => {
       const uid = authUser?.uid;
@@ -2439,6 +2764,16 @@ const AppInner: React.FC = () => {
   }, [accountTypes, isStandalone]);
 
   useEffect(() => {
+      try {
+          localStorage.setItem('meumei_expense_types', JSON.stringify(expenseTypeOptions));
+      } catch (error) {
+          if (isStandalone) {
+              console.error('[pwa][boot]', error);
+          }
+      }
+  }, [expenseTypeOptions, isStandalone]);
+
+  useEffect(() => {
     try {
       const root = window.document.documentElement;
       root.classList.remove('dark', 'light');
@@ -2450,11 +2785,52 @@ const AppInner: React.FC = () => {
     }
   }, [theme, isStandalone]);
 
+  const agendaTodayKey = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
+  const agendaTodayItems = useMemo(
+    () => agendaItems.filter(item => item.date === agendaTodayKey),
+    [agendaItems, agendaTodayKey]
+  );
+  const agendaNoticeKey = `mm_agenda_notice_${agendaTodayKey}`;
+  const [agendaNoticeDismissed, setAgendaNoticeDismissed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setAgendaNoticeDismissed(localStorage.getItem(agendaNoticeKey) === '1');
+    } catch {
+      setAgendaNoticeDismissed(false);
+    }
+  }, [agendaNoticeKey]);
+
+  const dismissAgendaNotice = () => {
+    try {
+      localStorage.setItem(agendaNoticeKey, '1');
+    } catch {
+      // ignore
+    }
+    setAgendaNoticeDismissed(true);
+  };
+
   useEffect(() => {
       if (!canAccessSettings && currentView === ViewState.SETTINGS) {
           setCurrentView(ViewState.DASHBOARD);
       }
   }, [canAccessSettings, currentView]);
+
+  useEffect(() => {
+      const hasQuickType = expenseTypeOptions.some((option) => option.id === quickExpenseType && option.enabled);
+      if (!hasQuickType) {
+          const fallback = expenseTypeOptions.find((option) => option.enabled)?.id;
+          if (fallback) {
+              setQuickExpenseType(fallback);
+          }
+      }
+  }, [expenseTypeOptions, quickExpenseType]);
 
   const resolveViewForPayload = (payload: NavigatePayload): ViewState | null => {
       if (payload.view) return payload.view;
@@ -2685,6 +3061,49 @@ const AppInner: React.FC = () => {
       dataService.upsertExpenses(updated.filter(exp => !exp.locked), currentUser.licenseId, cryptoEpoch);
   };
 
+  const generateExpenseId = () => Math.random().toString(36).substr(2, 9);
+
+  const handleQuickExpenseSave = (payload: any) => {
+      if (!currentUser?.licenseId) return;
+      const cryptoEpoch = resolveCryptoEpoch();
+      if (!cryptoEpoch) return;
+      const items = Array.isArray(payload) ? payload : [payload];
+      const normalized = items.map((item: any) => ({
+          ...item,
+          id: item?.id || generateExpenseId(),
+          type: item?.type || quickExpenseType
+      })) as Expense[];
+      const nextExpenses = [...expenses, ...normalized];
+      let updatedAccounts = [...accounts];
+      let accountsChanged = false;
+      normalized.forEach((item) => {
+          if (!item.accountId || item.status !== 'paid') return;
+          const accIndex = updatedAccounts.findIndex(a => a.id === item.accountId);
+          if (accIndex < 0 || updatedAccounts[accIndex].locked) return;
+          const mutationId = `expense:new:${item.id}:${item.accountId}:${item.amount}:${item.status}`;
+          const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+              source: 'app',
+              action: 'create_paid',
+              accountId: item.accountId,
+              entityId: item.id,
+              amount: item.amount,
+              status: item.status
+          });
+          if (shouldApply) {
+              updatedAccounts[accIndex] = {
+                  ...updatedAccounts[accIndex],
+                  currentBalance: updatedAccounts[accIndex].currentBalance - item.amount
+              };
+              accountsChanged = true;
+          }
+      });
+      if (accountsChanged) {
+          void handleUpdateAccounts(updatedAccounts);
+      }
+      handleUpdateExpenses(nextExpenses);
+      setIsQuickExpenseOpen(false);
+  };
+
   const handleRefreshExpenses = async () => {
       if (!currentUser?.licenseId) return;
       const cryptoEpoch = resolveCryptoEpoch();
@@ -2814,6 +3233,28 @@ const AppInner: React.FC = () => {
       });
 
       cards.forEach(c => dataService.upsertCreditCard(c, currentUser.licenseId));
+  };
+
+  const handleUpsertAgendaItem = async (item: AgendaItem) => {
+      if (!currentUser?.licenseId) return;
+      try {
+          await dataService.upsertAgendaItem(item, currentUser.licenseId);
+      } catch (error) {
+          console.error('[agenda] upsert_failed', {
+              message: (error as Error)?.message || error
+          });
+      }
+  };
+
+  const handleDeleteAgendaItem = async (id: string) => {
+      if (!currentUser?.licenseId) return;
+      try {
+          await dataService.deleteAgendaItem(id, currentUser.licenseId);
+      } catch (error) {
+          console.error('[agenda] delete_failed', {
+              message: (error as Error)?.message || error
+          });
+      }
   };
 
   const handlePayInvoice = (expenseIds: string[], sourceAccountId: string, totalAmount: number) => {
@@ -3033,11 +3474,13 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 onThemeChange={handleThemeChange}
                 onOpenSettings={() => canAccessSettings && setCurrentView(ViewState.SETTINGS)}
                 onOpenReports={() => setCurrentView(ViewState.REPORTS)}
+                onOpenAgenda={() => setCurrentView(ViewState.AGENDA)}
                 onLogout={handleLogout}
-                onCompanyClick={() => setCurrentView(ViewState.COMPANY_DETAILS)}
+                onCompanyClick={() => setCompanySheetOpen(true)}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
                 onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: null })}
                 canAccessSettings={canAccessSettings}
+                versionLabel={APP_VERSION}
             />
             <div style={shouldOffset ? { paddingTop: 'var(--mm-mobile-top, 92px)' } : undefined}>
                 {cryptoStatus !== 'ready' && (
@@ -3054,7 +3497,48 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                         </div>
                     </div>
                 )}
+                {!agendaNoticeDismissed && agendaTodayItems.length > 0 && (
+                    <div className="mx-auto mt-4 max-w-5xl px-4">
+                        <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/10 px-4 py-3 text-emerald-800 dark:text-emerald-200 text-sm">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <p className="font-semibold">Agenda de hoje</p>
+                                    <p className="text-[12px] text-emerald-700 dark:text-emerald-200/80">
+                                        {agendaTodayItems.length} compromisso(s) marcado(s) para hoje.
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCurrentView(ViewState.AGENDA)}
+                                        className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
+                                    >
+                                        Ver agenda
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={dismissAgendaNotice}
+                                        className="rounded-full border border-emerald-300/70 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/60 dark:text-emerald-100 dark:hover:bg-emerald-800/40"
+                                    >
+                                        Dispensar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 {content}
+                {!isMobile && companySheetOpen && (
+                    <div
+                        className="fixed inset-x-0 z-[120] px-4 sm:px-6"
+                        style={{ bottom: 'calc(var(--mm-desktop-dock-height, 84px) + 10px)' }}
+                        data-modal-root="true"
+                    >
+                        <div className="mx-auto w-full max-w-5xl">
+                            <CompanyDetailsSheet company={companyInfo} onClose={() => setCompanySheetOpen(false)} />
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -3532,9 +4016,18 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
         {currentView === ViewState.DASHBOARD && renderLayout(
             <Dashboard 
                 onOpenAccounts={() => setCurrentView(ViewState.ACCOUNTS)}
-                onOpenVariableExpenses={() => setCurrentView(ViewState.VARIABLE_EXPENSES)}
-                onOpenFixedExpenses={() => setCurrentView(ViewState.FIXED_EXPENSES)}
-                onOpenPersonalExpenses={() => setCurrentView(ViewState.PERSONAL_EXPENSES)}
+                onOpenVariableExpenses={() => {
+                    setMobileExpensesScope('variable');
+                    setCurrentView(ViewState.VARIABLE_EXPENSES);
+                }}
+                onOpenFixedExpenses={() => {
+                    setMobileExpensesScope('fixed');
+                    setCurrentView(ViewState.FIXED_EXPENSES);
+                }}
+                onOpenPersonalExpenses={() => {
+                    setMobileExpensesScope('personal');
+                    setCurrentView(ViewState.PERSONAL_EXPENSES);
+                }}
                 onOpenIncomes={() => setCurrentView(ViewState.INCOMES)}
                 onOpenYields={() => setCurrentView(ViewState.YIELDS)}
                 onOpenInvoices={() => setCurrentView(ViewState.INVOICES)}
@@ -3579,6 +4072,16 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              companyName={companyInfo.name}
              creditCards={creditCards}
              licenseId={currentUser?.licenseId}
+          />,
+          { skipMobileOffset: true }
+      )}
+
+      {currentView === ViewState.AGENDA && renderLayout(
+          <AgendaView
+            items={agendaItems}
+            onSave={handleUpsertAgendaItem}
+            onDelete={handleDeleteAgendaItem}
+            onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />
       )}
 
@@ -3645,9 +4148,11 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           <FaturasErrorBoundary>
               <InvoicesView 
                  onBack={() => setCurrentView(ViewState.DASHBOARD)}
+                 onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
                  expenses={expenses}
                  creditCards={creditCards}
                  accounts={accounts}
+                 viewDate={viewDate}
                  onPayInvoice={handlePayInvoice}
                  onUpdateExpenses={handleUpdateExpenses}
                  onUpdateCreditCards={handleUpdateCreditCards}
@@ -3665,11 +4170,13 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
 
       {/* Expense Views */}
       {currentView === ViewState.VARIABLE_EXPENSES && renderLayout(
-          <ExpensesView 
+         <ExpensesView 
              title="Despesas Variáveis"
              subtitle="Gerencie seus gastos"
              expenseType="variable"
              themeColor="pink"
+             expenseTypeOptions={expenseTypeOptions}
+             onUpdateExpenseTypes={setExpenseTypeOptions}
              expenses={expenses}
              onUpdateExpenses={handleUpdateExpenses}
              onDeleteExpense={handleDeleteExpense}
@@ -3684,17 +4191,20 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
              onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.FIXED_EXPENSES && renderLayout(
-          <ExpensesView 
+         <ExpensesView 
              title="Despesas Fixas"
              subtitle="Contas recorrentes"
              expenseType="fixed"
              themeColor="amber"
+             expenseTypeOptions={expenseTypeOptions}
+             onUpdateExpenseTypes={setExpenseTypeOptions}
              expenses={expenses}
              onUpdateExpenses={handleUpdateExpenses}
              onDeleteExpense={handleDeleteExpense}
@@ -3709,17 +4219,20 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
              onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.PERSONAL_EXPENSES && renderLayout(
-          <ExpensesView 
+         <ExpensesView 
              title="Despesas Pessoais"
              subtitle="Retiradas pessoais"
              expenseType="personal"
              themeColor="cyan"
+             expenseTypeOptions={expenseTypeOptions}
+             onUpdateExpenseTypes={setExpenseTypeOptions}
              expenses={expenses}
              onUpdateExpenses={handleUpdateExpenses}
              onDeleteExpense={handleDeleteExpense}
@@ -3734,6 +4247,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
              onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
@@ -3769,6 +4283,36 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           licenseId={currentUser?.licenseId || null}
           entityTypes={auditModalState.entityTypes ?? undefined}
       />
+      {isMobile && isQuickExpenseOpen && (
+          <NewExpenseModal
+              isOpen
+              onClose={() => setIsQuickExpenseOpen(false)}
+              onSave={handleQuickExpenseSave}
+              initialData={null}
+              accounts={accounts}
+              creditCards={creditCards}
+              categories={expenseCategories}
+              userId={authUser?.uid || null}
+              categoryType="expenses"
+              onAddCategory={(name) => handleAddCategory('expenses', name)}
+              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
+              onResetCategories={handleResetCategories}
+              expenseType={quickExpenseType}
+              allowTypeSelection
+              onExpenseTypeChange={setQuickExpenseType}
+              expenseTypeOptions={expenseTypeOptions}
+              onUpdateExpenseTypes={setExpenseTypeOptions}
+              themeColor={
+                  quickExpenseType === 'fixed'
+                      ? 'amber'
+                      : quickExpenseType === 'personal'
+                        ? 'cyan'
+                        : 'pink'
+              }
+              defaultDate={viewDate}
+              minDate={minTransactionDate}
+          />
+      )}
       {installBannerVisible && (
           <div className="fixed bottom-4 left-4 right-4 z-[85] md:left-auto md:right-6">
               <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#121214] px-4 py-3 text-white shadow-2xl md:flex-row md:items-center">
@@ -3848,7 +4392,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           <DesktopQuickAccessFooter items={desktopQuickAccessItems} />
       )}
       {isMobileLandscape && (
-          <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
+          <div className="mobile-landscape-overlay fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
               <div className="w-full max-w-xs rounded-2xl bg-white dark:bg-[#111114] border border-white/10 dark:border-zinc-800 shadow-2xl px-5 py-4 text-center">
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white">Use em modo retrato</p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">

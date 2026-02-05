@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Maximize2, Minimize2, Minus, Plus, X } from 'lucide-react';
+import { Hand, Maximize2, Minimize2, Minus, Plus, X } from 'lucide-react';
 import type { Account, CreditCard, Expense, Income } from '../../types';
 import type { YieldRecord } from '../../services/yieldsService';
 import {
@@ -59,7 +59,6 @@ interface FinancialMapProps {
   yields: YieldRecord[];
   accounts: Account[];
   creditCards: CreditCard[];
-  periodLabel: string;
   isMobile: boolean;
 }
 
@@ -250,7 +249,6 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   yields,
   accounts,
   creditCards,
-  periodLabel,
   isMobile
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -259,6 +257,9 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   const [expandedGroups, setExpandedGroups] = useState<Set<NodeGroup>>(new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [supportsNativeFullscreen, setSupportsNativeFullscreen] = useState(false);
+  const [isTouchInteractionEnabled, setIsTouchInteractionEnabled] = useState(false);
+  const [showDesktopOnlyNotice, setShowDesktopOnlyNotice] = useState(false);
   const [hoverInfo, setHoverInfo] = useState<
     | {
         node: ReportNodeData;
@@ -303,14 +304,21 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     viewportRef.current = viewport;
   }, [viewport]);
 
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') return;
+    const element = containerRef.current;
+    setSupportsNativeFullscreen(Boolean(document.fullscreenEnabled && element?.requestFullscreen));
+  }, []);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
+    if (!supportsNativeFullscreen) return;
     const handleChange = () => {
       setIsFullscreen(document.fullscreenElement === containerRef.current);
     };
     document.addEventListener('fullscreenchange', handleChange);
     return () => document.removeEventListener('fullscreenchange', handleChange);
-  }, []);
+  }, [supportsNativeFullscreen]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -324,6 +332,29 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
       root.classList.remove('allow-landscape');
     };
   }, [isFullscreen, isMobile]);
+
+  useEffect(() => {
+    if (!isMobile) {
+      setIsTouchInteractionEnabled(true);
+      return;
+    }
+    if (isFullscreen) {
+      setIsTouchInteractionEnabled(true);
+    }
+  }, [isFullscreen, isMobile]);
+
+  const isOverlayFullscreen = isFullscreen && !supportsNativeFullscreen;
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (!isOverlayFullscreen) return;
+    const { style } = document.body;
+    const prevOverflow = style.overflow;
+    style.overflow = 'hidden';
+    return () => {
+      style.overflow = prevOverflow;
+    };
+  }, [isOverlayFullscreen]);
 
   const expenseFixed = transactions.expenses.filter(exp => exp.type === 'fixed');
   const expenseVariable = transactions.expenses.filter(exp => exp.type === 'variable');
@@ -639,6 +670,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!containerRef.current) return;
+    if (isMobile && event.pointerType === 'touch' && !isTouchInteractionEnabled) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('button')) return;
     containerRef.current.setPointerCapture(event.pointerId);
@@ -668,6 +700,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile && event.pointerType === 'touch' && !isTouchInteractionEnabled) return;
     if (!pointersRef.current.has(event.pointerId)) return;
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const gesture = gestureRef.current;
@@ -708,6 +741,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile && event.pointerType === 'touch' && !isTouchInteractionEnabled) return;
     if (!pointersRef.current.has(event.pointerId)) return;
     pointersRef.current.delete(event.pointerId);
     if (pointersRef.current.size === 1) {
@@ -748,16 +782,104 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     if (typeof document === 'undefined') return;
     const element = containerRef.current;
     if (!element) return;
-    if (!document.fullscreenEnabled || !element.requestFullscreen) {
+    if (!supportsNativeFullscreen) {
       setIsFullscreen(prev => !prev);
       return;
     }
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    } else {
-      await element.requestFullscreen();
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await element.requestFullscreen();
+      }
+    } catch (error) {
+      console.warn('[fullscreen] fallback', error);
+      setIsFullscreen(prev => !prev);
     }
   };
+
+  const handleFullscreenClick = () => {
+    if (isMobile) {
+      setShowDesktopOnlyNotice(true);
+      window.setTimeout(() => setShowDesktopOnlyNotice(false), 2000);
+      return;
+    }
+    void toggleFullscreen();
+  };
+
+  const mapControls = (
+    <>
+      <button
+        type="button"
+        onClick={handleFullscreenClick}
+        className={`h-9 w-9 rounded-full border border-white/10 text-white transition ${
+          isMobile ? 'bg-white/5 text-white/60' : 'bg-white/10 hover:bg-white/20'
+        }`}
+        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
+      >
+        {isFullscreen ? (
+          <Minimize2 size={16} className="mx-auto" />
+        ) : (
+          <Maximize2 size={16} className="mx-auto" />
+        )}
+      </button>
+      {isMobile && (
+        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-white/70">
+          Tela cheia só no computador
+        </div>
+      )}
+      {isMobile && showDesktopOnlyNotice && (
+        <div className="rounded-xl border border-white/10 bg-slate-900/95 px-3 py-2 text-[11px] text-white shadow-lg">
+          Tela cheia disponível apenas no computador.
+        </div>
+      )}
+      {isMobile && (
+        <button
+          type="button"
+          onClick={() => setIsTouchInteractionEnabled(prev => !prev)}
+          className={`h-9 rounded-full border border-white/10 px-3 text-xs font-semibold text-white transition ${
+            isTouchInteractionEnabled ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'
+          }`}
+          aria-label={isTouchInteractionEnabled ? 'Desativar interação no mapa' : 'Ativar interação no mapa'}
+        >
+          <span className="flex items-center gap-2">
+            <Hand size={14} />
+            {isTouchInteractionEnabled ? 'Mapa ativo' : 'Mapa scroll'}
+          </span>
+        </button>
+      )}
+    </>
+  );
+
+  const fullscreenFooter = !isMobile && isFullscreen ? (
+    <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-slate-950/60 px-4 py-2 shadow-lg backdrop-blur">
+      <button
+        type="button"
+        onClick={handleFullscreenClick}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Sair da tela cheia"
+      >
+        <Minimize2 size={16} className="mx-auto" />
+      </button>
+      <div className="h-5 w-px bg-white/10" />
+      <button
+        type="button"
+        onClick={() => handleZoom('out')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Diminuir zoom"
+      >
+        <Minus size={16} className="mx-auto" />
+      </button>
+      <button
+        type="button"
+        onClick={() => handleZoom('in')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Aumentar zoom"
+      >
+        <Plus size={16} className="mx-auto" />
+      </button>
+    </div>
+  ) : null;
 
   const layout = useMemo(() => {
     if (!mapSize.width || !mapSize.height) return null;
@@ -927,216 +1049,202 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   }, [accountNameById, cardNameById, details]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col h-full gap-4">
+      <div className="flex items-start justify-start">
         <div>
-          <h2 className="text-xl font-semibold text-white">Mapa Financeiro</h2>
-          <p className="text-sm text-slate-300">{periodLabel}</p>
-        </div>
-        <div className="text-right text-sm text-slate-400">
-          <div>Receita comprometida</div>
-          <div className="text-white text-lg font-semibold">
-            {commitmentPercent.toFixed(1)}%
-          </div>
+          <h2 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-white`}>Mapa Financeiro</h2>
+          <p className={`${isMobile ? 'text-[11px]' : 'text-sm'} text-slate-400`}>
+            Receita comprometida{' '}
+            <span className="text-white font-semibold">{commitmentPercent.toFixed(1)}%</span>
+          </p>
         </div>
       </div>
 
       <div
-        ref={containerRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        onPointerLeave={handlePointerUp}
-        onWheel={handleWheel}
-        className={`relative border border-white/10 overflow-hidden ${
-          isFullscreen
-            ? 'rounded-none h-full w-full box-border'
-            : 'rounded-3xl min-h-[560px] h-[560px] md:h-[640px]'
-        }`}
+        className={`relative ${isOverlayFullscreen ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0'}`}
         style={{
-          background:
-            'radial-gradient(circle at 20% 20%, rgba(59,130,246,0.14), rgba(15,23,42,0.75) 45%), radial-gradient(circle at 80% 10%, rgba(236,72,153,0.16), rgba(15,23,42,0.6) 55%)',
-          touchAction: 'none'
+          paddingTop: isOverlayFullscreen ? 'env(safe-area-inset-top)' : undefined,
+          paddingBottom: isOverlayFullscreen ? 'env(safe-area-inset-bottom)' : undefined
         }}
       >
-        <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white hover:bg-white/20 transition"
-            aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
-          >
-            {isFullscreen ? (
-              <Minimize2 size={16} className="mx-auto" />
-            ) : (
-              <Maximize2 size={16} className="mx-auto" />
-            )}
-          </button>
-          {!isMobile && (
-            <>
-              <button
-                type="button"
-                onClick={() => handleZoom('in')}
-                className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white hover:bg-white/20 transition"
-                aria-label="Aumentar zoom"
-              >
-                <Plus size={16} className="mx-auto" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleZoom('out')}
-                className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white hover:bg-white/20 transition"
-                aria-label="Diminuir zoom"
-              >
-                <Minus size={16} className="mx-auto" />
-              </button>
-            </>
-          )}
-        </div>
-        <div
-          className="absolute inset-0"
-          style={{
-            transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`,
-            transformOrigin: 'center center'
-          }}
-        >
-          {layout && (
-            <div
-              className="relative"
-              style={{ width: layout.canvas.width, height: layout.canvas.height }}
-            >
-              <svg
-                className="absolute inset-0"
-                width={layout.canvas.width}
-                height={layout.canvas.height}
-                viewBox={`0 0 ${layout.canvas.width} ${layout.canvas.height}`}
-                fill="none"
-                style={{ pointerEvents: 'none' }}
-              >
-                {layout.edgePaths.map(edge => (
-                  <path
-                    key={edge.id}
-                    d={edge.path}
-                    stroke={hexToRgba(edge.color, edge.isActive ? 0.9 : 0.6)}
-                    strokeWidth={edge.isActive ? 2.6 : 2}
-                    strokeLinecap="round"
-                  />
-                ))}
-              </svg>
-
-              <div className="absolute inset-0">
-                {nodes.map(node => {
-                  const nodeLayout = layout.nodeMap.get(node.id);
-                  if (!nodeLayout) return null;
-                  const data = { ...node.data, size: nodeLayout.size };
-                  return (
-                    <div
-                      key={node.id}
-                      style={{
-                        position: 'absolute',
-                        left: nodeLayout.x,
-                        top: nodeLayout.y,
-                        transform: 'translate(-50%, -50%)'
-                      }}
-                    >
-                      <ReportNode
-                        data={data}
-                        width={nodeLayout.width}
-                        height={nodeLayout.height}
-                        selected={activeNode?.label === node.data.label}
-                        onClick={() => handleNodeClick(node.data)}
-                        onMouseEnter={event => {
-                          if (isMobile) return;
-                          setHoveredNodeId(node.id);
-                          setHoverInfo({ node: node.data, x: event.clientX, y: event.clientY });
-                        }}
-                        onMouseMove={event => {
-                          if (isMobile) return;
-                          setHoverInfo({ node: node.data, x: event.clientX, y: event.clientY });
-                        }}
-                        onMouseLeave={() => {
-                          if (isMobile) return;
-                          setHoveredNodeId(null);
-                          setHoverInfo(null);
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {hoverInfo && (
+        <div className="flex gap-4 items-stretch h-full min-h-0">
           <div
-            className="fixed z-30 pointer-events-none bg-slate-900/95 text-white text-xs px-3 py-2 rounded-lg shadow-lg"
-            style={{ left: hoverInfo.x + 12, top: hoverInfo.y + 12 }}
-          >
-            <div className="font-semibold">{hoverInfo.node.label}</div>
-            <div>{formatCurrency(hoverInfo.node.value)}</div>
-            <div className="text-slate-400">{hoverInfo.node.percent.toFixed(1)}%</div>
-          </div>
-        )}
-
-        {activeNode && details && (
-          <div
-            className={`absolute top-0 right-0 h-full w-full max-w-sm bg-slate-950/95 border-l border-white/10 p-5 overflow-y-auto ${
-              isMobile ? 'max-w-full' : ''
+            ref={containerRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            onWheel={handleWheel}
+            className={`relative border border-white/10 overflow-hidden flex-1 ${
+              isFullscreen
+                ? 'rounded-none h-full w-full box-border'
+                : 'rounded-3xl h-full min-h-[420px] md:min-h-[520px]'
             }`}
+            style={{
+              background:
+                'radial-gradient(circle at 20% 20%, rgba(59,130,246,0.14), rgba(15,23,42,0.75) 45%), radial-gradient(circle at 80% 10%, rgba(236,72,153,0.16), rgba(15,23,42,0.6) 55%)',
+              touchAction: isMobile && !isTouchInteractionEnabled ? 'pan-y' : 'none'
+            }}
           >
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Detalhes</div>
-                <h3 className="text-lg font-semibold text-white mt-2">{details.title}</h3>
-                <p className="text-sm text-slate-300">
-                  {formatCurrency(details.value)} • {details.percent.toFixed(1)}%
-                </p>
+            {isMobile && !isFullscreen && (
+              <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
+                {mapControls}
               </div>
-              <button
-                onClick={() => {
-                  setActiveNode(null);
-                }}
-                className="text-slate-400 hover:text-white"
-                aria-label="Fechar detalhes"
-              >
-                <X size={18} />
-              </button>
+            )}
+            {fullscreenFooter}
+
+            <div
+              className="absolute inset-0"
+              style={{
+                transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`,
+                transformOrigin: 'center center'
+              }}
+            >
+              {layout && (
+                <div
+                  className="relative"
+                  style={{ width: layout.canvas.width, height: layout.canvas.height }}
+                >
+                  <svg
+                    className="absolute inset-0"
+                    width={layout.canvas.width}
+                    height={layout.canvas.height}
+                    viewBox={`0 0 ${layout.canvas.width} ${layout.canvas.height}`}
+                    fill="none"
+                    style={{ pointerEvents: 'none' }}
+                  >
+                    {layout.edgePaths.map(edge => (
+                      <path
+                        key={edge.id}
+                        d={edge.path}
+                        stroke={hexToRgba(edge.color, edge.isActive ? 0.9 : 0.6)}
+                        strokeWidth={edge.isActive ? 2.6 : 2}
+                        strokeLinecap="round"
+                      />
+                    ))}
+                  </svg>
+
+                  <div className="absolute inset-0">
+                    {nodes.map(node => {
+                      const nodeLayout = layout.nodeMap.get(node.id);
+                      if (!nodeLayout) return null;
+                      const data = { ...node.data, size: nodeLayout.size };
+                      return (
+                        <div
+                          key={node.id}
+                          style={{
+                            position: 'absolute',
+                            left: nodeLayout.x,
+                            top: nodeLayout.y,
+                            transform: 'translate(-50%, -50%)'
+                          }}
+                        >
+                          <ReportNode
+                            data={data}
+                            width={nodeLayout.width}
+                            height={nodeLayout.height}
+                            selected={activeNode?.label === node.data.label}
+                            onClick={() => handleNodeClick(node.data)}
+                            onMouseEnter={event => {
+                              if (isMobile) return;
+                              setHoveredNodeId(node.id);
+                              setHoverInfo({ node: node.data, x: event.clientX, y: event.clientY });
+                            }}
+                            onMouseMove={event => {
+                              if (isMobile) return;
+                              setHoverInfo({ node: node.data, x: event.clientX, y: event.clientY });
+                            }}
+                            onMouseLeave={() => {
+                              if (isMobile) return;
+                              setHoveredNodeId(null);
+                              setHoverInfo(null);
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="mt-6 space-y-3">
-              {detailRows.length === 0 && (
-                <div className="text-sm text-slate-400">Sem lançamentos no período.</div>
-              )}
-              {detailRows.map(row => (
-                <div
-                  key={row.id}
-                  className="flex items-start justify-between gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3"
-                >
+            {hoverInfo && (
+              <div
+                className="fixed z-30 pointer-events-none bg-slate-900/95 text-white text-xs px-3 py-2 rounded-lg shadow-lg"
+                style={{ left: hoverInfo.x + 12, top: hoverInfo.y + 12 }}
+              >
+                <div className="font-semibold">{hoverInfo.node.label}</div>
+                <div>{formatCurrency(hoverInfo.node.value)}</div>
+                <div className="text-slate-400">{hoverInfo.node.percent.toFixed(1)}%</div>
+              </div>
+            )}
+
+            {activeNode && details && (
+              <div
+                className={`absolute top-0 right-0 h-full w-full max-w-sm bg-slate-950/95 border-l border-white/10 p-5 overflow-y-auto ${
+                  isMobile ? 'max-w-full' : ''
+                }`}
+              >
+                <div className="flex items-start justify-between">
                   <div>
-                    <div className="text-sm font-semibold text-white">{row.title}</div>
-                    <div className="text-xs text-slate-400">{row.subtitle}</div>
-                    <div className="text-[11px] text-slate-500">{row.date}</div>
+                    <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Detalhes</div>
+                    <h3 className="text-lg font-semibold text-white mt-2">{details.title}</h3>
+                    <p className="text-sm text-slate-300">
+                      {formatCurrency(details.value)} • {details.percent.toFixed(1)}%
+                    </p>
                   </div>
-                  <div className="text-right">
-                    <div className="text-sm font-semibold text-white">
-                      {formatCurrency(row.amount)}
-                    </div>
-                    <div className="text-[10px] text-slate-400 uppercase tracking-widest">
-                      {row.badge}
-                    </div>
-                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveNode(null);
+                    }}
+                    className="text-slate-400 hover:text-white"
+                    aria-label="Fechar detalhes"
+                  >
+                    <X size={18} />
+                  </button>
                 </div>
-              ))}
-              {details.items.length > detailRows.length && (
-                <div className="text-xs text-slate-400">
-                  Mostrando {detailRows.length} de {details.items.length} lançamentos.
+
+                <div className="mt-6 space-y-3">
+                  {detailRows.length === 0 && (
+                    <div className="text-sm text-slate-400">Sem lançamentos no período.</div>
+                  )}
+                  {detailRows.map(row => (
+                    <div
+                      key={row.id}
+                      className="flex items-start justify-between gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3"
+                    >
+                      <div>
+                        <div className="text-sm font-semibold text-white">{row.title}</div>
+                        <div className="text-xs text-slate-400">{row.subtitle}</div>
+                        <div className="text-[11px] text-slate-500">{row.date}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-semibold text-white">
+                          {formatCurrency(row.amount)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 uppercase tracking-widest">
+                          {row.badge}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {details.items.length > detailRows.length && (
+                    <div className="text-xs text-slate-400">
+                      Mostrando {detailRows.length} de {details.items.length} lançamentos.
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
-        )}
+
+          {!isMobile && !isFullscreen && (
+            <div className="flex flex-col items-center gap-2 self-stretch rounded-2xl border border-white/10 bg-slate-950/40 px-2 py-3 min-w-[52px]">
+              {mapControls}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

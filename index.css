@@ -2,6 +2,121 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Compacta automaticamente telas baixas (baseline 1366x768). */
+@media (max-height: 820px) {
+  .yield-density {
+    padding: 10px;
+    gap: 10px;
+  }
+  .yield-density .rounded-2xl {
+    padding: 6px 8px;
+  }
+  .yield-density .text-3xl {
+    font-size: 1.6rem;
+    line-height: 1.95rem;
+  }
+  .yield-density .text-2xl {
+    font-size: 1.45rem;
+    line-height: 1.8rem;
+  }
+  .yield-density .text-sm {
+    font-size: 0.84rem;
+  }
+  .yield-density .text-xs {
+    font-size: 0.7rem;
+  }
+  .yield-density .text-\[11px\] {
+    font-size: 10px;
+  }
+  .yield-density .text-\[10px\] {
+    font-size: 9px;
+  }
+  .yield-density .text-\[9px\] {
+    font-size: 8px;
+  }
+  .yield-density .space-y-3 {
+    row-gap: 8px;
+  }
+  .yield-density .space-y-2\.5 {
+    row-gap: 6px;
+  }
+  .yield-density .space-y-2 {
+    row-gap: 6px;
+  }
+  .yield-density .space-y-1\.5 {
+    row-gap: 5px;
+  }
+  .yield-density .gap-3 {
+    gap: 8px;
+  }
+  .yield-density .gap-2\.5 {
+    gap: 6px;
+  }
+  .yield-density .gap-2 {
+    gap: 6px;
+  }
+  .yield-density .gap-1\.5 {
+    gap: 5px;
+  }
+}
+
+@media (max-height: 740px) {
+  .yield-density {
+    padding: 8px;
+    gap: 8px;
+  }
+  .yield-density .rounded-2xl {
+    padding: 5px 7px;
+  }
+  .yield-density .text-3xl {
+    font-size: 1.45rem;
+    line-height: 1.75rem;
+  }
+  .yield-density .text-2xl {
+    font-size: 1.35rem;
+    line-height: 1.65rem;
+  }
+  .yield-density .text-sm {
+    font-size: 0.8rem;
+  }
+  .yield-density .text-xs {
+    font-size: 0.68rem;
+  }
+  .yield-density .text-\[11px\] {
+    font-size: 9px;
+  }
+  .yield-density .text-\[10px\] {
+    font-size: 8px;
+  }
+  .yield-density .text-\[9px\] {
+    font-size: 7px;
+  }
+  .yield-density .space-y-3 {
+    row-gap: 6px;
+  }
+  .yield-density .space-y-2\.5 {
+    row-gap: 5px;
+  }
+  .yield-density .space-y-2 {
+    row-gap: 5px;
+  }
+  .yield-density .space-y-1\.5 {
+    row-gap: 4px;
+  }
+  .yield-density .gap-3 {
+    gap: 6px;
+  }
+  .yield-density .gap-2\.5 {
+    gap: 5px;
+  }
+  .yield-density .gap-2 {
+    gap: 5px;
+  }
+  .yield-density .gap-1\.5 {
+    gap: 4px;
+  }
+}
+
 html,
 body,
 #root {
@@ -19,9 +134,36 @@ body,
   min-height: 100%;
 }
 
+.dashboard-desktop {
+  scrollbar-width: none;
+}
+
+.dashboard-desktop::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+html:not(.is-mobile) body {
+  scrollbar-width: none;
+}
+
+html:not(.is-mobile) body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+html:not(.is-mobile) {
+  scrollbar-width: none;
+}
+
+html:not(.is-mobile)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 html.is-mobile,
@@ -79,6 +221,10 @@ html.is-mobile .mobile-quick-access-scroll::-webkit-scrollbar {
   display: none;
 }
 
+body.hide-quick-access .mobile-quick-access-footer {
+  display: none;
+}
+
 .scrollbar-hide {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -88,6 +234,32 @@ html.is-mobile .mobile-quick-access-scroll::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;
+}
+
+html.lock-scroll,
+body.lock-scroll {
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+  position: fixed;
+  overscroll-behavior: none;
+}
+
+body.lock-scroll #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+.no-vertical-scroll {
+  overflow-y: hidden;
+  touch-action: pan-x;
+  overscroll-behavior-y: none;
+}
+
+@media (min-width: 768px) {
+  .mm-subheader {
+    height: 164px;
+  }
 }
 
 html.is-mobile .quick-access-shell::before {
@@ -126,12 +298,7 @@ html.dark .quick-access-shell::before {
 }
 
 html.dark .quick-access-shell::after {
-  background: linear-gradient(
-      180deg,
-      rgba(0, 0, 0, 0.3),
-      rgba(0, 0, 0, 0) 16%
-    ),
-    linear-gradient(0deg, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0) 16%);
+  background: none;
 }
 
 html:not(.is-mobile):not(.dark) .quick-access-shell::before {
@@ -139,12 +306,7 @@ html:not(.is-mobile):not(.dark) .quick-access-shell::before {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.12),
-    rgba(255, 255, 255, 0.03) 30%,
-    rgba(255, 255, 255, 0) 60%
-  );
+  background: none;
 }
 
 html:not(.is-mobile):not(.dark) .quick-access-shell::after {
@@ -152,12 +314,7 @@ html:not(.is-mobile):not(.dark) .quick-access-shell::after {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(
-      180deg,
-      rgba(0, 0, 0, 0.32),
-      rgba(0, 0, 0, 0) 18%
-    ),
-    linear-gradient(0deg, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0) 18%);
+  background: none;
 }
 
 html.dark:not(.is-mobile) .quick-access-shell::before {
@@ -165,12 +322,7 @@ html.dark:not(.is-mobile) .quick-access-shell::before {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.08),
-    rgba(255, 255, 255, 0.02) 30%,
-    rgba(255, 255, 255, 0) 60%
-  );
+  background: none;
 }
 
 html.dark:not(.is-mobile) .quick-access-shell::after {
@@ -178,12 +330,7 @@ html.dark:not(.is-mobile) .quick-access-shell::after {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(
-      180deg,
-      rgba(0, 0, 0, 0.3),
-      rgba(0, 0, 0, 0) 16%
-    ),
-    linear-gradient(0deg, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0) 16%);
+  background: none;
 }
 
 @media (orientation: landscape) {
@@ -206,6 +353,10 @@ html.dark:not(.is-mobile) .quick-access-shell::after {
   html.is-mobile:not(.allow-landscape) #root {
     visibility: hidden;
   }
+}
+
+html.allow-landscape .mobile-landscape-overlay {
+  display: none;
 }
 
 @media (display-mode: standalone) {

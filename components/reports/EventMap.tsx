@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
 import type { Account, CreditCard, Expense, Income } from '../../types';
 import { formatCompactCurrency, formatCurrency, formatShortDate } from './reportUtils';
 import { getAccountColor, getCardColor, withAlpha } from '../../services/cardColorUtils';
@@ -27,7 +27,6 @@ type EventItem = {
 };
 
 interface EventMapProps {
-  periodLabel: string;
   transactions: ReportTransactions;
   accounts: Account[];
   creditCards: CreditCard[];
@@ -86,7 +85,6 @@ const buildNeonGradient = (balance?: number) => {
 };
 
 const EventMap: React.FC<EventMapProps> = ({
-  periodLabel,
   transactions,
   accounts,
   creditCards,
@@ -96,6 +94,8 @@ const EventMap: React.FC<EventMapProps> = ({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [supportsNativeFullscreen, setSupportsNativeFullscreen] = useState(false);
+  const [showDesktopOnlyNotice, setShowDesktopOnlyNotice] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [zoom, setZoom] = useState(1);
   const accountNameById = useMemo(
@@ -223,14 +223,21 @@ const EventMap: React.FC<EventMapProps> = ({
 
   const totalEvents = lanes.reduce((sum, lane) => sum + lane.events.length, 0);
 
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') return;
+    const element = containerRef.current;
+    setSupportsNativeFullscreen(Boolean(document.fullscreenEnabled && element?.requestFullscreen));
+  }, []);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
+    if (!supportsNativeFullscreen) return;
     const handleChange = () => {
       setIsFullscreen(document.fullscreenElement === containerRef.current);
     };
     document.addEventListener('fullscreenchange', handleChange);
     return () => document.removeEventListener('fullscreenchange', handleChange);
-  }, []);
+  }, [supportsNativeFullscreen]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -245,25 +252,112 @@ const EventMap: React.FC<EventMapProps> = ({
     };
   }, [isFullscreen, isMobile]);
 
+  const isOverlayFullscreen = isFullscreen && !supportsNativeFullscreen;
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (!isOverlayFullscreen) return;
+    const { style } = document.body;
+    const prevOverflow = style.overflow;
+    style.overflow = 'hidden';
+    return () => {
+      style.overflow = prevOverflow;
+    };
+  }, [isOverlayFullscreen]);
+
   const toggleFullscreen = async () => {
     if (typeof document === 'undefined') return;
     const element = containerRef.current;
     if (!element) return;
-    if (!document.fullscreenEnabled || !element.requestFullscreen) {
+    if (!supportsNativeFullscreen) {
       setIsFullscreen(prev => !prev);
       return;
     }
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    } else {
-      await element.requestFullscreen();
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await element.requestFullscreen();
+      }
+    } catch (error) {
+      console.warn('[fullscreen] fallback', error);
+      setIsFullscreen(prev => !prev);
     }
+  };
+
+  const handleFullscreenClick = () => {
+    if (isMobile) {
+      setShowDesktopOnlyNotice(true);
+      window.setTimeout(() => setShowDesktopOnlyNotice(false), 2000);
+      return;
+    }
+    void toggleFullscreen();
   };
 
   const handleZoom = (direction: 'in' | 'out') => {
     const step = direction === 'in' ? 0.12 : -0.12;
     setZoom(prev => clamp(prev + step, MIN_ZOOM, MAX_ZOOM));
   };
+
+  const mapControls = (
+    <>
+      <button
+        type="button"
+        onClick={handleFullscreenClick}
+        className={`h-9 w-9 rounded-full border border-white/10 text-white transition ${
+          isMobile ? 'bg-white/5 text-white/60' : 'bg-white/10 hover:bg-white/20'
+        }`}
+        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
+      >
+        {isFullscreen ? (
+          <Minimize2 size={16} className="mx-auto" />
+        ) : (
+          <Maximize2 size={16} className="mx-auto" />
+        )}
+      </button>
+      {isMobile && (
+        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-white/70">
+          Tela cheia só no computador
+        </div>
+      )}
+      {isMobile && showDesktopOnlyNotice && (
+        <div className="rounded-xl border border-white/10 bg-slate-900/95 px-3 py-2 text-[11px] text-white shadow-lg">
+          Tela cheia disponível apenas no computador.
+        </div>
+      )}
+      {null}
+    </>
+  );
+
+  const fullscreenFooter = !isMobile && isFullscreen ? (
+    <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-slate-950/60 px-4 py-2 shadow-lg backdrop-blur">
+      <button
+        type="button"
+        onClick={handleFullscreenClick}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Sair da tela cheia"
+      >
+        <Minimize2 size={16} className="mx-auto" />
+      </button>
+      <div className="h-5 w-px bg-white/10" />
+      <button
+        type="button"
+        onClick={() => handleZoom('out')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Diminuir zoom"
+      >
+        <Minus size={16} className="mx-auto" />
+      </button>
+      <button
+        type="button"
+        onClick={() => handleZoom('in')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Aumentar zoom"
+      >
+        <Plus size={16} className="mx-auto" />
+      </button>
+    </div>
+  ) : null;
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (isMobile) return;
@@ -297,24 +391,15 @@ const EventMap: React.FC<EventMapProps> = ({
   };
 
   return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
+      <div className="flex flex-col h-full gap-4">
+        <div className="flex items-start justify-start">
           <div>
-            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-              <Activity size={18} className="text-cyan-300" />
-              Mapa de Eventos
-            </h2>
-            <p className="text-sm text-slate-300">{periodLabel}</p>
-          </div>
-          <div className="text-right text-sm text-slate-400">
-            <div>Eventos mapeados</div>
-            <div className="text-white text-lg font-semibold">{totalEvents}</div>
+            <h2 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-white`}>Mapa de Eventos</h2>
+            <p className={`${isMobile ? 'text-[11px]' : 'text-sm'} text-slate-400`}>
+              Eventos mapeados <span className="text-white font-semibold">{totalEvents}</span>
+            </p>
           </div>
         </div>
-
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
-        Veja como entradas e gastos se conectam nas contas e cartões dentro do período selecionado.
-      </div>
 
       {lanes.length === 0 ? (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-300">
@@ -322,65 +407,45 @@ const EventMap: React.FC<EventMapProps> = ({
         </div>
       ) : (
         <div
-          ref={containerRef}
-          className={`relative border border-white/10 overflow-hidden ${
-            isFullscreen
-              ? 'rounded-none h-full w-full box-border'
-              : 'rounded-3xl'
-          }`}
+          className={`relative ${isOverlayFullscreen ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0'}`}
+          style={{
+            paddingTop: isOverlayFullscreen ? 'env(safe-area-inset-top)' : undefined,
+            paddingBottom: isOverlayFullscreen ? 'env(safe-area-inset-bottom)' : undefined
+          }}
         >
-          <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white hover:bg-white/20 transition"
-              aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
+          <div className="flex gap-4 items-stretch h-full min-h-0">
+            <div
+              ref={containerRef}
+              className={`relative border border-white/10 overflow-hidden flex-1 ${
+                isFullscreen
+                  ? 'rounded-none h-full w-full box-border'
+                  : 'rounded-3xl h-full min-h-[420px] md:min-h-[520px]'
+              }`}
             >
-              {isFullscreen ? (
-                <Minimize2 size={16} className="mx-auto" />
-              ) : (
-                <Maximize2 size={16} className="mx-auto" />
+              {isMobile && !isFullscreen && (
+                <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
+                  {mapControls}
+                </div>
               )}
-            </button>
-            {!isMobile && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => handleZoom('in')}
-                  className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white hover:bg-white/20 transition"
-                  aria-label="Aumentar zoom"
-                >
-                  <Plus size={16} className="mx-auto" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleZoom('out')}
-                  className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white hover:bg-white/20 transition"
-                  aria-label="Diminuir zoom"
-                >
-                  <Minus size={16} className="mx-auto" />
-                </button>
-              </>
-            )}
-          </div>
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                'radial-gradient(circle at 10% 20%, rgba(56,189,248,0.12), rgba(15,23,42,0.8) 45%), radial-gradient(circle at 80% 10%, rgba(99,102,241,0.14), rgba(15,23,42,0.7) 60%)'
-            }}
-          />
-          <div
-            ref={scrollRef}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            onPointerLeave={handlePointerUp}
-            className={`relative overflow-auto scrollbar-hide select-none ${
-              isFullscreen ? 'h-full' : 'max-h-[70vh]'
-            } ${isMobile ? '' : isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
-          >
+              {fullscreenFooter}
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    'radial-gradient(circle at 10% 20%, rgba(56,189,248,0.12), rgba(15,23,42,0.8) 45%), radial-gradient(circle at 80% 10%, rgba(99,102,241,0.14), rgba(15,23,42,0.7) 60%)'
+                }}
+              />
+              <div
+                ref={scrollRef}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+                className={`relative overflow-auto scrollbar-hide select-none h-full ${
+                  isMobile ? '' : isPanning ? 'cursor-grabbing' : 'cursor-grab'
+                }`}
+              >
             {(() => {
               const baseCardWidth = isMobile ? 180 : 210;
               const accountWidth = baseCardWidth;
@@ -390,7 +455,7 @@ const EventMap: React.FC<EventMapProps> = ({
               const laneSpacing = 24;
               const padding = 24;
               const laneWidths = lanes.map(lane => {
-                const eventCount = lane.events.length;
+                const eventCount = lane.events.length + 1;
                 return (
                   accountWidth +
                   baseLaneGap +
@@ -432,6 +497,11 @@ const EventMap: React.FC<EventMapProps> = ({
                         const gap = baseGap;
                         const laneGap = baseLaneGap;
                         const laneAccent = lane.color || EVENT_COLORS.start;
+                        const laneTotal = lane.events.reduce(
+                          (sum, event) => sum + Math.abs(event.amount ?? 0),
+                          0
+                        );
+                        const laneCount = lane.events.length;
                         const lineStyle = buildNeonGradient(
                           lane.kind === 'account' ? lane.balance : undefined
                         );
@@ -475,7 +545,7 @@ const EventMap: React.FC<EventMapProps> = ({
                                   top: '50%',
                                   transform: 'translateY(-50%)',
                                   left: -laneGap,
-                                  right: 0,
+                                  right: cardWidth + gap,
                                   ...lineStyle
                                 }}
                               />
@@ -534,6 +604,27 @@ const EventMap: React.FC<EventMapProps> = ({
                                     </div>
                                   );
                                 })}
+                                <div className="relative shrink-0" style={{ width: cardWidth }}>
+                                  <div
+                                    className="rounded-xl border bg-slate-900/75 px-3 py-2"
+                                    style={{
+                                      height: cardHeight,
+                                      borderColor: withAlpha(laneAccent, 0.6),
+                                      boxShadow: `0 0 0 1px ${withAlpha(laneAccent, 0.2)} inset`,
+                                      backgroundColor: withAlpha(laneAccent, 0.1)
+                                    }}
+                                  >
+                                    <div className="text-[9px] uppercase tracking-[0.3em] text-slate-400">
+                                      Resumo
+                                    </div>
+                                    <div className="mt-1 text-sm font-semibold text-white">
+                                      Total {formatCompactCurrency(laneTotal)}
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-slate-400">
+                                      Nodes: {laneCount}
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -544,6 +635,13 @@ const EventMap: React.FC<EventMapProps> = ({
                 </div>
               );
             })()}
+              </div>
+            </div>
+            {!isMobile && !isFullscreen && (
+              <div className="flex flex-col items-center gap-2 self-stretch rounded-2xl border border-white/10 bg-slate-950/40 px-2 py-3 min-w-[52px]">
+                {mapControls}
+              </div>
+            )}
           </div>
         </div>
       )}
