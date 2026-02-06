@@ -7,22 +7,23 @@ import ErrorBoundary from './components/ErrorBoundary';
 const THEME_STORAGE_KEY = 'meumei_theme';
 
 const resolveInitialTheme = () => {
-  let source = 'system';
-  let theme: 'light' | 'dark' = 'light';
+  let source = 'default';
+  let theme: 'light' | 'dark' = 'dark';
   try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === 'light' || stored === 'dark') {
-      theme = stored;
-      source = 'localStorage';
-    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      theme = 'dark';
-      source = 'system';
+    const path = window.location.pathname;
+    const isLanding = path === '/';
+    if (!isLanding) {
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      if (stored === 'light' || stored === 'dark') {
+        theme = stored;
+        source = 'localStorage';
+      }
+    } else {
+      source = 'landing';
     }
   } catch {
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      theme = 'dark';
-      source = 'system';
-    }
+    theme = 'dark';
+    source = 'fallback';
   }
   return { theme, source };
 };
@@ -80,6 +81,7 @@ const setupMobileScrollLock = () => {
 
   const onTouchMove = (event: TouchEvent) => {
     if (!document.documentElement.classList.contains('is-mobile')) return;
+    if (!event.cancelable) return;
     const touch = event.touches[0];
     if (!touch) return;
     const dy = touch.clientY - startY;

@@ -20,10 +20,12 @@ import InstallAppModal from './components/InstallAppModal';
 import MobileQuickAccessFooter from './components/mobile/MobileQuickAccessFooter';
 import DesktopQuickAccessFooter from './components/desktop/DesktopQuickAccessFooter';
 import Landing from './Pages/Landing';
+import Termos from './Pages/Termos';
+import Privacidade from './Pages/Privacidade';
 import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference, ExpenseType, ExpenseTypeOption, AgendaItem } from './types';
 import { COMPANY_DATA, DEFAULT_COMPANY_INFO, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_TYPES, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_EXPENSE_TYPES } from './constants';
 import { dataService } from './services/dataService';
-import { seedDevUserData } from './services/devSeedService';
+import { seedDevAnnualCoverage, seedDevUserData } from './services/devSeedService';
 import { categoryService, CategoryType } from './services/categoryService';
 import NewExpenseModal from './components/NewExpenseModal';
 import { auditService, AuditLogInput } from './services/auditService';
@@ -298,6 +300,9 @@ const AppInner: React.FC = () => {
     const isOnboardingRoute = currentPath === '/onboarding';
   const isLandingRoute = currentPath === '/';
   const isLoginRoute = currentPath === '/login';
+  const isTermsRoute = currentPath === '/termos';
+  const isPrivacyRoute = currentPath === '/privacidade';
+  const isPublicRoute = isLandingRoute || isLoginRoute || isOnboardingRoute || isTermsRoute || isPrivacyRoute;
   const [cryptoStatus, setCryptoStatus] = useState<'ready' | 'missing' | 'error'>('ready');
   const cryptoGuardLogged = useRef(false);
   const checkoutTriggeredRef = useRef(false);
@@ -356,6 +361,53 @@ const AppInner: React.FC = () => {
       };
       window.addEventListener('popstate', handleRouteChange);
       return () => window.removeEventListener('popstate', handleRouteChange);
+  }, []);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const handleInput = (event: Event) => {
+          const inputEvent = event as InputEvent;
+          if (inputEvent.isComposing) return;
+          const target = event.target as HTMLElement | null;
+          if (!target) return;
+          if (target.hasAttribute('data-no-uppercase') || target.hasAttribute('data-preserve-case')) {
+              return;
+          }
+          if (target instanceof HTMLInputElement) {
+              const type = (target.getAttribute('type') || target.type || 'text').toLowerCase();
+              if (type === 'password' || type === 'email' || type === 'url') return;
+              if (target.readOnly || target.disabled) return;
+              const nextValue = target.value.toUpperCase();
+              if (nextValue === target.value) return;
+              const selectionStart = target.selectionStart;
+              const selectionEnd = target.selectionEnd;
+              target.value = nextValue;
+              if (selectionStart !== null && selectionEnd !== null) {
+                  try {
+                      target.setSelectionRange(selectionStart, selectionEnd);
+                  } catch {}
+              }
+              return;
+          }
+          if (target instanceof HTMLTextAreaElement) {
+              if (target.readOnly || target.disabled) return;
+              const nextValue = target.value.toUpperCase();
+              if (nextValue === target.value) return;
+              const selectionStart = target.selectionStart;
+              const selectionEnd = target.selectionEnd;
+              target.value = nextValue;
+              if (selectionStart !== null && selectionEnd !== null) {
+                  try {
+                      target.setSelectionRange(selectionStart, selectionEnd);
+                  } catch {}
+              }
+          }
+      };
+
+      document.addEventListener('input', handleInput, true);
+      return () => {
+          document.removeEventListener('input', handleInput, true);
+      };
   }, []);
 
   useEffect(() => {
@@ -894,7 +946,7 @@ const AppInner: React.FC = () => {
                   } catch {}
               }
               const email = (emailFromParam || checkoutVerifiedEmail || loginEmail || '').trim();
-              if (!isLandingRoute && !isLoginRoute && !isOnboardingRoute) {
+              if (!isPublicRoute) {
                   if (email) {
                       console.log('[routing-check] choosing route', { route: '/criar-conta', reason: 'email_present', email });
                       updateRoute('/criar-conta', `?email=${encodeURIComponent(email)}`);
@@ -904,7 +956,7 @@ const AppInner: React.FC = () => {
                   }
               }
           } catch (err) {
-              if (!isLandingRoute && !isLoginRoute && !isOnboardingRoute) {
+              if (!isPublicRoute) {
                   updateRoute('/login', '');
               }
           }
@@ -1297,10 +1349,16 @@ const AppInner: React.FC = () => {
         });
       }
       const merged = DEFAULT_EXPENSE_TYPES.map((option) => byId.get(option.id) || option);
-      if (!merged.some((option) => option.enabled)) {
-        merged[0] = { ...merged[0], enabled: true };
+      const normalized = merged.map((option) => {
+        if (option.id === 'variable' && option.color?.toLowerCase() === '#ec4899') {
+          return { ...option, color: '#ef4444' };
+        }
+        return option;
+      });
+      if (!normalized.some((option) => option.enabled)) {
+        normalized[0] = { ...normalized[0], enabled: true };
       }
-      return merged;
+      return normalized;
     } catch {
       return DEFAULT_EXPENSE_TYPES;
     }
@@ -1530,10 +1588,14 @@ const AppInner: React.FC = () => {
 
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const resolveInitialTheme = (): ThemePreference => {
-      if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
-          return 'dark';
-      }
-      return 'light';
+      if (typeof window === 'undefined') return 'dark';
+      try {
+          const stored = localStorage.getItem('meumei_theme');
+          if (stored === 'light' || stored === 'dark') {
+              return stored;
+          }
+      } catch {}
+      return 'dark';
   };
   const [theme, setTheme] = useState<'dark' | 'light'>(() => resolveInitialTheme());
   const [tipsEnabled, setTipsEnabled] = useState(true);
@@ -1640,23 +1702,22 @@ const AppInner: React.FC = () => {
   }, [setCurrentView]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const applyTheme = () => setTheme(media.matches ? 'dark' : 'light');
-    applyTheme();
-    if (media.addEventListener) {
-      media.addEventListener('change', applyTheme);
-    } else {
-      media.addListener(applyTheme);
-    }
-    return () => {
-      if (media.removeEventListener) {
-        media.removeEventListener('change', applyTheme);
-      } else {
-        media.removeListener(applyTheme);
+    if (typeof window === 'undefined') return;
+    if (isLandingRoute && !authUser) {
+      if (theme !== 'dark') {
+        setTheme('dark');
       }
-    };
-  }, []);
+      return;
+    }
+    try {
+      const stored = localStorage.getItem('meumei_theme');
+      if (stored === 'light' || stored === 'dark') {
+        if (stored !== theme) {
+          setTheme(stored);
+        }
+      }
+    } catch {}
+  }, [authUser, isLandingRoute, theme]);
 
   useEffect(() => {
     if (isBetaHost) {
@@ -2469,6 +2530,31 @@ const AppInner: React.FC = () => {
               }
           } catch (error) {
               console.error('[dev-seed] failed', error);
+          }
+      })();
+      return () => {
+          cancelled = true;
+      };
+  }, [authUser?.uid, cryptoStatus, licenseCryptoEpoch]);
+
+  useEffect(() => {
+      const uid = authUser?.uid || null;
+      if (!uid) return;
+      if (!import.meta.env.DEV) return;
+      if (cryptoStatus !== 'ready' || !licenseCryptoEpoch) return;
+      if (typeof window === 'undefined') return;
+      const year = new Date().getFullYear();
+      const seedKey = `dev-seed-year:${uid}:${year}:v2`;
+      if (window.localStorage.getItem(seedKey) === 'done') return;
+      let cancelled = false;
+      (async () => {
+          try {
+              await seedDevAnnualCoverage({ uid, licenseEpoch: licenseCryptoEpoch, year });
+              if (!cancelled) {
+                  window.localStorage.setItem(seedKey, 'done');
+              }
+          } catch (error) {
+              console.error('[dev-seed] annual coverage failed', error);
           }
       })();
       return () => {
@@ -3950,6 +4036,14 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       );
   };
 
+  if (isTermsRoute) {
+      return <Termos />;
+  }
+
+  if (isPrivacyRoute) {
+      return <Privacidade />;
+  }
+
   if (isOnboardingRoute && !authUser) {
       return renderBetaMpOnboarding();
   }
@@ -4072,6 +4166,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              companyName={companyInfo.name}
              creditCards={creditCards}
              licenseId={currentUser?.licenseId}
+             expenseTypeOptions={expenseTypeOptions}
           />,
           { skipMobileOffset: true }
       )}
