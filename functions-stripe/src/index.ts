@@ -8,7 +8,8 @@ setGlobalOptions({ region: "us-central1", invoker: "public" });
 
 const STRIPE_SECRET_KEY_SECRET = defineSecret("STRIPE_SECRET_KEY");
 const STRIPE_PRICE_ID_SECRET = defineSecret("STRIPE_PRICE_ID");
-const MODE = (process.env.MODE || "subscription").trim();
+const STRIPE_PRICE_ID_ANNUAL_SECRET = defineSecret("STRIPE_PRICE_ID_ANNUAL");
+const STRIPE_PRICE_ID_MONTHLY_SECRET = defineSecret("STRIPE_PRICE_ID_MONTHLY");
 const DEFAULT_BASE_URL = "https://meumei-d88be.web.app";
 
 const allowedOrigins = new Set([
@@ -83,16 +84,14 @@ const resolveBaseUrl = (
   return DEFAULT_BASE_URL;
 };
 
-const validateEnv = () => {
+const resolveStripeConfig = () => {
   const stripeSecretKey = (STRIPE_SECRET_KEY_SECRET.value() || "").trim();
-  const stripePriceId = (STRIPE_PRICE_ID_SECRET.value() || "").trim();
-  const modeOk = MODE === "subscription" || MODE === "payment";
-  const missingEnv = !stripeSecretKey || !stripePriceId || !modeOk;
+  const annualPriceId = (STRIPE_PRICE_ID_ANNUAL_SECRET.value() || STRIPE_PRICE_ID_SECRET.value() || "").trim();
+  const monthlyPriceId = (STRIPE_PRICE_ID_MONTHLY_SECRET.value() || "").trim();
   return {
-    missingEnv,
     stripeSecretKey,
-    stripePriceId,
-    modeOk
+    annualPriceId,
+    monthlyPriceId
   };
 };
 
@@ -103,9 +102,13 @@ const fetchCheckoutSession = async (
   sessionId: string
 ) => {
   const session = await stripe.checkout.sessions.retrieve(sessionId);
-  const modeOk = session.mode === "subscription";
+  const modeOk = session.mode === "subscription" || session.mode === "payment";
   const paymentOk =
     session.payment_status === "paid" || Boolean(session.subscription);
+  const paymentIntentId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id || "";
   const email =
     session.customer_details?.email || session.customer_email || "";
   const customerId =
@@ -123,12 +126,16 @@ const fetchCheckoutSession = async (
     paymentOk,
     email,
     customerId,
-    subscriptionId
+    subscriptionId,
+    paymentIntentId,
+    sessionCreated: typeof session.created === "number" ? session.created : null,
+    paymentStatus: session.payment_status || null,
+    sessionStatus: session.status || null
   };
 };
 
 export const createCheckoutSessionV2 = onRequest(
-  { secrets: [STRIPE_SECRET_KEY_SECRET, STRIPE_PRICE_ID_SECRET] },
+  { secrets: [STRIPE_SECRET_KEY_SECRET, STRIPE_PRICE_ID_SECRET, STRIPE_PRICE_ID_ANNUAL_SECRET, STRIPE_PRICE_ID_MONTHLY_SECRET] },
   async (req, res) => {
     applyCors(req.headers.origin as string | undefined, res);
     if (req.method === "OPTIONS") {
@@ -145,14 +152,13 @@ export const createCheckoutSessionV2 = onRequest(
       return;
     }
 
-    const { missingEnv, stripeSecretKey, stripePriceId, modeOk } =
-      validateEnv();
-    if (missingEnv) {
+    const { stripeSecretKey, annualPriceId, monthlyPriceId } =
+      resolveStripeConfig();
+    if (!stripeSecretKey) {
       console.error("[stripe] missing_env", {
         STRIPE_SECRET_KEY: Boolean(stripeSecretKey),
-        STRIPE_PRICE_ID: Boolean(stripePriceId),
-        MODE,
-        modeOk
+        STRIPE_PRICE_ID_ANNUAL: Boolean(annualPriceId),
+        STRIPE_PRICE_ID_MONTHLY: Boolean(monthlyPriceId)
       });
       res.status(500).json({
         error: {
@@ -169,6 +175,21 @@ export const createCheckoutSessionV2 = onRequest(
       const data = (payload.data as Record<string, unknown>) || payload;
       const email =
         typeof data.email === "string" ? data.email.trim() : undefined;
+      const plan =
+        typeof data.plan === "string" ? data.plan.trim().toLowerCase() : "annual";
+      const planType = plan === "monthly" ? "monthly" : "annual";
+      const priceId = planType === "monthly" ? monthlyPriceId : annualPriceId;
+      const mode = planType === "monthly" ? "subscription" : "payment";
+
+      if (!priceId) {
+        res.status(500).json({
+          error: {
+            code: "missing_price",
+            message: "Stripe price not configured"
+          }
+        });
+        return;
+      }
       const requestOrigin =
         typeof req.headers.origin === "string" ? req.headers.origin : "";
       const resolvedOrigin =
@@ -188,11 +209,14 @@ export const createCheckoutSessionV2 = onRequest(
 
       const stripe = new Stripe(stripeSecretKey, { apiVersion: "2024-06-20" });
       const session = await stripe.checkout.sessions.create({
-        mode: MODE as "subscription" | "payment",
-        line_items: [{ price: stripePriceId, quantity: 1 }],
+        mode: mode as "subscription" | "payment",
+        line_items: [{ price: priceId, quantity: 1 }],
         customer_email: email || undefined,
         success_url: successUrl,
-        cancel_url: cancelUrl
+        cancel_url: cancelUrl,
+        metadata: {
+          plan: planType
+        }
       });
 
       if (!session.url) {
@@ -214,7 +238,7 @@ export const createCheckoutSessionV2 = onRequest(
 );
 
 export const verifyCheckoutSessionV2 = onRequest(
-  { secrets: [STRIPE_SECRET_KEY_SECRET, STRIPE_PRICE_ID_SECRET] },
+  { secrets: [STRIPE_SECRET_KEY_SECRET] },
   async (req, res) => {
     applyCors(req.headers.origin as string | undefined, res);
     if (req.method === "OPTIONS") {
@@ -231,14 +255,10 @@ export const verifyCheckoutSessionV2 = onRequest(
       return;
     }
 
-    const { missingEnv, stripeSecretKey, stripePriceId, modeOk } =
-      validateEnv();
-    if (missingEnv) {
+    const { stripeSecretKey } = resolveStripeConfig();
+    if (!stripeSecretKey) {
       console.error("[stripe] missing_env", {
-        STRIPE_SECRET_KEY: Boolean(stripeSecretKey),
-        STRIPE_PRICE_ID: Boolean(stripePriceId),
-        MODE,
-        modeOk
+        STRIPE_SECRET_KEY: Boolean(stripeSecretKey)
       });
       res.status(500).json({
         error: {
@@ -264,7 +284,17 @@ export const verifyCheckoutSessionV2 = onRequest(
       }
 
       const stripe = new Stripe(stripeSecretKey, { apiVersion: "2024-06-20" });
-      const { modeOk: sessionModeOk, paymentOk, email, customerId, subscriptionId } =
+      const {
+        modeOk: sessionModeOk,
+        paymentOk,
+        email,
+        customerId,
+        subscriptionId,
+        paymentIntentId,
+        sessionCreated,
+        paymentStatus,
+        sessionStatus
+      } =
         await fetchCheckoutSession(stripe, sessionId);
 
       if (!sessionModeOk) {
@@ -285,7 +315,11 @@ export const verifyCheckoutSessionV2 = onRequest(
         ok: true,
         email,
         customerId,
-        subscriptionId
+        subscriptionId,
+        paymentIntentId,
+        sessionCreated,
+        paymentStatus,
+        sessionStatus
       });
     } catch (error: any) {
       console.error("[stripe] checkout_error", error);
@@ -298,7 +332,7 @@ export const verifyCheckoutSessionV2 = onRequest(
 );
 
 export const grantEntitlementV2 = onRequest(
-  { secrets: [STRIPE_SECRET_KEY_SECRET, STRIPE_PRICE_ID_SECRET] },
+  { secrets: [STRIPE_SECRET_KEY_SECRET] },
   async (req, res) => {
     applyCors(req.headers.origin as string | undefined, res);
     if (req.method === "OPTIONS") {
@@ -315,14 +349,10 @@ export const grantEntitlementV2 = onRequest(
       return;
     }
 
-    const { missingEnv, stripeSecretKey, stripePriceId, modeOk } =
-      validateEnv();
-    if (missingEnv) {
+    const { stripeSecretKey } = resolveStripeConfig();
+    if (!stripeSecretKey) {
       console.error("[stripe] missing_env", {
-        STRIPE_SECRET_KEY: Boolean(stripeSecretKey),
-        STRIPE_PRICE_ID: Boolean(stripePriceId),
-        MODE,
-        modeOk
+        STRIPE_SECRET_KEY: Boolean(stripeSecretKey)
       });
       res.status(500).json({
         error: {
@@ -348,8 +378,17 @@ export const grantEntitlementV2 = onRequest(
       }
 
       const stripe = new Stripe(stripeSecretKey, { apiVersion: "2024-06-20" });
-      const { modeOk: sessionModeOk, paymentOk, email, customerId, subscriptionId } =
-        await fetchCheckoutSession(stripe, sessionId);
+      const {
+        modeOk: sessionModeOk,
+        paymentOk,
+        email,
+        customerId,
+        subscriptionId,
+        paymentIntentId,
+        sessionCreated,
+        paymentStatus,
+        sessionStatus
+      } = await fetchCheckoutSession(stripe, sessionId);
 
       if (!sessionModeOk) {
         res.status(200).json({ ok: false, reason: "invalid_mode" });
@@ -364,13 +403,22 @@ export const grantEntitlementV2 = onRequest(
         return;
       }
 
+      const planType = subscriptionId ? "monthly" : "annual";
+
       const normalizedEmail = normalizeEmail(email);
       await admin.firestore().collection("entitlements").doc(normalizedEmail).set(
         {
           status: "active",
-          source: "stripe_test",
+          planType,
+          source: stripeSecretKey.startsWith("sk_live") ? "stripe_live" : "stripe_test",
           stripeCustomerId: customerId || null,
           stripeSubscriptionId: subscriptionId || null,
+          stripeCheckoutSessionId: sessionId,
+          stripeCheckoutSessionCreated: sessionCreated,
+          stripePaymentIntentId: paymentIntentId || null,
+          stripePaymentStatus: paymentStatus,
+          stripeCheckoutSessionStatus: sessionStatus,
+          subscriptionStatus: subscriptionId ? "active" : null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         },
         { merge: true }

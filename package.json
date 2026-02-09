@@ -22,6 +22,7 @@
     "lucide-react": "^0.556.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "react-mobile-picker": "^1.2.0",
     "reactflow": "^11.11.4"
   },
   "devDependencies": {

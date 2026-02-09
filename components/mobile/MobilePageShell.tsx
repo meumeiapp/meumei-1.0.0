@@ -22,7 +22,7 @@ const MobilePageShell: React.FC<MobilePageShellProps> = ({
 }) => {
   return (
     <div
-      className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-[calc(env(safe-area-inset-bottom)+128px)] transition-colors duration-300 overflow-x-hidden ${
+      className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-[calc(env(safe-area-inset-bottom)+72px)] transition-colors duration-300 overflow-x-hidden ${
         className || ''
       }`}
     >

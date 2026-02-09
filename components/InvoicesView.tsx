@@ -1,6 +1,6 @@
 // ... existing imports ...
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { ArrowLeft, ChevronDown, CreditCard as CardIcon, Calendar, CheckSquare, Square, DollarSign, Wallet, AlertTriangle, Pencil, X, Plus, Trash2, Lock, Home } from 'lucide-react';
+import { ChevronDown, CreditCard as CardIcon, Calendar, CheckSquare, Square, DollarSign, Wallet, AlertTriangle, Pencil, X, Plus, Trash2, Lock, Home, History } from 'lucide-react';
 import { Expense, CreditCard, Account } from '../types';
 import PayInvoiceModal from './PayInvoiceModal';
 import NewCreditCardModal from './NewCreditCardModal';
@@ -13,12 +13,15 @@ import useIsMobile from '../hooks/useIsMobile';
 import { getPrimaryActionLabel } from '../utils/formLabels';
 import MobileTransactionCard from './mobile/MobileTransactionCard';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
+import SelectDropdown from './common/SelectDropdown';
 
 interface InvoicesViewProps {
   onBack: () => void;
+  onOpenAudit?: () => void;
   expenses: Expense[];
   creditCards: CreditCard[];
   accounts: Account[];
+  viewDate?: Date;
   onPayInvoice: (expenseIds: string[], sourceAccountId: string, totalAmount: number) => void;
   onUpdateExpenses: (expenses: Expense[]) => void;
   onUpdateCreditCards?: (cards: CreditCard[]) => void;
@@ -29,9 +32,11 @@ interface InvoicesViewProps {
 
 const InvoicesView: React.FC<InvoicesViewProps> = ({ 
   onBack, 
+  onOpenAudit,
   expenses, 
   creditCards,
   accounts,
+  viewDate,
   onPayInvoice,
   onUpdateExpenses,
   onUpdateCreditCards,
@@ -53,6 +58,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [editingCard, setEditingCard] = useState<CreditCard | null>(null);
   const [drawerCard, setDrawerCard] = useState<CreditCard | null>(null);
   const [isCardsExpanded, setIsCardsExpanded] = useState(false);
+  const [expandedMonthKey, setExpandedMonthKey] = useState<string | null>(null);
+  const [expandedExpenseId, setExpandedExpenseId] = useState<string | null>(null);
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedCardId, setHighlightedCardId] = useState<string | null>(null);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
@@ -78,6 +85,40 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           return obj;
       }, {} as Record<string, Expense[]>);
   }, [cardExpenses]);
+
+  const calendarYear = viewDate ? viewDate.getFullYear() : new Date().getFullYear();
+  const allCardExpensesByMonth = useMemo(() => {
+      const map = new Map<string, { total: number; cardIds: Set<string> }>();
+      expenses.forEach(exp => {
+          if (!exp.cardId) return;
+          const date = new Date(exp.dueDate + 'T12:00:00');
+          if (date.getFullYear() !== calendarYear) return;
+          const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          const entry = map.get(key) || { total: 0, cardIds: new Set<string>() };
+          entry.total += exp.amount;
+          entry.cardIds.add(exp.cardId);
+          map.set(key, entry);
+      });
+      return map;
+  }, [expenses, calendarYear]);
+
+  const needsScroll = Boolean(expandedMonthKey);
+
+  useEffect(() => {
+      const shouldLock = !needsScroll;
+      document.documentElement.classList.toggle('lock-scroll', shouldLock);
+      document.body.classList.toggle('lock-scroll', shouldLock);
+      return () => {
+          document.documentElement.classList.remove('lock-scroll');
+          document.body.classList.remove('lock-scroll');
+      };
+  }, [needsScroll]);
+
+  useEffect(() => {
+      if (Object.keys(groupedExpenses).length === 0) {
+          setExpandedMonthKey(null);
+      }
+  }, [groupedExpenses]);
 
   // ... rest of logic ...
   // Calculation for Selected Items
@@ -186,8 +227,10 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   };
 
   const toggleSelectMonth = (monthKey: string) => {
-      const idsInMonth = groupedExpenses[monthKey].filter(e => !e.locked).map(e => e.id);
-      const allSelected = idsInMonth.every(id => selectedExpenseIds.includes(id));
+      const monthExpenses = groupedExpenses[monthKey] || [];
+      if (monthExpenses.length === 0) return;
+      const idsInMonth = monthExpenses.filter(e => !e.locked).map(e => e.id);
+      const allSelected = idsInMonth.length > 0 && idsInMonth.every(id => selectedExpenseIds.includes(id));
 
       if (allSelected) {
           // Deselect all in this month
@@ -294,13 +337,11 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const formatCurrency = (value: number) =>
       value.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 
-  const headerWrapperClass = isMobile
-    ? 'space-y-4'
-    : 'max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6 relative z-10 -mt-2';
+  const headerWrapperClass = 'space-y-2';
 
   const mainWrapperClass = isMobile
     ? 'space-y-6'
-    : 'max-w-7xl mx-auto px-4 sm:px-6 space-y-6';
+    : 'max-w-7xl mx-auto px-4 sm:px-6 space-y-6 mt-[var(--mm-content-gap)]';
   const cardSelectId = 'invoice-card-select';
   const editFieldId = (suffix: string) =>
     `invoice-edit-${editingExpense?.id || 'current'}-${suffix}`;
@@ -380,51 +421,81 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const headerSection = (
       <div className={headerWrapperClass}>
-          {!isMobile && (
-              <button 
-                 onClick={onBack}
-                 className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+          <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
+              <button
+                  type="button"
+                  onClick={onBack}
+                  className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+                  aria-label="Voltar para o início"
               >
-                  <ArrowLeft size={16} /> Voltar ao Dashboard
+                  <Home size={16} />
               </button>
-          )}
 
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div>
-                  <h1 className="text-3xl font-bold tracking-tight mb-1 flex items-center gap-3">
-                      <CardIcon style={{ color: selectedCardColor }} />
-                      Faturas de Cartão
-                  </h1>
-                  <p className="text-zinc-500 dark:text-zinc-400">
+              <div className="min-w-0 text-center">
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Faturas de Cartão</p>
+                  <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
                       Conciliação e pagamento de faturas em aberto.
                   </p>
-                  {selectedCard && <CardTag card={selectedCard} className="mt-2 inline-flex" />}
               </div>
 
-              {/* Card Selector */}
-              <div className="w-full md:w-auto min-w-[250px]">
-                  <label htmlFor={cardSelectId} className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-1 block">
-                    Selecione o Cartão
-                  </label>
-                  <div className="relative">
-                      <select 
-                          id={cardSelectId}
-                          name="selectedCardId"
-                          value={selectedCardId}
-                          onChange={(e) => { setSelectedCardId(e.target.value); setSelectedExpenseIds([]); }}
-                          className="w-full appearance-none bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-rose-500 font-medium shadow-sm"
-                      >
-                          {safeCreditCards.map(card => (
-                              <option key={card.id} value={card.id}>{card.name}</option>
-                          ))}
-                          {safeCreditCards.length === 0 && <option value="">Nenhum cartão cadastrado</option>}
-                      </select>
-                      <CardIcon className="absolute right-4 top-3.5 text-zinc-400 pointer-events-none" size={18} />
+              <div className="min-w-[32px]" />
+          </div>
+
+          <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
+                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+                          R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
                   </div>
-                  {selectedCard && (
-                      <CardTag card={selectedCard} className="mt-2 inline-flex" />
+                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
+                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+                          {selectedExpenseIds.length}
+                      </p>
+                  </div>
+              </div>
+
+              <div className={`grid ${onOpenAudit ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+                  {onOpenAudit && (
+                      <button
+                          onClick={onOpenAudit}
+                          className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-[var(--mm-view-accent)] hover:border-[var(--mm-view-accent)] transition"
+                          title="Auditoria do dia"
+                      >
+                          <History size={14} />
+                          Auditoria
+                      </button>
+                  )}
+                  <button
+                      onClick={() => setIsPayModalOpen(true)}
+                      disabled={selectedExpenseIds.length === 0}
+                      className={`flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-semibold transition ${
+                        selectedExpenseIds.length > 0
+                          ? 'bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white shadow-lg shadow-blue-900/20'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
+                      }`}
+                  >
+                      Pagar Fatura
+                  </button>
+                  {!isMobile && (
+                      <button
+                          onClick={handleOpenNewCard}
+                          className="w-full rounded-2xl bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white font-semibold py-2.5 text-sm shadow-lg shadow-[var(--mm-view-accent)]/20 flex items-center justify-center gap-2"
+                      >
+                          Novo Cartão
+                      </button>
                   )}
               </div>
+          </div>
+      </div>
+  );
+
+  const summarySection = isMobile ? headerSection : (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
+        <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+              {headerSection}
           </div>
       </div>
   );
@@ -437,46 +508,45 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       : safeCreditCards;
 
   const cardManagementSection = (
-      <section className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-blue-100 dark:bg-blue-900/20 rounded-lg text-blue-600 dark:text-blue-400">
-                      <CardIcon size={20} />
+      <section className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-[var(--mm-view-accent)]">
+                      <CardIcon size={16} />
                   </div>
-                  <div>
-                      <h2 className="text-base font-bold text-zinc-900 dark:text-white">Cartões de Crédito</h2>
-                      <p className="text-xs text-zinc-500">Gerencie cartões usados nas faturas.</p>
-                  </div>
+                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Cartões de Crédito</h2>
               </div>
-              {!isMobile && (
+              {isMobile && (
                   <button
                       onClick={handleOpenNewCard}
-                      className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors shadow-lg shadow-blue-900/20"
+                      className="inline-flex items-center gap-2 bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors shadow-lg shadow-blue-900/20"
                   >
-                      <Plus size={14} /> Novo Cartão
+                      Novo Cartão
                   </button>
               )}
           </div>
 
           {safeCreditCards.length === 0 ? (
-              <div className="bg-zinc-50 dark:bg-[#1a1a1a] border border-zinc-100 dark:border-zinc-800 rounded-xl flex flex-col items-center justify-center py-6 gap-3">
+              <div className="bg-zinc-50 dark:bg-[#1a1a1a] border border-zinc-100 dark:border-zinc-800 rounded-xl flex flex-col items-center justify-center py-4 gap-2">
                   <span className="text-xs text-zinc-500 dark:text-zinc-400">Nenhum cartão ativo</span>
                   {!isMobile && (
                       <button
                           onClick={handleOpenNewCard}
-                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors shadow-lg shadow-blue-900/20"
+                          className="flex items-center gap-2 bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors shadow-lg shadow-blue-900/20"
                       >
-                          <Plus size={14} /> Novo Cartão
+                          Novo Cartão
                       </button>
                   )}
               </div>
           ) : (
-              <div className="space-y-3">
-                  {visibleCards.map(card => {
+              <div className="space-y-1">
+                  {visibleCards.map((card, index) => {
                       const limitLabel =
                           typeof card.limit === 'number' && card.limit > 0
                               ? `R$ ${formatCurrency(card.limit)}`
                               : 'Sem limite';
+                      const rowBg = index % 2 === 0 ? 'bg-white/5 dark:bg-white/5' : 'bg-transparent';
+                      const isActive = card.id === selectedCardId;
                       return (
                           <div key={card.id}>
                               {isMobile ? (
@@ -490,35 +560,63 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                       onClick={() => setDrawerCard(card)}
                                   />
                               ) : (
-                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#1a1a1a] px-4 py-3">
-                                      <div>
-                                          <p className="text-sm font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+                                  <div
+                                      className={`rounded-md ${rowBg} ${isActive ? 'ring-2 ring-[var(--mm-view-accent)]/60 bg-white/10' : ''}`}
+                                  >
+                                      <div
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={() => setSelectedCardId(card.id)}
+                                          onKeyDown={(event) => {
+                                              if (event.key === 'Enter' || event.key === ' ') {
+                                                  event.preventDefault();
+                                                  setSelectedCardId(card.id);
+                                              }
+                                          }}
+                                          className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left"
+                                          aria-label={`Selecionar cartão ${card.name}`}
+                                      >
+                                          <div className="flex items-center gap-2 min-w-0">
                                               <span
-                                                  className="w-3 h-3 rounded-full border border-white/40"
-                                                  style={{ backgroundColor: getCardColor(card) }}
-                                              />
-                                              {card.name}
-                                          </p>
-                                          <p className="text-[10px] text-zinc-500 flex items-center gap-1">
-                                              {card.brand || 'Cartão'} • Fecha dia {card.closingDay}
-                                          </p>
-                                          <CardTag card={card} size="sm" className="mt-1" />
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                          <button
-                                              onClick={() => handleEditCard(card)}
-                                              aria-label={`Editar cartão ${card.name}`}
-                                              className="p-2 rounded-lg text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/20 transition-colors"
-                                          >
-                                              <Pencil size={14} />
-                                          </button>
-                                          <button
-                                              onClick={() => handleDeleteCard(card.id)}
-                                              aria-label={`Excluir cartão ${card.name}`}
-                                              className="p-2 rounded-lg text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors"
-                                          >
-                                              <Trash2 size={14} />
-                                          </button>
+                                                  className="h-6 w-6 rounded-md border border-white/10 flex items-center justify-center"
+                                                  style={{ color: getCardColor(card) }}
+                                              >
+                                                  <CardIcon size={14} />
+                                              </span>
+                                              <span className="text-sm font-medium truncate text-zinc-900 dark:text-zinc-100">
+                                                  {card.name}
+                                              </span>
+                                              <span className="text-[10px] text-zinc-500 truncate">
+                                                  {card.brand || 'Cartão'}
+                                              </span>
+                                          </div>
+                                          <div className="flex items-center gap-3 shrink-0">
+                                              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-300">
+                                                  {limitLabel}
+                                              </span>
+                                              <button
+                                                  type="button"
+                                                  onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      handleEditCard(card);
+                                                  }}
+                                                  className="h-7 w-7 rounded-full border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white hover:border-white/30 transition"
+                                                  aria-label={`Editar cartão ${card.name}`}
+                                              >
+                                                  <Pencil size={14} />
+                                              </button>
+                                              <button
+                                                  type="button"
+                                                  onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      handleDeleteCard(card.id);
+                                                  }}
+                                                  className="h-7 w-7 rounded-full border border-white/10 flex items-center justify-center text-rose-400 hover:text-rose-300 hover:border-rose-400/60 transition"
+                                                  aria-label={`Excluir cartão ${card.name}`}
+                                              >
+                                                  <Trash2 size={14} />
+                                              </button>
+                                          </div>
                                       </div>
                                   </div>
                               )}
@@ -543,147 +641,72 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       </section>
   );
 
-  const reconciliationBar = (
-      <div
-          id="card-highlight-bar"
-          className={`bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 shadow-sm sticky top-4 z-40 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 ${highlightedCardId === selectedCardId ? 'ring-2 ring-indigo-400/70 shadow-indigo-500/20' : ''}`}
-      >
-          <div className="flex items-center gap-4">
-              <div 
-                  className="p-3 rounded-xl"
-                  style={{ backgroundColor: withAlpha(selectedCardColor, 0.2), color: selectedCardColor }}
-              >
-                  <CheckSquare size={24} />
-              </div>
-              <div>
-                  <p className="text-xs font-bold text-zinc-500 uppercase">Total Selecionado</p>
-                  <p className="text-2xl font-bold text-zinc-900 dark:text-white">
-                      R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </p>
-                  <p className="text-xs text-zinc-400">{selectedExpenseIds.length} itens marcados</p>
-              </div>
-          </div>
-
-          <button 
-              onClick={() => setIsPayModalOpen(true)}
-              disabled={selectedExpenseIds.length === 0}
-              className={`
-                  w-full sm:w-auto px-8 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg
-                  ${selectedExpenseIds.length > 0 
-                      ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-900/20 active:scale-95' 
-                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'}
-              `}
-          >
-              <DollarSign size={20} />
-              Pagar Fatura
-          </button>
-      </div>
-  );
+  const reconciliationBar = null;
 
   const invoiceListSection = (
       <>
           {Object.keys(groupedExpenses).length > 0 ? (
-              Object.entries(groupedExpenses).map(([monthKey, expensesList]: [string, Expense[]]) => {
-                  const totalMonth = expensesList.reduce((acc, curr) => acc + curr.amount, 0);
-                  const selectableExpenses = expensesList.filter(exp => !exp.locked);
-                  const allSelected = selectableExpenses.length > 0 && selectableExpenses.every(e => selectedExpenseIds.includes(e.id));
-                  const partialSelected = selectableExpenses.some(e => selectedExpenseIds.includes(e.id)) && !allSelected;
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {Array.from({ length: 12 }).map((_, index) => {
+                      const monthKey = `${calendarYear}-${String(index + 1).padStart(2, '0')}`;
+                      const monthExpenses = groupedExpenses[monthKey] || [];
+                      const totalMonth = monthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+                      const selectableExpenses = monthExpenses.filter(exp => !exp.locked);
+                      const allSelected = selectableExpenses.length > 0 && selectableExpenses.every(e => selectedExpenseIds.includes(e.id));
+                      const partialSelected = selectableExpenses.some(e => selectedExpenseIds.includes(e.id)) && !allSelected;
+                      const isDisabled = monthExpenses.length === 0;
+                      const monthName = new Date(calendarYear, index, 1).toLocaleDateString('pt-BR', { month: 'long' });
+                      const monthSummary = allCardExpensesByMonth.get(monthKey);
+                      const cardTheme = selectedCardColor || '#6366f1';
+                      const cardName = selectedCard?.name || 'Cartão';
+                      const cardBrand = selectedCard?.brand || 'Cartão';
 
-                  return (
-                      <div key={monthKey} className="bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden shadow-sm">
-                          
-                          {/* Month Header */}
-                          <div className="bg-zinc-50 dark:bg-[#1a1a1a] p-4 flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800">
-                              <div className="flex items-center gap-3">
-                                  <button 
-                                      onClick={() => toggleSelectMonth(monthKey)}
-                                      className="text-zinc-400 hover:text-rose-600 transition-colors"
-                                  >
-                                      {allSelected ? <CheckSquare size={20} className="text-rose-600" /> : 
-                                       partialSelected ? <div className="w-5 h-5 border-2 border-rose-600 rounded flex items-center justify-center"><div className="w-2.5 h-2.5 bg-rose-600 rounded-sm"></div></div> :
-                                       <Square size={20} />}
-                                  </button>
-                                  <div>
-                                      <h3 className="font-bold text-zinc-800 dark:text-zinc-200 capitalize flex items-center gap-2">
-                                          <Calendar size={16} className="text-rose-500" />
-                                          Fatura: {formatMonthKey(monthKey)}
-                                      </h3>
-                                  </div>
+                      return (
+                          <div
+                              key={monthKey}
+                              className={`rounded-2xl border p-3 shadow-sm transition ${isDisabled ? 'opacity-70' : ''}`}
+                              style={{
+                                  background: withAlpha(cardTheme, isDisabled ? 0.08 : 0.18),
+                                  borderColor: withAlpha(cardTheme, 0.35)
+                              }}
+                          >
+                              <div className="flex items-center justify-between">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-900 dark:text-white/80">{cardName}</p>
+                                  <input
+                                      type="checkbox"
+                                      checked={allSelected}
+                                      onChange={() => toggleSelectMonth(monthKey)}
+                                      disabled={selectableExpenses.length === 0}
+                                      className="h-4 w-4"
+                                      style={{ accentColor: 'var(--mm-view-accent)' as any }}
+                                      aria-label={`Selecionar faturas de ${monthName}`}
+                                  />
                               </div>
-                              <span className="text-sm font-bold text-zinc-900 dark:text-white bg-white dark:bg-zinc-800 px-3 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                                  Total: R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                              </span>
+                              <button
+                                  type="button"
+                                  onClick={() => setExpandedMonthKey(monthKey)}
+                                  disabled={isDisabled}
+                                  className="mt-3 w-full text-left"
+                              >
+                                  <p className="text-lg font-semibold text-zinc-900 dark:text-white">
+                                      R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </p>
+                                  <p className="text-[11px] text-zinc-700 dark:text-white/70">
+                                      {partialSelected ? 'Parcial selecionado' : isDisabled ? 'Sem despesas' : 'Ver fatura'}
+                                  </p>
+                                  <div className="mt-4 flex items-end justify-between">
+                                      <span className="text-[10px] uppercase tracking-wide text-zinc-700 dark:text-white/70">
+                                          {monthName}
+                                      </span>
+                                      <span className="inline-flex items-center rounded-full border border-white/20 px-2 py-0.5 text-[10px] font-semibold text-zinc-900 dark:text-white/80">
+                                          {cardBrand}
+                                      </span>
+                                  </div>
+                              </button>
                           </div>
-
-                          {/* Transactions List */}
-                          <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                              {expensesList.map(exp => {
-                                  const isSelected = selectedExpenseIds.includes(exp.id);
-                                  const isLocked = Boolean(exp.locked);
-                                  return (
-                                      <div 
-                                          key={exp.id} 
-                                          onClick={() => {
-                                              if (!isLocked) toggleSelection(exp.id);
-                                          }}
-                                          className={`flex items-center justify-between p-4 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50 ${isLocked ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'} ${isSelected ? '' : ''}`}
-                                          style={isSelected ? { backgroundColor: withAlpha(selectedCardColor, 0.08) } : undefined}
-                                      >
-                                          <div className="flex items-center gap-4">
-                                              <div className="text-zinc-300" style={isSelected ? { color: selectedCardColor } : undefined}>
-                                                  {isLocked ? <Lock size={16} className="text-amber-500" /> : isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
-                                              </div>
-                                              <div>
-                                                  <div className="flex items-center gap-2 flex-wrap">
-                                                      <p className="font-medium text-zinc-900 dark:text-white text-sm">{exp.description}</p>
-                                                      {selectedCard && <CardTag card={selectedCard} size="sm" />}
-                                                      {exp.lockedReason === 'epoch_mismatch' && (
-                                                          <span className="text-[10px] uppercase tracking-wide font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
-                                                              Arquivado
-                                                          </span>
-                                                      )}
-                                                  </div>
-                                                  <p className="text-xs text-zinc-500 flex items-center gap-1.5">
-                                                      <span>{new Date(exp.date + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
-                                                      <span>•</span>
-                                                      <span className="bg-zinc-100 dark:bg-zinc-800 px-1.5 rounded text-[10px] uppercase tracking-wide">{exp.category}</span>
-                                                      {exp.installments && (
-                                                          <span className="text-rose-500 font-bold ml-1">
-                                                              {exp.installmentNumber}/{exp.totalInstallments}
-                                                          </span>
-                                                      )}
-                                                  </p>
-                                              </div>
-                                          </div>
-                                          <div className="text-right flex flex-col items-end gap-2">
-                                              <div>
-                                                  <p className={`font-bold ${isLocked ? 'text-zinc-400 dark:text-zinc-500' : 'text-zinc-900 dark:text-white'}`}>
-                                                      R$ {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                                  </p>
-                                                  <p className="text-[10px] text-zinc-400">
-                                                      Vence: {new Date(exp.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                  </p>
-                                              </div>
-                                              {!isLocked && (
-                                                  <button
-                                                      onClick={(event) => { 
-                                                          event.stopPropagation(); 
-                                                          openEditExpense(exp); 
-                                                      }}
-                                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-rose-500 hover:border-rose-400 transition-colors flex items-center gap-1"
-                                                  >
-                                                      <Pencil size={14} />
-                                                      Editar
-                                                  </button>
-                                              )}
-                                          </div>
-                                      </div>
-                                  );
-                              })}
-                          </div>
-                      </div>
-                  );
-              })
+                      );
+                  })}
+              </div>
           ) : (
               isMobile ? (
                   <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-4 py-4 flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
@@ -724,6 +747,135 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       </>
   );
 
+  const expandedMonthExpenses = expandedMonthKey ? groupedExpenses[expandedMonthKey] || [] : [];
+  const expandedMonthTotal = expandedMonthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+  const expandedMonthLabel = expandedMonthKey ? formatMonthKey(expandedMonthKey) : '';
+
+  const closeExpandedMonth = () => {
+      setExpandedMonthKey(null);
+      setExpandedExpenseId(null);
+  };
+
+  const monthDetailModal = expandedMonthKey ? (
+      <div className="fixed inset-0 z-[1200] flex items-end justify-center">
+          <button
+              type="button"
+              onClick={closeExpandedMonth}
+              className="absolute inset-0 bg-black/60 z-0"
+              aria-label="Fechar fatura"
+          />
+          <div className="relative w-full max-w-7xl px-4 sm:px-6 pb-6 z-10">
+              <div className="relative bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                  <div>
+                      <p className="text-sm font-semibold">Fatura de {expandedMonthLabel}</p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Total: R$ {expandedMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                  </div>
+                  <button
+                      type="button"
+                      onClick={closeExpandedMonth}
+                      className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                      aria-label="Fechar fatura"
+                  >
+                      <X size={16} />
+                  </button>
+              </div>
+              <div className="pt-3 flex-1 overflow-auto">
+                  <div className="space-y-3">
+                      {expandedMonthExpenses.map((exp, index) => {
+                          const isSelected = selectedExpenseIds.includes(exp.id);
+                          const isLocked = Boolean(exp.locked);
+                          const isRowExpanded = expandedExpenseId === exp.id;
+                          const rowBg = index % 2 === 0 ? 'bg-rose-500/10' : 'bg-transparent';
+
+                          return (
+                              <div key={exp.id} className="space-y-3">
+                                  <div className={`py-2 rounded-md ${rowBg}`}>
+                                      <button
+                                          type="button"
+                                          onClick={() => {
+                                              if (!isLocked) {
+                                                  toggleSelection(exp.id);
+                                                  setExpandedExpenseId(isRowExpanded ? null : exp.id);
+                                              }
+                                          }}
+                                          className="w-full flex items-center justify-between gap-3 text-left"
+                                          disabled={isLocked}
+                                      >
+                                          <div className="flex items-center gap-2 min-w-0">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={isSelected}
+                                                  onChange={() => toggleSelection(exp.id)}
+                                                  onClick={(event) => event.stopPropagation()}
+                                                  disabled={isLocked}
+                                                  className="h-4 w-4"
+                                                  style={{ accentColor: selectedCardColor }}
+                                                  aria-label={`Selecionar fatura ${exp.description}`}
+                                              />
+                                              <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                                                  {exp.description}
+                                              </span>
+                                          </div>
+                                          <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-rose-600 dark:text-rose-400'}`}>
+                                              R$ {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                          </span>
+                                      </button>
+                                  </div>
+
+                                  {isRowExpanded && (
+                                      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
+                                          <div className="flex items-center justify-between mb-3">
+                                              <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => setExpandedExpenseId(null)}
+                                                  className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
+                                                  aria-label="Fechar detalhes"
+                                              >
+                                                  <X size={14} />
+                                              </button>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                              <div>
+                                                  <p className="text-[10px] uppercase tracking-wide">Lançamento</p>
+                                                  <p className="text-sm text-zinc-900 dark:text-white">
+                                                      {new Date(exp.date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                  </p>
+                                              </div>
+                                              <div>
+                                                  <p className="text-[10px] uppercase tracking-wide">Vencimento</p>
+                                                  <p className="text-sm text-zinc-900 dark:text-white">
+                                                      {new Date(exp.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                  </p>
+                                              </div>
+                                              <div>
+                                                  <p className="text-[10px] uppercase tracking-wide">Categoria</p>
+                                                  <p className="text-sm text-zinc-900 dark:text-white">{exp.category}</p>
+                                              </div>
+                                              {exp.installments && (
+                                                  <div>
+                                                      <p className="text-[10px] uppercase tracking-wide">Parcelas</p>
+                                                      <p className="text-sm text-zinc-900 dark:text-white">
+                                                          {exp.installmentNumber}/{exp.totalInstallments}
+                                                      </p>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      </div>
+                                  )}
+                              </div>
+                          );
+                      })}
+                  </div>
+              </div>
+              </div>
+          </div>
+      </div>
+  ) : null;
+
   const mainSection = (
       <main className={mainWrapperClass}>
           {cardManagementSection}
@@ -734,6 +886,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const modals = (
       <>
+          {monthDetailModal}
           <PayInvoiceModal 
             isOpen={isPayModalOpen}
             onClose={() => setIsPayModalOpen(false)}
@@ -753,6 +906,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
             onSave={handleSaveCard}
             initialData={editingCard}
             source="view"
+            variant="dock"
           />
 
           {isEditModalOpen && editingExpense && (
@@ -925,20 +1079,16 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   <div className="min-w-[32px]" />
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Cartões</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{safeCreditCards.length}</p>
-                  </div>
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Pendentes</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{cardExpenses.length}</p>
-                  </div>
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total</p>
+              <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
                       <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
-                          R$ {pendingTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
+                  </div>
+                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
+                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{selectedExpenseIds.length}</p>
                   </div>
               </div>
 
@@ -988,7 +1138,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                           </div>
                       </div>
                       <div
-                          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+128px)]"
+                          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
                           style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
                       >
                           <div className="space-y-4">
@@ -1006,7 +1156,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
-      {headerSection}
+      {summarySection}
       {mainSection}
       {modals}
     </div>

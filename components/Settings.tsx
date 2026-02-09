@@ -225,19 +225,11 @@ const Settings: React.FC<SettingsProps> = ({
       () => [
           {
               id: 'quick_access',
-              title: 'Acesso Rápido (1 a 9)',
+              title: 'Acesso Rápido (← / →)',
               description: 'Funciona quando nenhum campo de texto estiver ativo.',
-              layout: 'grid',
+              layout: 'list',
               items: [
-                  { key: '1', label: 'Contas Bancárias' },
-                  { key: '2', label: 'Entradas' },
-                  { key: '3', label: 'Despesas Fixas' },
-                  { key: '4', label: 'Despesas Variáveis' },
-                  { key: '5', label: 'Despesas Pessoais' },
-                  { key: '6', label: 'Rendimentos' },
-                  { key: '7', label: 'Faturas' },
-                  { key: '8', label: 'Relatórios' },
-                  { key: '9', label: 'Emissão DAS' }
+                  { key: '← / →', label: 'Navegar pelos botões do Acesso Rápido (do Início até Auditoria, em ciclo).' }
               ]
           },
           {
@@ -246,7 +238,7 @@ const Settings: React.FC<SettingsProps> = ({
               description: 'Atalhos gerais para navegar mais rápido.',
               layout: 'list',
               items: [
-                  { key: 'Setas', label: 'Navegar pelos resultados da busca.' },
+                  { key: 'Setas ↑/↓', label: 'Navegar pelos resultados da busca.' },
                   { key: 'Enter', label: 'Abrir o item selecionado na busca.' },
                   { key: 'ESC', label: 'Fechar modais e voltar para a tela anterior.' },
                   { key: 'Enter (Ajudante)', label: 'Enviar pergunta no modo Ajudante.' }

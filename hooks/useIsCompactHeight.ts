@@ -7,7 +7,7 @@ const getViewportMetrics = () => {
   return { width, height };
 };
 
-const getIsMobile = () => {
+const getIsMobileViewport = () => {
   if (typeof window === 'undefined') return false;
   const { width, height } = getViewportMetrics();
   const minSide = Math.min(width, height);
@@ -20,15 +20,26 @@ const getIsMobile = () => {
   return width <= 767;
 };
 
-const useIsMobile = () => {
-  const [isMobile, setIsMobile] = useState(getIsMobile);
+const getIsCompactHeight = () => {
+  if (typeof window === 'undefined') return false;
+  const { height } = getViewportMetrics();
+  return height <= 900;
+};
+
+const useIsCompactHeight = () => {
+  const [isCompactHeight, setIsCompactHeight] = useState(getIsCompactHeight);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const update = () => setIsMobile(getIsMobile());
+    const update = () => {
+      if (getIsMobileViewport()) {
+        setIsCompactHeight(false);
+        return;
+      }
+      setIsCompactHeight(getIsCompactHeight());
+    };
 
     update();
-
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
     window.visualViewport?.addEventListener('resize', update);
@@ -40,7 +51,7 @@ const useIsMobile = () => {
     };
   }, []);
 
-  return isMobile;
+  return isCompactHeight;
 };
 
-export default useIsMobile;
+export default useIsCompactHeight;

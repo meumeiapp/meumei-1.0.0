@@ -6,6 +6,7 @@ import {
   CreditCard, 
   BarChart3, 
   Home, 
+  Repeat,
   ShoppingCart, 
   User,
   ArrowUpCircle,
@@ -26,10 +27,11 @@ import {
   GripVertical,
   Lock,
   Download,
-  ChevronDown
+  ChevronDown,
+  X
 } from 'lucide-react';
-import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
@@ -39,7 +41,7 @@ import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/ca
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 import SearchHelperBar from './SearchHelperBar';
-import QuickAccessHelp from './QuickAccessHelp';
+import useIsCompactHeight from '../hooks/useIsCompactHeight';
 
 interface FinancialData {
     balance: number;
@@ -58,7 +60,6 @@ interface ExpenseBreakdown {
 }
 
 const CATEGORY_TREND_COLORS = ['#a855f7', '#38bdf8', '#f97316', '#22c55e', '#ec4899', '#facc15', '#0ea5e9', '#f472b6', '#94a3b8', '#fb923c'];
-
 const MONTH_ALIASES: Record<string, string> = {
   jan: '01',
   fev: '02',
@@ -324,7 +325,7 @@ const getMascotConfig = (percentage: number): MascotConfig => {
   };
 };
 
-const DashboardDesktop: React.FC<DashboardProps> = ({
+const DashboardDesktop: React.FC<DashboardProps> = ({ 
   onOpenAccounts,
   onOpenVariableExpenses,
   onOpenFixedExpenses,
@@ -352,6 +353,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   isStandalone = false,
   onInstallApp
 }) => {
+  const isCompactHeight = useIsCompactHeight();
   const canViewBalances = true;
   const canViewMeiLimit = true;
   const canViewInvoices = true;
@@ -410,7 +412,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-blue-100 dark:border-blue-500/20',
               tipTitle: 'Contas Bancárias',
               tipBody:
-                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.\nAtalho: 1",
+                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.",
               onClick: onOpenAccounts,
               showWhen: canViewBalances
           },
@@ -423,19 +425,19 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-emerald-100 dark:border-emerald-500/20',
               tipTitle: 'Entradas',
               tipBody:
-                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.\nAtalho: 2',
+                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenIncomes,
               showWhen: canManageIncomes
           },
           {
               id: 'fixed_expenses',
               label: 'Despesas Fixas',
-              icon: <Home />,
+              icon: <Repeat />,
               color: 'text-amber-500 dark:text-amber-400',
               bg: 'bg-amber-50 dark:bg-amber-500/10',
               border: 'border-amber-100 dark:border-amber-500/20',
               tipTitle: 'Despesas Fixas',
-              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.\nAtalho: 3',
+              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenFixedExpenses,
               showWhen: canManageExpenses
           },
@@ -448,7 +450,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-pink-100 dark:border-pink-500/20',
               tipTitle: 'Despesas Variáveis',
               tipBody:
-                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.\nAtalho: 4',
+                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenVariableExpenses,
               showWhen: canManageExpenses
           },
@@ -460,7 +462,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-cyan-50 dark:bg-cyan-500/10',
               border: 'border-cyan-100 dark:border-cyan-500/20',
               tipTitle: 'Despesas Pessoais',
-              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.\nAtalho: 5',
+              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenPersonalExpenses,
               showWhen: canManageExpenses
           },
@@ -473,7 +475,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               border: 'border-violet-100 dark:border-violet-500/20',
               tipTitle: 'Rendimentos',
               tipBody:
-                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.\nAtalho: 6',
+                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenYields,
               showWhen: canViewBalances
           },
@@ -485,7 +487,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-rose-50 dark:bg-rose-500/10',
               border: 'border-rose-100 dark:border-rose-500/20',
               tipTitle: 'Faturas',
-              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.\nAtalho: 7',
+              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenInvoices,
               showWhen: canViewInvoices
           },
@@ -497,7 +499,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-zinc-100 dark:bg-zinc-500/10',
               border: 'border-zinc-200 dark:border-zinc-500/20',
               tipTitle: 'Relatórios',
-              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.\nAtalho: 8',
+              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenReports,
               showWhen: canViewReports && Boolean(onOpenReports)
           },
@@ -509,7 +511,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               bg: 'bg-teal-50 dark:bg-teal-500/10',
               border: 'border-teal-100 dark:border-teal-500/20',
               tipTitle: 'Emissão DAS',
-              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.\nAtalho: 9',
+              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenDas,
               showWhen: true
           }
@@ -545,6 +547,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const [collapsedBlocks, setCollapsedBlocks] = useState<Partial<Record<DashboardBlockId, boolean>>>({});
   const [isCreditCardsCollapsed, setIsCreditCardsCollapsed] = useState(true);
   const [isExpenseBreakdownCollapsed, setIsExpenseBreakdownCollapsed] = useState(true);
+  const [expandedPanel, setExpandedPanel] = useState<null | 'credit_cards' | 'expense_breakdown'>(null);
   const collapsePrefsLoadedRef = useRef(false);
   const collapsePrefsKey = 'meumei.dashboard.desktop.collapse';
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
@@ -562,30 +565,6 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           [id]: !prev[id]
       }));
   };
-
-  useEffect(() => {
-      const handleKeyDown = (event: KeyboardEvent) => {
-          if (event.defaultPrevented || event.repeat) return;
-          if (event.ctrlKey || event.metaKey || event.altKey) return;
-          if (document.querySelector('[data-modal-root="true"]')) return;
-          const target = event.target as HTMLElement | null;
-          if (target) {
-              const tagName = target.tagName;
-              if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target.isContentEditable) {
-                  return;
-              }
-          }
-          if (!/^[1-9]$/.test(event.key)) return;
-          const index = Number(event.key) - 1;
-          const action = quickActionItems[index];
-          if (!action?.onClick) return;
-          event.preventDefault();
-          action.onClick();
-      };
-
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [quickActionItems]);
 
   useEffect(() => {
       if (typeof window === 'undefined') return;
@@ -625,6 +604,13 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           console.warn('[dashboard][collapse] save_failed', { message: (error as any)?.message });
       }
   }, [collapsePrefsKey, isCreditCardsCollapsed, isExpenseBreakdownCollapsed]);
+
+  useEffect(() => {
+      document.body.classList.add('no-vertical-scroll');
+      return () => {
+          document.body.classList.remove('no-vertical-scroll');
+      };
+  }, []);
 
   const expenseSearchItems = useMemo<InlineSearchItem[]>(() =>
       expenses.map(expense => {
@@ -876,7 +862,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   }, [categoryTotals]);
 
   const visibleCreditCards = isCreditCardsCollapsed ? creditCards.slice(0, 2) : creditCards;
-  const visibleCategoryItems = isExpenseBreakdownCollapsed ? categoryTotals.items.slice(0, 2) : categoryTotals.items;
+  const visibleCategoryItems = isExpenseBreakdownCollapsed ? categoryTotals.items.slice(0, 1) : categoryTotals.items;
 
   useEffect(() => {
       if (!expandedCategoryKey) return;
@@ -945,6 +931,18 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const meiExcess = Math.max(meiRevenue - MEI_LIMIT, 0);
   const meiStatus = getMeiStatus(rawPercentage);
   const mascotConfig = getMascotConfig(rawPercentage);
+  const incomeAccent = '#22c55e';
+  const expenseAccent = '#FF0000';
+  const healthScore = useMemo(() => {
+      const income = financialData.income;
+      const expenses = financialData.expenses;
+      if (income <= 0 && expenses <= 0) return 0.5;
+      if (income <= 0) return 0;
+      const net = income - expenses;
+      const margin = net / income;
+      const clamped = Math.max(-1, Math.min(1, margin));
+      return (clamped + 1) / 2;
+  }, [financialData.income, financialData.expenses]);
   const statusCalloutText = (() => {
       switch (meiStatus.level) {
           case 'over':
@@ -973,7 +971,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const availableBlocks = useMemo<Record<DashboardBlockId, boolean>>(() => ({
       quick_access: false,
       mei_limit: canViewMeiLimit,
-      financial_xray: true,
+      financial_xray: false,
       credit_cards: canViewInvoices,
       expense_breakdown: canManageExpenses
   }), [canViewMeiLimit, canViewInvoices, canManageExpenses]);
@@ -1001,7 +999,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = (event: { active: { id: string }; over?: { id: string } | null }) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
       const oldIndex = visibleOrder.indexOf(active.id as DashboardBlockId);
@@ -1019,96 +1017,226 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       setOrder(merged as DashboardBlockId[]);
   };
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500 pt-6">
-        <div className="w-full px-4 mt-1 mb-2">
-            <div className="max-w-5xl mx-auto relative" ref={searchContainerRef}>
-                <SearchHelperBar
-                    variant="desktop"
-                    searchQuery={searchQuery}
-                    setSearchQuery={setSearchQuery}
-                    setActiveSearchIndex={setActiveSearchIndex}
-                    setIsSearchActive={setIsSearchActive}
-                    onSearchKeyDown={handleSearchKeyDown}
-                    signals={helperSignals}
-                    actions={helperActions}
-                    tipsEnabled={tipsEnabled}
-                    results={
-                        Boolean(trimmedSearchQuery) && isSearchActive ? (
-                            <div className="absolute left-0 right-0 mt-3 bg-[#111114] border border-white/10 rounded-2xl shadow-2xl max-h-80 overflow-y-auto z-20">
-                                {visibleInlineResults.length === 0 ? (
-                                    <div className="text-sm text-zinc-500 px-6 py-4">Nenhum resultado encontrado.</div>
-                                ) : (
-                                    <ul>
-                                        {visibleInlineResults.map((item, idx) => {
-                                            const isActive = idx === activeSearchIndex;
-                                            const statusMeta = getInlineExpenseStatusMeta(item);
-                                            return (
-                                                <li
-                                                    key={`${item.entity}-${item.id}`}
-                                                    className={`px-6 py-4 border-b border-white/5 cursor-pointer ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
-                                                    onMouseEnter={() => setActiveSearchIndex(idx)}
-                                                    onClick={() => handleSelectSearchResult(item)}
-                                                >
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div>
-                                                            <p className="text-sm font-semibold text-white flex items-center gap-2">
-                                                                {item.entity === 'expense' && <span className="text-rose-400 text-[10px] uppercase">Despesa</span>}
-                                                                {item.entity === 'income' && <span className="text-emerald-400 text-[10px] uppercase">Entrada</span>}
-                                                                {item.entity === 'account' && <span className="text-blue-400 text-[10px] uppercase">Conta</span>}
-                                                                {item.entity === 'card' && <span className="text-purple-400 text-[10px] uppercase">Cartão</span>}
-                                                                {item.entity === 'category' && <span className="text-zinc-400 text-[10px] uppercase">Categoria</span>}
-                                                                <span>{item.title}</span>
-                                                            </p>
-                                                            {item.subtitle && <p className="text-xs text-zinc-500">{item.subtitle}</p>}
-                                                        </div>
-                                                        <div className="text-right">
-                                                            {statusMeta && (
-                                                                <p className={`text-[11px] font-semibold flex items-center justify-end gap-1 ${statusMeta.textClass}`}>
-                                                                    <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
-                                                                    {statusMeta.label}
-                                                                </p>
-                                                            )}
-                                                            {typeof item.amount === 'number' && (
-                                                                <p className="text-sm font-bold text-white">
-                                                                    {item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                                </p>
-                                                            )}
-                                                            {item.entity === 'expense' ? (
-                                                                item.dateLabel ? (
-                                                                    <p className="text-[11px] text-zinc-500">
-                                                                        {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                                    </p>
-                                                                ) : (
-                                                                    <p className="text-[11px] text-zinc-500">Sem vencimento</p>
-                                                                )
-                                                            ) : (
-                                                                item.dateLabel && (
-                                                                    <p className="text-[11px] text-zinc-500">
-                                                                        {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                                    </p>
-                                                                )
-                                                            )}
-                                                       </div>
-                                                   </div>
-                                                </li>
-                                            );
-                                        })}
-                                    </ul>
-                                )}
-                            </div>
-                        ) : null
-                    }
-                />
-            </div>
-        </div>
+  const renderCreditCardsSection = (cardsToShow: CreditCardType[]) => (
+      <section>
+          <div className="bg-white dark:bg-[#151517] rounded-2xl p-3 border border-zinc-200 dark:border-zinc-800 shadow-sm h-full">
+              <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                      <CreditCard className="text-purple-600 dark:text-purple-500" size={20} />
+                      Faturas dos Cartões
+                  </h2>
+              </div>
 
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
-                <div className="flex flex-col gap-6">
-                {/* Quick Access */}
-                {availableBlocks.quick_access && (
+              {cardsToShow.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {cardsToShow.map((card) => {
+                          const style = getCardStyle(card); 
+                          
+                          const invoiceTotal = cardTotals[card.id] ?? 0;
+
+                          const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
+                          if (card.dueDay < card.closingDay) {
+                              dueDateObj.setMonth(dueDateObj.getMonth() + 1);
+                          }
+                          const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
+
+                          return (
+                              <div 
+                                  key={card.id} 
+                                  className="rounded-2xl p-3 border border-white/5 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
+                                  style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
+                              >
+                                  <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
+                                  <div className="relative z-10 flex flex-col h-full justify-between">
+                                      <div className="flex justify-between items-start">
+                                          <div>
+                                              <h3 className="font-bold text-base text-white mb-0.5">{card.name}</h3>
+                                              <p className="text-xs text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
+                                          </div>
+                                          <div className="bg-white/20 backdrop-blur-md p-1.5 rounded-lg">
+                                              <img src={style.icon} className="w-7 h-7 opacity-90" alt="Card Brand" />
+                                          </div>
+                                      </div>
+                                      <div className="mt-4">
+                                          <div className="flex justify-between items-end mb-3">
+                                              <div>
+                                                  <p className="text-[10px] text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
+                                                  <div className="text-xl font-bold text-white">
+                                                      R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                  </div>
+                                              </div>
+                                              <div className="text-right">
+                                                  <p className="text-[10px] text-white/80 mb-1">Vence em</p>
+                                                  <p className="text-xs font-bold text-white bg-white/20 px-2 py-0.5 rounded-md backdrop-blur-sm">
+                                                      {formattedDueDate}
+                                                  </p>
+                                              </div>
+                                          </div>
+                                          <div className="pt-3 border-t border-white/20 flex justify-between items-center">
+                                              <span 
+                                                  className="text-[10px] font-semibold px-2 py-0.5 rounded text-white"
+                                                  style={{ backgroundColor: style.badgeBg }}
+                                              >
+                                                  Fatura Aberta
+                                              </span>
+                                              <button 
+                                                  onClick={onOpenInvoices}
+                                                  className="flex items-center gap-2 text-[11px] font-semibold text-white hover:bg-white/20 px-2 py-1 rounded-lg transition-colors"
+                                              >
+                                                  Ver Detalhes <Eye size={14} />
+                                              </button>
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+                          );
+                      })}
+                  </div>
+              ) : (
+                  <div className="bg-white dark:bg-[#151517] rounded-2xl p-10 text-center border border-zinc-200 dark:border-zinc-800 border-dashed">
+                      <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-400">
+                          <CreditCard size={32} />
+                      </div>
+                      <h3 className="text-zinc-900 dark:text-white font-bold mb-1">Nenhum cartão cadastrado</h3>
+                      <p className="text-sm text-zinc-500 dark:text-zinc-400">Adicione seus cartões de crédito nas configurações.</p>
+                  </div>
+              )}
+          </div>
+      </section>
+  );
+
+  const renderExpenseBreakdownSection = (itemsToShow: typeof categoryTotals.items) => (
+      <section className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+              <div>
+                  <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                      <PieChart size={20} className="text-indigo-500" />
+                      Onde foi parar seu dinheiro?
+                  </h2>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Ranking das despesas do mês ({categoryTotals.monthLabel}).
+                  </p>
+              </div>
+              <div className="text-right text-xs text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
+                  <span className="uppercase tracking-wide font-semibold">Total do mês</span>
+                  <div className="text-sm font-semibold text-zinc-900 dark:text-white">
+                      {formatCurrency(categoryTotals.totalSum)}
+                  </div>
+                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Pagas: {formatCurrency(categoryTotals.totalPaid)}
+                  </span>
+              </div>
+          </div>
+          {itemsToShow.length > 0 && categoryTotals.totalSum > 0 ? (
+              <div className="space-y-3">
+                  <ul className="space-y-2">
+                      {itemsToShow.map((item, index) => {
+                          const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
+                          const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
+                          const barColor =
+                              item.category === 'Outros'
+                                  ? '#94a3b8'
+                                  : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
+                          const isExpanded = expandedCategoryKey === item.key;
+                          const categoryExpenses = categoryTotals.categoryItems[item.key] || [];
+                          const itemsToShowInner = categoryExpenses.slice(0, CATEGORY_ITEMS_PREVIEW_LIMIT);
+                          const extraCount = Math.max(categoryExpenses.length - itemsToShowInner.length, 0);
+                          return (
+                              <li key={item.key} className="space-y-1">
+                                  <button
+                                      type="button"
+                                      onClick={() =>
+                                          setExpandedCategoryKey(prev => (prev === item.key ? null : item.key))
+                                      }
+                                      aria-expanded={isExpanded}
+                                      className="w-full text-left"
+                                  >
+                                      <div className="flex items-center justify-between gap-3 text-sm">
+                                          <div className="flex items-center gap-2 min-w-0">
+                                              <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
+                                                  {item.category}
+                                              </span>
+                                              <ChevronDown
+                                                  size={14}
+                                                  className={`text-zinc-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                              />
+                                          </div>
+                                          <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
+                                              {formatCurrency(item.total)} • {pct.toFixed(1)}%
+                                          </span>
+                                      </div>
+                                      <div className="mt-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                                          <div
+                                              className="h-full rounded-full"
+                                              style={{ width: `${barWidth}%`, backgroundColor: barColor }}
+                                          ></div>
+                                      </div>
+                                  </button>
+                                  {isExpanded && (
+                                      <div className="mt-2 pl-3 space-y-2 text-xs text-zinc-500 dark:text-zinc-400">
+                                          {itemsToShowInner.map(expense => (
+                                              <div key={expense.id} className="flex items-center justify-between gap-2">
+                                                  <div className="flex flex-col">
+                                                      <span className="font-semibold text-zinc-700 dark:text-zinc-200">{expense.description}</span>
+                                                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                          {new Date(expense.date).toLocaleDateString('pt-BR')} • {expense.status === 'paid' ? 'Pago' : expense.status === 'pending' ? 'Pendente' : 'Cancelado'}
+                                                      </span>
+                                                  </div>
+                                                  <span className="font-semibold text-zinc-700 dark:text-zinc-200">
+                                                      {formatCurrency(expense.amount)}
+                                                  </span>
+                                              </div>
+                                          ))}
+                                          {extraCount > 0 && (
+                                              <button
+                                                  type="button"
+                                                  onClick={() => onOpenReports?.('expenses')}
+                                                  className="text-indigo-500 hover:text-indigo-400 text-[11px] font-semibold"
+                                              >
+                                                  Ver mais {extraCount} despesas...
+                                              </button>
+                                          )}
+                                      </div>
+                                  )}
+                              </li>
+                          );
+                      })}
+                  </ul>
+                  {spendInsights.length > 0 && (
+                      <div className="mt-3 grid gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 md:grid-cols-3">
+                          {spendInsights.map(insight => (
+                              <div
+                                  key={insight.label}
+                                  className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1"
+                              >
+                                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                                      {insight.label}
+                                  </span>
+                                  <span className="font-semibold text-zinc-900 dark:text-white">
+                                      {insight.value}
+                                  </span>
+                                  {insight.sub && (
+                                      <span className="text-[10px] text-zinc-400">{insight.sub}</span>
+                                  )}
+                              </div>
+                          ))}
+                      </div>
+                  )}
+              </div>
+          ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
+                  <PieChart size={40} className="mb-3 opacity-20" />
+                  <p className="text-sm text-center">Nenhuma despesa paga encontrada no mês.</p>
+              </div>
+          )}
+      </section>
+  );
+
+  const renderDashboardBlock = (blockId: DashboardBlockId) => {
+      if (blockId === 'quick_access' && availableBlocks.quick_access) {
+          return (
                     <SortableBlock
+                        key={blockId}
                         id="quick_access"
                         label={blockLabels.quick_access}
                         disabled={layoutLoading}
@@ -1116,468 +1244,393 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         isCollapsed={Boolean(collapsedBlocks.quick_access)}
                         onToggleCollapse={() => toggleCollapse('quick_access')}
                     >
-                        <section>
-                            <div className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                                <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
-                                <div className="grid grid-flow-col auto-cols-fr gap-3">
-                {quickActionItems.map((action) => (
-                        <QuickAction
-                            key={action.id}
-                            icon={action.icon}
-                            label={action.label}
-                            color={action.color}
-                            bg={action.bg}
-                            border={action.border}
-                            tipTitle={action.tipTitle}
-                            tipBody={action.tipBody}
-                            onClick={action.onClick}
-                        />
-                    ))}
-                            </div>
-                        </div>
-                    </section>
-                </SortableBlock>
-                )}
+                  <section>
+                      <div className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                          <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
+                          <div className="grid grid-flow-col auto-cols-fr gap-3">
+                              {quickActionItems.map((action) => (
+                                  <QuickAction
+                                      key={action.id}
+                                      icon={action.icon}
+                                      label={action.label}
+                                      color={action.color}
+                                      bg={action.bg}
+                                      border={action.border}
+                                      tipTitle={action.tipTitle}
+                                      tipBody={action.tipBody}
+                                      onClick={action.onClick}
+                                  />
+                              ))}
+                          </div>
+                      </div>
+                  </section>
+              </SortableBlock>
+          );
+      }
 
-        {/* MEI Limit Monitor (GAMIFIED) - Conditionally Rendered */}
-                {canViewMeiLimit && (
+      if (blockId === 'mei_limit' && canViewMeiLimit) {
+          return (
                     <SortableBlock
+                        key={blockId}
                         id="mei_limit"
                         label={blockLabels.mei_limit}
                         disabled={layoutLoading}
                         style={{ order: orderMap.mei_limit }}
-                        isCollapsed={Boolean(collapsedBlocks.mei_limit)}
-                        onToggleCollapse={() => toggleCollapse('mei_limit')}
                     >
-            <section>
-                <div className={`bg-white dark:bg-[#151517] rounded-2xl p-5 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
-                    <div className="absolute inset-y-0 right-0 w-32 opacity-5 pointer-events-none">
-                        <Building2 size={120} className="w-full h-full" />
-                    </div>
+                  <section>
+                      <div className={`bg-white dark:bg-[#151517] rounded-2xl p-5 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
+                          <div className="absolute inset-y-0 right-0 w-32 opacity-5 pointer-events-none">
+                              <Building2 size={120} className="w-full h-full" />
+                          </div>
 
-                    <div className="relative flex flex-col gap-5">
-                        <div className="flex flex-col lg:flex-row gap-5 lg:items-start">
-                            <div className="flex flex-1 items-start gap-4">
-                                <div 
-                                    className={`relative w-20 h-20 rounded-2xl border ${mascotConfig.ringClass} flex items-center justify-center shadow-xl ${mascotConfig.auraClass} transition-all duration-500`}
-                                    title={mascotConfig.tooltip}
-                                >
-                                    <mascotConfig.icon size={34} className={`${mascotConfig.faceClass}`} />
-                                </div>
-                                <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <div className="p-1.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
-                                            <Building2 size={18} />
-                                        </div>
-                                        <h3 className="font-bold text-zinc-900 dark:text-white">Faturamento Fiscal MEI (PJ)</h3>
-                                    </div>
-                                    <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-xl">
-                                        Acompanhe o seu faturamento anual e evite ultrapassar o limite de R$ 81.000,00 do regime MEI.
-                                    </p>
-                                    <div className={`mt-3 text-sm font-semibold ${meiStatus.accentText}`}>
-                                        {meiStatus.label}
-                                    </div>
-                                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                                        {meiStatus.description}
-                                    </p>
-                                </div>
-                            </div>
-                            <div className={`w-full lg:w-80 rounded-2xl border ${meiStatus.calloutBorder} ${meiStatus.calloutBg} p-4 flex gap-3`}>
-                                {React.createElement(calloutIcon, { size: 28, className: `${meiStatus.accentText} shrink-0` })}
-                                <p className={`text-sm leading-relaxed ${meiStatus.calloutText}`}>
-                                    {statusCalloutText}
-                                </p>
-                            </div>
-                        </div>
+                          <div className="relative flex flex-col gap-5">
+                              <div className="flex flex-col lg:flex-row gap-5 lg:items-start">
+                                  <div className="flex flex-1 items-start gap-4">
+                                      <div 
+                                          className={`relative w-20 h-20 rounded-2xl border ${mascotConfig.ringClass} flex items-center justify-center shadow-xl ${mascotConfig.auraClass} transition-all duration-500`}
+                                          title={mascotConfig.tooltip}
+                                      >
+                                          <mascotConfig.icon size={34} className={`${mascotConfig.faceClass}`} />
+                                      </div>
+                                      <div>
+                                          <div className="flex items-center gap-2 mb-2">
+                                              <div className="p-1.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
+                                                  <Building2 size={18} />
+                                              </div>
+                                              <h3 className="font-bold text-zinc-900 dark:text-white">Faturamento Fiscal MEI (PJ)</h3>
+                                          </div>
+                                          <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-xl">
+                                              Acompanhe o seu faturamento anual e evite ultrapassar o limite de R$ 81.000,00 do regime MEI.
+                                          </p>
+                                          <div className={`mt-3 text-sm font-semibold ${meiStatus.accentText}`}>
+                                              {meiStatus.label}
+                                          </div>
+                                          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                                              {meiStatus.description}
+                                          </p>
+                                      </div>
+                                  </div>
+                                  <div className={`w-full lg:w-80 rounded-2xl border ${meiStatus.calloutBorder} ${meiStatus.calloutBg} p-4 flex gap-3`}>
+                                      {React.createElement(calloutIcon, { size: 28, className: `${meiStatus.accentText} shrink-0` })}
+                                      <p className={`text-sm leading-relaxed ${meiStatus.calloutText}`}>
+                                          {statusCalloutText}
+                                      </p>
+                                  </div>
+                              </div>
 
-                        <div className="relative pt-6">
-                            <div className="relative h-4 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                                <div 
-                                    className={`absolute inset-y-0 left-0 bg-gradient-to-r ${meiStatus.gradient} transition-all duration-700 ease-out`}
-                                    style={{ width: `${progressVisualPercentage}%` }}
-                                ></div>
-                            </div>
-                            <div 
-                                className="absolute -top-8 flex flex-col items-center transition-all duration-500"
-                                style={{ left: `calc(${displayPercentage}% - 28px)` }}
-                            >
-                                <div className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shadow ${meiStatus.badgeClass}`}>
-                                    {rawPercentage.toFixed(1)}%
-                                </div>
-                                <div className={`w-2 h-2 mt-1 rounded-full bg-gradient-to-r ${meiStatus.gradient}`}></div>
-                            </div>
-                            {MEI_CHECKPOINTS.map((checkpoint) => {
-                                const percent = checkpoint * 100;
-                                const value = formatCurrency(MEI_LIMIT * checkpoint);
-                                return (
-                                    <div
-                                        key={checkpoint}
-                                        className="absolute top-4 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center"
-                                        style={{ left: `${percent}%` }}
-                                        title={`${percent}% do limite: ${value}`}
-                                    >
-                                        <div className="w-3 h-3 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 flex items-center justify-center">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600"></div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                            <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                    <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Faturado no ano</p>
-                                    <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiRevenue)}</p>
-                                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{rawPercentage.toFixed(1)}% do limite</p>
-                                </div>
-                                <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                    <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">{meiStatus.level === 'over' ? 'Excedente sobre o limite' : 'Restante até o limite'}</p>
-                                    <p className={`text-xl font-semibold mt-1 ${meiStatus.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
-                                        {formatCurrency(meiStatus.level === 'over' ? meiExcess : meiRemaining)}
-                                    </p>
-                                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Limite anual de {formatCurrency(MEI_LIMIT)}</p>
-                                </div>
-                                <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                    <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Limite MEI</p>
-                                    <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(MEI_LIMIT)}</p>
-                                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Atualizado automaticamente pela legislação</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-            </SortableBlock>
-        )}
+                              <div className="relative pt-6">
+                                  <div className="relative h-4 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                                      <div 
+                                          className={`absolute inset-y-0 left-0 bg-gradient-to-r ${meiStatus.gradient} transition-all duration-700 ease-out`}
+                                          style={{ width: `${progressVisualPercentage}%` }}
+                                      ></div>
+                                  </div>
+                                  <div 
+                                      className="absolute -top-8 flex flex-col items-center transition-all duration-500"
+                                      style={{ left: `calc(${displayPercentage}% - 28px)` }}
+                                  >
+                                      <div className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shadow ${meiStatus.badgeClass}`}>
+                                          {rawPercentage.toFixed(1)}%
+                                      </div>
+                                      <div className={`w-2 h-2 mt-1 rounded-full bg-gradient-to-r ${meiStatus.gradient}`}></div>
+                                  </div>
+                                  {MEI_CHECKPOINTS.map((checkpoint) => {
+                                      const percent = checkpoint * 100;
+                                      const value = formatCurrency(MEI_LIMIT * checkpoint);
+                                      return (
+                                          <div
+                                              key={checkpoint}
+                                              className="absolute top-4 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center"
+                                              style={{ left: `${percent}%` }}
+                                              title={`${percent}% do limite: ${value}`}
+                                          >
+                                              <div className="w-3 h-3 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 flex items-center justify-center">
+                                                  <div className="w-1.5 h-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600"></div>
+                                              </div>
+                                          </div>
+                                      );
+                                  })}
+                                  <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                      <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
+                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Faturado no ano</p>
+                                          <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiRevenue)}</p>
+                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{rawPercentage.toFixed(1)}% do limite</p>
+                                      </div>
+                                      <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
+                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">{meiStatus.level === 'over' ? 'Excedente sobre o limite' : 'Restante até o limite'}</p>
+                                          <p className={`text-xl font-semibold mt-1 ${meiStatus.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
+                                              {formatCurrency(meiStatus.level === 'over' ? meiExcess : meiRemaining)}
+                                          </p>
+                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Limite anual de {formatCurrency(MEI_LIMIT)}</p>
+                                      </div>
+                                      <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
+                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Limite MEI</p>
+                                          <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(MEI_LIMIT)}</p>
+                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Atualizado automaticamente pela legislação</p>
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  </section>
+              </SortableBlock>
+          );
+      }
 
-        {/* Financial X-Ray */}
-        {availableBlocks.financial_xray && (
-        <SortableBlock
-            id="financial_xray"
-            label={blockLabels.financial_xray}
-            disabled={layoutLoading}
-            style={{ order: orderMap.financial_xray }}
-            isCollapsed={Boolean(collapsedBlocks.financial_xray)}
-            onToggleCollapse={() => toggleCollapse('financial_xray')}
-        >
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            
-            {/* Balance Card - Conditional */}
-            {canViewBalances ? (
-                <div className="bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 relative overflow-hidden group shadow-sm transition-all duration-300 hover:border-zinc-300 dark:hover:border-zinc-700">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400">
-                            <Wallet size={20} />
-                        </div>
-                    </div>
-                    <div>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium mb-1">Saldo atual</p>
-                        <h3 className={`text-3xl font-bold tracking-tight mb-2 ${financialData.balance < 0 ? 'text-red-500' : 'text-zinc-900 dark:text-white'}`}>
-                            R$ {financialData.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </h3>
-                        <p className="text-xs text-zinc-500 font-medium flex items-center gap-1">
-                            <Calendar size={12} />
-                            Disponível em contas
-                        </p>
-                    </div>
-                </div>
-            ) : (
-                <div className="bg-zinc-50 dark:bg-zinc-900 rounded-2xl p-5 border border-dashed border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center text-zinc-400">
-                    <Lock size={24} className="mb-2" />
-                    <p className="text-xs">Saldo Oculto</p>
-                </div>
-            )}
+      if (blockId === 'financial_xray' && availableBlocks.financial_xray) {
+          return null;
+      }
 
-            {canManageIncomes && (
-                <SummaryCard 
-                title="Entradas do Mês" 
-                value={financialData.income} 
-                icon={<ArrowUpCircle size={20} />}
-                colorClass="text-emerald-600 dark:text-emerald-400"
-                bgClass="bg-white dark:bg-[#151517]"
-                subtext={`R$ ${financialData.pendingIncome.toLocaleString('pt-BR', {minimumFractionDigits: 2})} a receber`}
-                />
-            )}
-
-            {canManageExpenses && (
-                <SummaryCard 
-                title="Saídas do Mês" 
-                value={financialData.expenses} 
-                icon={<ArrowDownCircle size={20} />}
-                colorClass="text-rose-600 dark:text-rose-400"
-                bgClass="bg-white dark:bg-[#151517]"
-                subtext={`R$ ${financialData.pendingExpenses.toLocaleString('pt-BR', {minimumFractionDigits: 2})} pendentes`}
-                isExpense
-                />
-            )}
-        </section>
-        </SortableBlock>
-        )}
-
-        {/* Credit Cards Section */}
-        {canViewInvoices && (
+      if (blockId === 'credit_cards' && canViewInvoices) {
+          return (
             <SortableBlock
+                key={blockId}
                 id="credit_cards"
                 label={blockLabels.credit_cards}
                 disabled={layoutLoading}
                 style={{ order: orderMap.credit_cards }}
-                isCollapsed={isCreditCardsCollapsed}
-                onToggleCollapse={() => setIsCreditCardsCollapsed((prev) => !prev)}
+                isCollapsed={false}
+                onToggleCollapse={() => setExpandedPanel('credit_cards')}
                 renderCollapsedChildren
             >
-            <section>
-                <div className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                            <CreditCard className="text-purple-600 dark:text-purple-500" size={20} />
-                            Faturas dos Cartões
-                        </h2>
-                    </div>
+                  {renderCreditCardsSection(visibleCreditCards)}
+          </SortableBlock>
+          );
+      }
 
-                    {visibleCreditCards.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                            {visibleCreditCards.map((card, idx) => {
-                                const style = getCardStyle(card); 
-                                
-                                const invoiceTotal = cardTotals[card.id] ?? 0;
-
-                                const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-                                if (card.dueDay < card.closingDay) {
-                                    dueDateObj.setMonth(dueDateObj.getMonth() + 1);
-                                }
-                                const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
-
-                                return (
-                                    <div 
-                                        key={card.id} 
-                                        className="rounded-2xl p-5 border border-white/5 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
-                                        style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
-                                    >
-                                        <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
-                                        <div className="relative z-10 flex flex-col h-full justify-between">
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <h3 className="font-bold text-lg text-white mb-1">{card.name}</h3>
-                                                    <p className="text-xs text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
-                                                </div>
-                                                <div className="bg-white/20 backdrop-blur-md p-2 rounded-lg">
-                                                    <img src={style.icon} className="w-8 h-8 opacity-90" alt="Card Brand" />
-                                                </div>
-                                            </div>
-                                            <div className="mt-8">
-                                                <div className="flex justify-between items-end mb-4">
-                                                    <div>
-                                                        <p className="text-xs text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
-                                                        <div className="text-2xl font-bold text-white">
-                                                            R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <p className="text-xs text-white/80 mb-1">Vence em</p>
-                                                        <p className="text-sm font-bold text-white bg-white/20 px-3 py-1 rounded-md backdrop-blur-sm">
-                                                            {formattedDueDate}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                <div className="pt-4 border-t border-white/20 flex justify-between items-center">
-                                                    <span 
-                                                        className="text-xs font-semibold px-2 py-1 rounded text-white"
-                                                        style={{ backgroundColor: style.badgeBg }}
-                                                    >
-                                                        Fatura Aberta
-                                                    </span>
-                                                    <button 
-                                                        onClick={onOpenInvoices}
-                                                        className="flex items-center gap-2 text-xs font-semibold text-white hover:bg-white/20 px-3 py-2 rounded-lg transition-colors"
-                                                    >
-                                                        Ver Detalhes <Eye size={14} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <div className="bg-white dark:bg-[#151517] rounded-2xl p-10 text-center border border-zinc-200 dark:border-zinc-800 border-dashed">
-                            <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-400">
-                                <CreditCard size={32} />
-                            </div>
-                            <h3 className="text-zinc-900 dark:text-white font-bold mb-1">Nenhum cartão cadastrado</h3>
-                            <p className="text-sm text-zinc-500 dark:text-zinc-400">Adicione seus cartões de crédito nas configurações.</p>
-                        </div>
-                    )}
-                </div>
-            </section>
-            </SortableBlock>
-        )}
-
-        {/* Categorized Expense Breakdown - BAR RANKING */}
-        {canManageExpenses && (
+      if (blockId === 'expense_breakdown' && canManageExpenses) {
+          return (
             <SortableBlock
+                key={blockId}
                 id="expense_breakdown"
                 label={blockLabels.expense_breakdown}
                 disabled={layoutLoading}
                 style={{ order: orderMap.expense_breakdown }}
-                isCollapsed={isExpenseBreakdownCollapsed}
-                onToggleCollapse={() => setIsExpenseBreakdownCollapsed((prev) => !prev)}
+                isCollapsed={false}
+                onToggleCollapse={() => setExpandedPanel('expense_breakdown')}
                 renderCollapsedChildren
             >
-            <section className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
-                <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
-                    <div>
-                        <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                            <PieChart size={20} className="text-indigo-500" />
-                            Onde foi parar seu dinheiro?
-                        </h2>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                            Ranking das despesas do mês ({categoryTotals.monthLabel}).
-                        </p>
-                    </div>
-                    <div className="text-right text-xs text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
-                        <span className="uppercase tracking-wide font-semibold">Total do mês</span>
-                        <div className="text-sm font-semibold text-zinc-900 dark:text-white">
-                            {formatCurrency(categoryTotals.totalSum)}
-                        </div>
-                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                            Pagas: {formatCurrency(categoryTotals.totalPaid)}
-                        </span>
-                    </div>
-                </div>
-                {categoryTotals.displayItems.length > 0 && categoryTotals.totalSum > 0 ? (
-                    <div className="space-y-4">
-                        <ul className="space-y-3">
-                            {visibleCategoryItems.map((item, index) => {
-                                const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
-                                const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
-                                const barColor =
-                                    item.category === 'Outros'
-                                        ? '#94a3b8'
-                                        : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
-                                const isExpanded = expandedCategoryKey === item.key;
-                                const categoryExpenses = categoryTotals.categoryItems[item.key] || [];
-                                const itemsToShow = categoryExpenses.slice(0, CATEGORY_ITEMS_PREVIEW_LIMIT);
-                                const extraCount = Math.max(categoryExpenses.length - itemsToShow.length, 0);
-                                return (
-                                    <li key={item.key} className="space-y-1">
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setExpandedCategoryKey(prev => (prev === item.key ? null : item.key))
-                                            }
-                                            aria-expanded={isExpanded}
-                                            className="w-full text-left"
-                                        >
-                                            <div className="flex items-center justify-between gap-3 text-sm">
-                                                <div className="flex items-center gap-2 min-w-0">
-                                                    <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
-                                                        {item.category}
-                                                    </span>
-                                                    <ChevronDown
-                                                        size={14}
-                                                        className={`text-zinc-400 transition-transform ${
-                                                            isExpanded ? 'rotate-180' : ''
-                                                        }`}
-                                                    />
-                                                </div>
-                                                <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-                                                    {formatCurrency(item.total)} • {pct.toFixed(1)}%
-                                                </span>
-                                            </div>
-                                            <div className="mt-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                                                <div
-                                                    className="h-full rounded-full"
-                                                    style={{ width: `${barWidth}%`, backgroundColor: barColor }}
-                                                ></div>
-                                            </div>
-                                        </button>
-                                        {isExpanded && (
-                                            <div className="mt-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-2">
-                                                <ul className="space-y-2">
-                                                    {itemsToShow.map(expense => {
-                                                        const meta =
-                                                            (expense.accountId && accountNameById[expense.accountId]) ||
-                                                            (expense.cardId && cardNameById[expense.cardId]) ||
-                                                            expense.paymentMethod ||
-                                                            null;
-                                                        return (
-                                                            <li
-                                                                key={expense.id}
-                                                                className="flex items-start justify-between gap-3 text-xs"
-                                                            >
-                                                                <div className="min-w-0">
-                                                                    <p className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
-                                                                        {expense.description || 'Sem descrição'}
-                                                                    </p>
-                                                                    <div className="flex items-center gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-                                                                        <span>
-                                                                            {new Date(
-                                                                                `${expense.date}T12:00:00`
-                                                                            ).toLocaleDateString('pt-BR', {
-                                                                                day: '2-digit',
-                                                                                month: '2-digit'
-                                                                            })}
-                                                                        </span>
-                                                                        {meta && <span className="truncate">{meta}</span>}
-                                                                    </div>
-                                                                </div>
-                                                                <span className="text-xs font-semibold text-zinc-900 dark:text-white shrink-0">
-                                                                    {formatCurrency(expense.amount)}
-                                                                </span>
-                                                            </li>
-                                                        );
-                                                    })}
-                                                </ul>
-                                                {extraCount > 0 && (
-                                                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                        + {extraCount} itens
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                        {spendInsights.length > 0 && (
-                            <div className="mt-4 grid gap-3 text-[11px] text-zinc-500 dark:text-zinc-400 md:grid-cols-3">
-                                {spendInsights.map(insight => (
-                                    <div
-                                        key={insight.label}
-                                        className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1"
-                                    >
-                                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                            {insight.label}
-                                        </span>
-                                        <span className="font-semibold text-zinc-900 dark:text-white">
-                                            {insight.value}
-                                        </span>
-                                        {insight.sub && (
-                                            <span className="text-[10px] text-zinc-400">{insight.sub}</span>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                ) : (
-                    <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
-                        <PieChart size={40} className="mb-3 opacity-20" />
-                        <p className="text-sm text-center">Nenhuma despesa paga encontrada no mês.</p>
-                    </div>
-                )}
-            </section>
-            </SortableBlock>
-        )}
+                  {renderExpenseBreakdownSection(visibleCategoryItems)}
+          </SortableBlock>
+          );
+      }
 
-                </div>
-            </SortableContext>
-        </DndContext>
+      return null;
+  };
 
+  const healthBar = (
+      <div>
+          <div className="flex items-center justify-between text-[9px] uppercase tracking-[0.24em] text-slate-400">
+              <span>Saúde da empresa</span>
+              <span className="text-slate-500">{Math.round(healthScore * 100)}%</span>
+          </div>
+          <div className="relative mt-1 h-2 rounded-full bg-gradient-to-r from-red-600 via-amber-400 to-emerald-500">
+              <div
+                  className="absolute top-1/2"
+                  style={{ left: `${healthScore * 100}%`, transform: 'translate(-50%, -50%)' }}
+              >
+                  <div
+                      className="h-3 w-3 rounded-full border border-white/80 shadow-[0_0_0_2px_rgba(0,0,0,0.35)]"
+                      style={{ backgroundColor: healthScore >= 0.5 ? incomeAccent : expenseAccent }}
+                  />
+              </div>
+          </div>
+      </div>
+  );
+
+  const dashboardSubheader = (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
+          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+              <div className="space-y-2">
+                  <div className="relative" ref={searchContainerRef}>
+                      <SearchHelperBar
+                          variant="desktop"
+                          appearance="subheader"
+                          searchQuery={searchQuery}
+                          setSearchQuery={setSearchQuery}
+                          setActiveSearchIndex={setActiveSearchIndex}
+                          setIsSearchActive={setIsSearchActive}
+                          onSearchKeyDown={handleSearchKeyDown}
+                          signals={helperSignals}
+                          actions={helperActions}
+                          tipsEnabled={tipsEnabled}
+                          assistantPlacement="floating"
+                          results={
+                              Boolean(trimmedSearchQuery) && isSearchActive ? (
+                                  <div className="absolute left-0 right-0 mt-3 bg-[#111114] border border-white/10 rounded-2xl shadow-2xl max-h-80 overflow-y-auto z-20">
+                                      {visibleInlineResults.length === 0 ? (
+                                          <div className="text-sm text-zinc-500 px-6 py-4">Nenhum resultado encontrado.</div>
+                                      ) : (
+                                          <ul>
+                                              {visibleInlineResults.map((item, idx) => {
+                                                  const isActive = idx === activeSearchIndex;
+                                                  const statusMeta = getInlineExpenseStatusMeta(item);
+                                                  return (
+                                                      <li
+                                                          key={`${item.entity}-${item.id}`}
+                                                          className={`px-6 py-4 border-b border-white/5 cursor-pointer ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
+                                                          onMouseEnter={() => setActiveSearchIndex(idx)}
+                                                          onClick={() => handleSelectSearchResult(item)}
+                                                      >
+                                                          <div className="flex items-center justify-between gap-3">
+                                                              <div>
+                                                                  <p className="text-sm font-semibold text-white flex items-center gap-2">
+                                                                      {item.entity === 'expense' && <span className="text-rose-400 text-[10px] uppercase">Despesa</span>}
+                                                                      {item.entity === 'income' && <span className="text-emerald-400 text-[10px] uppercase">Entrada</span>}
+                                                                      {item.entity === 'account' && <span className="text-blue-400 text-[10px] uppercase">Conta</span>}
+                                                                      {item.entity === 'card' && <span className="text-purple-400 text-[10px] uppercase">Cartão</span>}
+                                                                      {item.entity === 'category' && <span className="text-zinc-400 text-[10px] uppercase">Categoria</span>}
+                                                                      <span>{item.title}</span>
+                                                                  </p>
+                                                                  {item.subtitle && <p className="text-xs text-zinc-500">{item.subtitle}</p>}
+                                                              </div>
+                                                              <div className="text-right">
+                                                                  {statusMeta && (
+                                                                      <p className={`text-[11px] font-semibold flex items-center justify-end gap-1 ${statusMeta.textClass}`}>
+                                                                          <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
+                                                                          {statusMeta.label}
+                                                                      </p>
+                                                                  )}
+                                                                  {typeof item.amount === 'number' && (
+                                                                      <p className="text-sm font-bold text-white">
+                                                                          {item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                                      </p>
+                                                                  )}
+                                                                  {item.entity === 'expense' ? (
+                                                                      item.dateLabel ? (
+                                                                          <p className="text-[11px] text-zinc-500">
+                                                                              {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                                          </p>
+                                                                      ) : (
+                                                                          <p className="text-[11px] text-zinc-500">Sem vencimento</p>
+                                                                      )
+                                                                  ) : (
+                                                                      item.dateLabel && (
+                                                                          <p className="text-[11px] text-zinc-500">
+                                                                              {new Date(item.dateLabel + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                                          </p>
+                                                                      )
+                                                                  )}
+                                                              </div>
+                                                          </div>
+                                                      </li>
+                                                  );
+                                              })}
+                                          </ul>
+                                      )}
+                                  </div>
+                              ) : null
+                          }
+                      />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      {canViewBalances ? (
+                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                              <div className="text-[9px] uppercase tracking-[0.25em] text-emerald-500 dark:text-emerald-400">
+                                  Saldo atual
+                              </div>
+                              <div className="text-[14px] font-semibold mt-1 text-emerald-600 dark:text-emerald-400">
+                                  R$ {financialData.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </div>
+                          </div>
+                      ) : (
+                          <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 px-3 py-2">
+                              <div className="text-[9px] uppercase tracking-[0.25em] text-zinc-400">
+                                  Saldo atual
+                              </div>
+                              <div className="text-[12px] font-semibold mt-1 text-zinc-500">
+                                  Saldo oculto
+                              </div>
+                          </div>
+                      )}
+                      {canManageIncomes && (
+                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                              <div className="text-[9px] uppercase tracking-[0.25em] text-emerald-500 dark:text-emerald-400">
+                                  Entradas do mês
+                              </div>
+                              <div className="text-[14px] font-semibold mt-1 text-emerald-600 dark:text-emerald-400">
+                                  R$ {financialData.income.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </div>
+                          </div>
+                      )}
+                      {canManageExpenses && (
+                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                              <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: expenseAccent }}>
+                                  Saídas do mês
+                              </div>
+                              <div className="text-[14px] font-semibold mt-1" style={{ color: expenseAccent }}>
+                                  R$ {financialData.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </div>
+                          </div>
+                      )}
+                  </div>
+                  {healthBar}
+              </div>
+          </div>
+      </div>
+  );
+
+  const renderDockSheet = (title: string, content: React.ReactNode) => (
+      <div className="fixed inset-0 z-[80]">
+          <button
+              type="button"
+              className="absolute inset-0 bg-transparent"
+              onClick={() => setExpandedPanel(null)}
+              aria-label="Fechar painel"
+          />
+          <div
+              className="absolute left-1/2 -translate-x-1/2"
+              style={{
+                  bottom: 'var(--mm-desktop-dock-height, 84px)',
+                  width: 'var(--mm-desktop-dock-width, calc(100% - 48px))',
+                  maxWidth: 'var(--mm-desktop-dock-width, calc(100% - 48px))'
+              }}
+          >
+              <div className="w-full rounded-[26px] border border-black/10 dark:border-white/20 bg-white/80 dark:bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl overflow-hidden">
+                  <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">{title}</p>
+                      <button
+                          type="button"
+                          onClick={() => setExpandedPanel(null)}
+                          className="h-8 w-8 rounded-full border border-white/20 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white flex items-center justify-center"
+                          aria-label="Fechar painel"
+                      >
+                          <X size={14} />
+                      </button>
+                  </div>
+                  <div className="max-h-[calc(100vh-260px)] overflow-y-auto px-5 pb-4 pt-3">
+                      {content}
+                  </div>
+              </div>
+          </div>
+      </div>
+  );
+
+  const rootOverflowClass = isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden';
+  const contentSpacingClass = isCompactHeight ? 'mt-[var(--mm-content-gap)] py-2' : 'mt-[var(--mm-content-gap)] py-3';
+
+  return (
+    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${rootOverflowClass}`}>
+        {dashboardSubheader}
+        <div className={`dashboard-desktop max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ${contentSpacingClass} space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500`}>
+            <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+                <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
+                    <div className="flex flex-col gap-3">
+                        {visibleOrder.map((blockId) => renderDashboardBlock(blockId))}
+                    </div>
+                </SortableContext>
+            </DndContext>
+        </div>
+        {expandedPanel === 'credit_cards' &&
+            renderDockSheet('Faturas dos Cartões', renderCreditCardsSection(creditCards))}
+        {expandedPanel === 'expense_breakdown' &&
+            renderDockSheet('Onde foi parar seu dinheiro?', renderExpenseBreakdownSection(categoryTotals.items))}
     </div>
   );
 };
 
-const SortableBlock: React.FC<{
+type SortableBlockProps = {
     id: DashboardBlockId;
     label: string;
     disabled: boolean;
@@ -1586,11 +1639,23 @@ const SortableBlock: React.FC<{
     onToggleCollapse?: () => void;
     renderCollapsedChildren?: boolean;
     children: React.ReactNode;
-}> = ({ id, label, disabled, style, isCollapsed, onToggleCollapse, renderCollapsedChildren = false, children }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+};
+
+const SortableBlock: React.FC<SortableBlockProps> = ({
+    id,
+    label,
+    disabled,
+    style,
+    isCollapsed,
+    onToggleCollapse,
+    renderCollapsedChildren = false,
+    children
+}) => {
+    const { setNodeRef, transform, transition, attributes, listeners, isDragging } = useSortable({ id, disabled });
     const mergedStyle = {
         transform: CSS.Transform.toString(transform),
         transition,
+        opacity: isDragging ? 0.6 : 1,
         ...style
     };
     const collapsed = Boolean(isCollapsed);
@@ -1600,31 +1665,35 @@ const SortableBlock: React.FC<{
         <div
             ref={setNodeRef}
             style={mergedStyle}
-            className={`relative ${isDragging ? 'z-20' : ''}`}
+            data-dashboard-block={id}
+            className="relative"
         >
             <div className="absolute -left-3 top-6 z-10">
                 <button
                     type="button"
+                    disabled={disabled}
                     {...attributes}
                     {...listeners}
-                    disabled={disabled}
                     className="flex h-8 w-6 items-center justify-center rounded-r-xl border border-zinc-200 bg-white text-zinc-400 shadow-sm hover:text-zinc-600 dark:border-zinc-800 dark:bg-[#151517] dark:hover:text-zinc-200"
-                    aria-label={`Mover ${label}`}
+                    aria-label={`Organizar ${label}`}
+                    title="Organizar posição"
                 >
                     <GripVertical size={16} />
                 </button>
             </div>
-            <div className="absolute -right-3 -top-3 z-10">
-                <button
-                    type="button"
-                    onClick={onToggleCollapse}
-                    aria-label={toggleLabel}
-                    className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
-                >
-                    <ChevronDown size={16} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />
-                </button>
-            </div>
-            {collapsed && !renderCollapsedChildren ? (
+            {onToggleCollapse && (
+                <div className="absolute -right-3 -top-3 z-10">
+                    <button
+                        type="button"
+                        onClick={onToggleCollapse}
+                        aria-label={toggleLabel}
+                        className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
+                    >
+                        <ChevronDown size={16} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />
+                    </button>
+                </div>
+            )}
+            {collapsed && !renderCollapsedChildren && onToggleCollapse ? (
                 <button
                     type="button"
                     onClick={onToggleCollapse}
@@ -1658,7 +1727,6 @@ const QuickAction: React.FC<{
     onClick?: () => void;
 }> = ({ icon, label, color, bg, border, tipTitle, tipBody, onClick }) => (
     <div className="relative h-full overflow-visible">
-        <QuickAccessHelp label={label} title={tipTitle} body={tipBody} />
         <button 
             onClick={onClick}
             className={`flex h-full w-full flex-col items-center justify-center p-4 rounded-xl border bg-white dark:bg-[#1a1a1a] hover:bg-gray-50 dark:hover:bg-[#202022] transition-all group active:scale-95 ${border} shadow-sm dark:shadow-none`}
@@ -1680,21 +1748,21 @@ const SummaryCard: React.FC<{
     subtext?: string,
     isExpense?: boolean
 }> = ({ title, value, icon, colorClass, bgClass, subtext, isExpense }) => (
-    <div className={`${bgClass} rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between shadow-sm transition-all duration-300 hover:border-zinc-300 dark:hover:border-zinc-700`}>
-        <div className="flex justify-between items-start mb-4">
+    <div className={`${bgClass} rounded-2xl p-3 border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between shadow-sm transition-all duration-300 hover:border-zinc-300 dark:hover:border-zinc-700`}>
+        <div className="flex justify-between items-start mb-2">
             <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400">
                 {icon}
             </div>
             {subtext && (
-                 <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 bg-zinc-100 dark:bg-zinc-800/50 px-2 py-1 rounded">
+                 <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 bg-zinc-100 dark:bg-zinc-800/50 px-2 py-0.5 rounded">
                     Mês Atual
                  </span>
             )}
         </div>
         <div>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium mb-1">{title}</p>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium mb-0.5">{title}</p>
             {/* Standardized Font Size: text-3xl */}
-            <h3 className={`text-3xl font-bold tracking-tight mb-2 ${colorClass}`}>
+            <h3 className={`text-3xl font-bold tracking-tight mb-1 ${colorClass}`}>
                 {isExpense ? '-' : '+'} R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </h3>
             {subtext && (

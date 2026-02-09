@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { MouseEvent } from "react";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import metricsPreview from "@/assets/Code_Generated_Image.png";
@@ -6,6 +7,17 @@ import metricsPreview from "@/assets/Code_Generated_Image.png";
 export default function Landing() {
   const [isLoading, setIsLoading] = useState(false);
   const [subscribeError, setSubscribeError] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [termsError, setTermsError] = useState("");
+  const [planChoice, setPlanChoice] = useState<"annual" | "monthly">("annual");
+  const [cookieChoice, setCookieChoice] = useState<"accepted" | "declined" | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = localStorage.getItem("meumei_cookie_choice");
+      if (stored === "accepted" || stored === "declined") return stored;
+    } catch {}
+    return null;
+  });
   const [leadEmailState, setLeadEmailState] = useState(() => {
     if (typeof window === "undefined") return "";
     try {
@@ -33,6 +45,10 @@ export default function Landing() {
     event?.preventDefault();
     if (isLoading) return;
     setSubscribeError("");
+    if (!termsAccepted) {
+      setTermsError("Você precisa aceitar os Termos de Uso e a Política de Privacidade para continuar.");
+      return;
+    }
     const leadEmail = (leadEmailState || localStorage.getItem("leadEmail") || "").trim();
     const checkoutEndpoint = resolveCheckoutEndpoint();
     if (!checkoutEndpoint) {
@@ -51,6 +67,7 @@ export default function Landing() {
       const payload = {
         data: {
           email: leadEmail || undefined,
+          plan: planChoice,
           success_url: `${window.location.origin}/?checkout=success`,
           cancel_url: `${window.location.origin}/?checkout=cancel`
         }
@@ -78,7 +95,85 @@ export default function Landing() {
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
 
+  const scrollToPlan = () => {
+    if (typeof window === "undefined") return;
+    const planEl = document.getElementById("plano");
+    if (planEl) {
+      planEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handleCookieChoice = (choice: "accepted" | "declined") => {
+    setCookieChoice(choice);
+    try {
+      localStorage.setItem("meumei_cookie_choice", choice);
+    } catch {}
+  };
+
   const year = useMemo(() => new Date().getFullYear(), []);
+  const planCopy = useMemo(
+    () => ({
+      annual: {
+        title: "Plano anual",
+        price: "R$ 358,80",
+        cadence: "/ ano",
+        headline: "Pagamento único anual",
+        subline: "Acesso por 12 meses • Sem mensalidade",
+        badge: "Economia no ano"
+      },
+      monthly: {
+        title: "Plano mensal",
+        price: "R$ 39,90",
+        cadence: "/ mês",
+        headline: "Assinatura recorrente",
+        subline: "Cobrança mensal • Cancele quando quiser",
+        badge: "Mais flexibilidade"
+      }
+    }),
+    []
+  );
+  const cookieBanner = cookieChoice === null ? (
+    <div
+      className="fixed bottom-4 left-1/2 z-[9999] w-[min(100%-2rem,72rem)] -translate-x-1/2 px-4 pointer-events-auto"
+      style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+    >
+      <div className="rounded-2xl border border-white/15 bg-black px-6 py-4 text-sm text-zinc-200 shadow-[0_24px_80px_rgba(0,0,0,0.75)]">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1">
+            <div className="font-semibold text-white">Cookies e Privacidade</div>
+            <div className="text-zinc-300">
+              Usamos cookies essenciais para funcionamento do site. Cookies não essenciais só serão usados se você permitir.
+            </div>
+            <a
+              href="/privacidade"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-zinc-300 underline underline-offset-4 hover:text-white"
+            >
+              Ler Política de Privacidade
+            </a>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => handleCookieChoice("declined")}
+              className="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold text-white/80 hover:text-white hover:border-white/40 transition"
+            >
+              Recusar
+            </button>
+            <button
+              type="button"
+              onClick={() => handleCookieChoice("accepted")}
+              className="rounded-full bg-white text-black px-4 py-2 text-xs font-bold hover:bg-zinc-200 transition shadow-[0_0_18px_rgba(255,255,255,0.35)]"
+              style={{ color: "#000000" }}
+            >
+              Aceitar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
   const mockupBarData = [
     { height: 28, colorClass: "bg-sky-400/90", glowClass: "shadow-[0_0_12px_rgba(56,189,248,0.35)]" },
     { height: 34, colorClass: "bg-sky-400/90", glowClass: "shadow-[0_0_12px_rgba(56,189,248,0.35)]" },
@@ -126,7 +221,7 @@ export default function Landing() {
       </div>
 
       {/* HEADER */}
-      <header className="fixed top-0 left-0 w-full z-50 border-b border-white/10 bg-black/35 backdrop-blur-md h-20 flex items-center">
+      <header className="sticky top-0 z-[60] border-b border-white/10 bg-black/70 supports-[backdrop-filter]:bg-black/40 backdrop-blur-xl h-20 flex items-center shadow-[0_10px_35px_rgba(0,0,0,0.45)]">
         <div className="max-w-7xl mx-auto px-6 w-full flex items-center justify-between">
           <button
             onClick={() => navigate("/")}
@@ -134,7 +229,6 @@ export default function Landing() {
             aria-label="Ir para o início"
           >
             <span className="text-2xl font-bold tracking-tighter text-white">meumei</span>
-            <span className="hidden sm:inline text-[10px] uppercase tracking-widest text-white/35">controle MEI</span>
           </button>
 
           <nav className="hidden md:flex items-center gap-6 text-sm text-zinc-300">
@@ -152,7 +246,7 @@ export default function Landing() {
             </button>
 
             <button
-              onClick={() => handleSubscribe()}
+              onClick={scrollToPlan}
               className="px-6 py-2.5 rounded-full text-sm font-bold bg-white text-black hover:text-black hover:bg-zinc-200 transition-all hover:scale-[1.03] shadow-[0_0_24px_rgba(255,255,255,0.16)] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/50"
               style={{ color: "#000000" }}
             >
@@ -161,8 +255,6 @@ export default function Landing() {
           </div>
         </div>
       </header>
-
-      <div className="w-full h-20 block shrink-0"></div>
 
       {/* HERO */}
       <main className="relative z-10 pt-10 lg:pt-16 pb-20 max-w-7xl mx-auto px-6 w-full">
@@ -189,6 +281,55 @@ export default function Landing() {
               <p className="text-lg text-zinc-200/90 max-w-2xl leading-relaxed">
                 Registre entradas e despesas, acompanhe o limite do MEI e tenha clareza do mês em poucos minutos. Sem planilhas quebradas. Sem dor de cabeça.
               </p>
+              <div
+                id="plano"
+                className="rounded-2xl border border-white/15 bg-white/5 p-5 max-w-3xl shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.45em] text-zinc-400">
+                    {planCopy[planChoice].title}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPlanChoice("annual")}
+                      className={`rounded-full px-3 py-1 text-[11px] font-semibold transition ${
+                        planChoice === "annual"
+                          ? "bg-white text-black"
+                          : "bg-white/10 text-zinc-300 hover:bg-white/20"
+                      }`}
+                      style={planChoice === "annual" ? { color: "#000000" } : undefined}
+                    >
+                      Anual
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlanChoice("monthly")}
+                      className={`rounded-full px-3 py-1 text-[11px] font-semibold transition ${
+                        planChoice === "monthly"
+                          ? "bg-white text-black"
+                          : "bg-white/10 text-zinc-300 hover:bg-white/20"
+                      }`}
+                      style={planChoice === "monthly" ? { color: "#000000" } : undefined}
+                    >
+                      Mensal
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-2 text-3xl font-semibold text-white">
+                  {planCopy[planChoice].price}{" "}
+                  <span className="text-sm text-zinc-300">{planCopy[planChoice].cadence}</span>
+                </div>
+                <div className="mt-2 text-sm text-zinc-200">
+                  {planCopy[planChoice].headline}
+                </div>
+                <div className="mt-2 text-xs text-zinc-400">
+                  {planCopy[planChoice].subline}
+                </div>
+                <div className="mt-3 text-xs font-semibold text-emerald-300">
+                  Teste por 7 dias — reembolso integral garantido conforme o Código de Defesa do Consumidor
+                </div>
+              </div>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -212,14 +353,50 @@ export default function Landing() {
                   disabled={isLoading}
                   className="bg-gradient-to-r from-teal-400 to-purple-500 text-black px-6 py-3 rounded-xl font-extrabold transition-all shadow-[0_25px_70px_rgba(16,185,129,0.35)] border border-white/30 hover:scale-[1.02] whitespace-nowrap disabled:opacity-70 disabled:hover:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60"
                 >
-                  {isLoading ? "..." : "Ver meu mês agora"}
+                  {isLoading
+                    ? "..."
+                    : planChoice === "monthly"
+                    ? "Assinar plano mensal"
+                    : "Assinar plano anual"}
                 </button>
               </form>
+              <div className="max-w-3xl space-y-2">
+                <label className="flex items-start gap-3 text-xs text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={termsAccepted}
+                    onChange={(e) => {
+                      setTermsAccepted(e.target.checked);
+                      if (e.target.checked) setTermsError("");
+                    }}
+                    className="mt-0.5 h-4 w-4 rounded border-white/30 bg-white/10 text-teal-400 focus:ring-teal-400/60"
+                  />
+                  <span>
+                    Li e concordo com os{" "}
+                    <a href="/termos" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4 hover:text-white">
+                      Termos de Uso
+                    </a>{" "}
+                    e a{" "}
+                    <a href="/privacidade" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4 hover:text-white">
+                      Política de Privacidade
+                    </a>{" "}
+                    e a{" "}
+                    <a href="/reembolso" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4 hover:text-white">
+                      Política de Reembolso
+                    </a>
+                    .
+                  </span>
+                </label>
+                {termsError && <div className="text-xs text-rose-300">{termsError}</div>}
+                {subscribeError && <div className="text-xs text-rose-300">{subscribeError}</div>}
+                <div className="text-[11px] text-zinc-400">
+                  Ao continuar, você confirma o plano anual e o pagamento único.
+                </div>
+              </div>
               <div className="flex flex-wrap gap-3 text-xs text-zinc-400 mb-6">
                 {[
-                  "Teste o meumei por 7 dias",
-                  "Rápido e confortável no celular",
-                  "Concebido para quem não quer complicação",
+                  "Plano anual com pagamento único",
+                  "Reembolso integral garantido em até 7 dias",
                 ].map((text) => (
                   <span key={text} className="bg-white/5 border border-white/10 rounded-full px-3 py-1">
                     {text}
@@ -371,12 +548,47 @@ export default function Landing() {
           </div>
         </div>
       </section>
-        <div className="mt-0 mb-20 w-full px-4 flex flex-col items-center gap-1">
-          <span style={{ fontSize: "100px" }} className="font-black leading-none text-white text-[100px] lg:text-[100px]">R$ 29,90</span>
-          <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-gradient-to-r from-white/10 via-black/40 to-white/15 shadow-[0_20px_60px_rgba(0,0,0,0.45)] p-6 flex flex-col items-center gap-3 uppercase tracking-[0.25em] text-sm">
-            <span className="text-white/80">Assinatura mensal</span>
-            <span className="text-emerald-300 text-lg font-bold">Cancele quando quiser</span>
-            <span className="text-white/70 text-sm">7 dias de garantia</span>
+        <div className="mt-0 mb-20 w-full px-4 flex flex-col items-center gap-6">
+          <div className="text-center">
+            <div className="text-xs uppercase tracking-[0.45em] text-zinc-400">Planos</div>
+            <div className="text-3xl sm:text-4xl font-black text-white">Escolha o melhor para você</div>
+            <div className="text-sm text-zinc-400 mt-2">
+              Ambos com 7 dias de reembolso integral garantido.
+            </div>
+          </div>
+          <div className="w-full max-w-5xl grid gap-4 md:grid-cols-2">
+            <div className={`rounded-3xl border border-white/10 bg-[#0c0c12]/80 p-6 shadow-[0_20px_60px_rgba(0,0,0,0.45)] ${planChoice === "annual" ? "ring-2 ring-emerald-400/60" : ""}`}>
+              <div className="flex items-center justify-between">
+                <div className="text-xs uppercase tracking-[0.4em] text-zinc-400">Plano anual</div>
+                <span className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">Pagamento único</span>
+              </div>
+              <div className="mt-3 text-4xl font-black text-white">R$ 358,80</div>
+              <div className="text-sm text-zinc-300">Acesso por 12 meses • Sem mensalidade</div>
+              <button
+                type="button"
+                onClick={() => setPlanChoice("annual")}
+                className="mt-4 w-full rounded-2xl bg-white text-black py-2 text-sm font-bold"
+                style={{ color: "#000000" }}
+              >
+                Selecionar anual
+              </button>
+            </div>
+            <div className={`rounded-3xl border border-white/10 bg-[#0c0c12]/80 p-6 shadow-[0_20px_60px_rgba(0,0,0,0.45)] ${planChoice === "monthly" ? "ring-2 ring-purple-400/60" : ""}`}>
+              <div className="flex items-center justify-between">
+                <div className="text-xs uppercase tracking-[0.4em] text-zinc-400">Plano mensal</div>
+                <span className="text-[11px] uppercase tracking-[0.3em] text-purple-300">Assinatura</span>
+              </div>
+              <div className="mt-3 text-4xl font-black text-white">R$ 39,90</div>
+              <div className="text-sm text-zinc-300">Cobrança mensal recorrente • Cancele quando quiser</div>
+              <button
+                type="button"
+                onClick={() => setPlanChoice("monthly")}
+                className="mt-4 w-full rounded-2xl bg-white text-black py-2 text-sm font-bold"
+                style={{ color: "#000000" }}
+              >
+                Selecionar mensal
+              </button>
+            </div>
           </div>
         </div>
 
@@ -386,23 +598,45 @@ export default function Landing() {
           <h3 className="text-4xl font-bold mb-2">Perguntas rápidas</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
-              <div className="text-sm font-bold text-white">Funciona no celular?</div>
-              <div className="text-zinc-400 text-sm mt-2">Sim. A interface é pensada para uso rápido no dia a dia.</div>
+              <div className="text-sm font-bold text-white">Como funciona o pagamento?</div>
+              <div className="text-zinc-400 text-sm mt-2">
+                Plano anual com pagamento único e plano mensal com cobrança recorrente de R$ 39,90.
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
+              <div className="text-sm font-bold text-white">Posso cancelar?</div>
+              <div className="text-zinc-400 text-sm mt-2">
+                O plano mensal pode ser cancelado a qualquer momento. O plano anual não é reembolsável após 7 dias.
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
+              <div className="text-sm font-bold text-white">Existe reembolso?</div>
+              <div className="text-zinc-400 text-sm mt-2">
+                Sim. Você tem 7 dias para solicitar reembolso integral, conforme o Código de Defesa do Consumidor.
+              </div>
             </div>
 
             <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
               <div className="text-sm font-bold text-white">Meus dados ficam seguros?</div>
-              <div className="text-zinc-400 text-sm mt-2">Usamos boas práticas de segurança e criptografia para proteger suas informações.</div>
+              <div className="text-zinc-400 text-sm mt-2">
+                Usamos boas práticas de segurança e criptografia para proteger suas informações.
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
+              <div className="text-sm font-bold text-white">Funciona no celular?</div>
+              <div className="text-zinc-400 text-sm mt-2">
+                Sim. A interface é pensada para uso rápido no dia a dia.
+              </div>
             </div>
 
             <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
               <div className="text-sm font-bold text-white">Vou conseguir entender sem ser “bom de finanças”?</div>
-              <div className="text-zinc-400 text-sm mt-2">Essa é a ideia. O meumei simplifica, sem virar aula.</div>
-            </div>
-
-            <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
-              <div className="text-sm font-bold text-white">Posso começar agora?</div>
-              <div className="text-zinc-400 text-sm mt-2">Sim. Clique em “Começar agora” e siga o fluxo de pagamento.</div>
+              <div className="text-zinc-400 text-sm mt-2">
+                Essa é a ideia. O meumei simplifica, sem virar aula.
+              </div>
             </div>
           </div>
 
@@ -411,10 +645,13 @@ export default function Landing() {
             <div>
               <div className="text-2xl font-bold">Bora organizar seu MEI sem drama.</div>
               <div className="text-zinc-300 mt-2">Clareza no mês, decisão melhor, cabeça mais leve.</div>
+              <div className="mt-3 text-xs text-zinc-400">
+                Plano anual de R$ 358,80 • pagamento único
+              </div>
             </div>
             <div className="w-full md:w-auto flex gap-3">
               <button
-                onClick={() => handleSubscribe()}
+                onClick={scrollToPlan}
                 disabled={isLoading}
                 className="w-full md:w-auto font-extrabold px-6 py-3 rounded-2xl bg-white text-black hover:bg-zinc-200 transition disabled:opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/70 shadow-[0_15px_50px_rgba(255,255,255,0.18)]"
                 style={{ color: "#000000" }}
@@ -444,9 +681,12 @@ export default function Landing() {
           <div className="flex items-center text-sm text-zinc-400 gap-6">
             <button onClick={() => navigate("/termos")} className="hover:text-white transition-colors">Termos de Uso</button>
             <button onClick={() => navigate("/privacidade")} className="hover:text-white transition-colors">Política de Privacidade</button>
+            <button onClick={() => navigate("/reembolso")} className="hover:text-white transition-colors">Política de Reembolso</button>
           </div>
         </div>
       </footer>
+      {cookieBanner &&
+        (typeof document !== "undefined" ? createPortal(cookieBanner, document.body) : cookieBanner)}
     </div>
   );
 }

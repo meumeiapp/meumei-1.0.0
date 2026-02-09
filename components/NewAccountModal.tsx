@@ -1,24 +1,20 @@
 
-import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Plus, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronDown, TrendingUp } from 'lucide-react';
 import { Account } from '../types';
-import { getAccountColor, withAlpha } from '../services/cardColorUtils';
+import { getAccountColor } from '../services/cardColorUtils';
 import { getPrimaryActionLabel } from '../utils/formLabels';
 import useIsMobile from '../hooks/useIsMobile';
 import {
   PremiumModalShell,
   PremiumModalHeader,
   PremiumModalFooter,
-  modalHelperTextClass,
-  modalInputClass,
   modalLabelClass,
   modalPrimaryButtonClass,
-  modalSecondaryButtonClass,
-  modalTextareaClass
+  modalSecondaryButtonClass
 } from './ui/PremiumModal';
-import ColorPickerPopover from './ui/ColorPickerPopover';
-import SegmentedControl from './ui/SegmentedControl';
 import { PREMIUM_COLOR_PRESETS } from './ui/colorPresets';
+import SelectDropdown from './common/SelectDropdown';
 
 interface NewAccountModalProps {
   isOpen: boolean;
@@ -28,8 +24,10 @@ interface NewAccountModalProps {
   mode?: 'create' | 'edit';
   accountTypes: string[];
   onUpdateAccountTypes: (types: string[]) => void;
-  defaultNature?: 'PJ' | 'PF';
+  defaultNature?: 'PJ' | 'PF' | '';
   source?: string;
+  variant?: 'default' | 'dock';
+  forceDock?: boolean;
 }
 
 const NewAccountModal: React.FC<NewAccountModalProps> = ({ 
@@ -40,8 +38,10 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
   mode,
   accountTypes, 
   onUpdateAccountTypes,
-  defaultNature = 'PJ',
-  source
+  defaultNature = '',
+  source,
+  variant = 'default',
+  forceDock = false
 }) => {
   const isEditMode = mode === 'edit' || Boolean(initialData);
   const primaryLabel = getPrimaryActionLabel('Conta', isEditMode);
@@ -52,7 +52,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
   const [initialBalance, setInitialBalance] = useState('');
   const [currentBalance, setCurrentBalance] = useState('');
   const [notes, setNotes] = useState('');
-  const [accountNature, setAccountNature] = useState<'PJ' | 'PF'>(defaultNature);
+  const [accountNature, setAccountNature] = useState<'PJ' | 'PF' | ''>(defaultNature);
   
   // Account Types now come from props
   const [selectedType, setSelectedType] = useState('');
@@ -62,16 +62,10 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
   const [accountColor, setAccountColor] = useState('#0ea5e9');
   
   // UI States
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [isAddTypeOpen, setIsAddTypeOpen] = useState(false);
-  const [isManageTypesOpen, setIsManageTypesOpen] = useState(false);
+  const [isTypeManagerOpen, setIsTypeManagerOpen] = useState(false);
   const [newTypeInputValue, setNewTypeInputValue] = useState('');
   const [pendingDeleteType, setPendingDeleteType] = useState<string | null>(null);
-  const [isPreviewOpen, setIsPreviewOpen] = useState(!isMobile);
-  
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const addTypePopoverRef = useRef<HTMLDivElement>(null);
-  const manageTypesRef = useRef<HTMLDivElement>(null);
+  const [typeManagerError, setTypeManagerError] = useState('');
 
   // Reset or Populate state
   useEffect(() => {
@@ -101,52 +95,28 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
             mode: isEditMode ? 'edit' : 'create'
         });
     } else {
-        setIsDropdownOpen(false);
-        setIsAddTypeOpen(false);
-        setIsManageTypesOpen(false);
+        setIsTypeManagerOpen(false);
         setNewTypeInputValue('');
         setPendingDeleteType(null);
+        setTypeManagerError('');
         setYieldRate('');
     }
   }, [isOpen, initialData, defaultNature, source, isEditMode]);
 
   useEffect(() => {
     if (!isOpen) return;
-    setIsPreviewOpen(!isMobile);
-  }, [isMobile, isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      const hasInlineOpen = isDropdownOpen || isAddTypeOpen || isManageTypesOpen || Boolean(pendingDeleteType);
-      setIsDropdownOpen(false);
-      setIsAddTypeOpen(false);
-      setIsManageTypesOpen(false);
-      setPendingDeleteType(null);
-      if (!hasInlineOpen) {
-        onClose();
+      if (isTypeManagerOpen) {
+        setIsTypeManagerOpen(false);
+        return;
       }
+      setPendingDeleteType(null);
+      onClose();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isAddTypeOpen, isDropdownOpen, isManageTypesOpen, isOpen, onClose, pendingDeleteType]);
-
-  // Click outside to close dropdown
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      const target = event.target as Node;
-      if (dropdownRef.current && dropdownRef.current.contains(target)) return;
-      if (addTypePopoverRef.current && addTypePopoverRef.current.contains(target)) return;
-      if (manageTypesRef.current && manageTypesRef.current.contains(target)) return;
-      setIsDropdownOpen(false);
-      setIsAddTypeOpen(false);
-      setIsManageTypesOpen(false);
-      setPendingDeleteType(null);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [isOpen, isTypeManagerOpen, onClose]);
 
   // Helper to detect investment types
   const isInvestmentType = (type: string) => {
@@ -166,18 +136,32 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
   };
 
   const handleAddType = () => {
-    if (newTypeInputValue.trim()) {
-      const newType = newTypeInputValue.trim();
-      if (!accountTypes.includes(newType)) {
-          onUpdateAccountTypes([...accountTypes, newType]);
-          setNewTypeInputValue('');
-          setIsAddTypeOpen(false);
-      }
+    const normalized = newTypeInputValue.trim();
+    if (!normalized) {
+      setTypeManagerError('Informe um nome para o tipo.');
+      return;
     }
+    if (accountTypes.length >= 20) {
+      setTypeManagerError('Limite de categorias atingido.');
+      return;
+    }
+    if (accountTypes.some((type) => type.toLowerCase() === normalized.toLowerCase())) {
+      setTypeManagerError('Tipo já existe.');
+      return;
+    }
+    onUpdateAccountTypes([...accountTypes, normalized]);
+    setNewTypeInputValue('');
+    setTypeManagerError('');
+  };
+
+  const closeTypeManager = () => {
+    setIsTypeManagerOpen(false);
+    setPendingDeleteType(null);
+    setTypeManagerError('');
   };
 
   const handleSave = () => {
-    if (!accountName || !selectedType) return;
+    if (!accountName || !selectedType || !accountNature) return;
 
     if (mode === 'edit' && !initialData) {
       return;
@@ -213,315 +197,129 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
     onClose();
   };
 
-  return (
-    <PremiumModalShell
-      isOpen={isOpen}
-      onClose={onClose}
-      zIndexClass="z-[1200]"
-      fullScreen
-    >
-      <PremiumModalHeader
-        eyebrow="Contas Financeiras"
-        title={isEditMode ? 'Editar Conta' : 'Nova Conta Financeira'}
-        subtitle="Ajuste os dados principais da conta e a cor para facilitar a leitura."
-        onClose={onClose}
-        fullScreen
-      />
-      <div className="px-8 py-8 space-y-7 relative z-30">
+  const dockFieldClass =
+    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40';
+  const dockTextareaClass = `${dockFieldClass} min-h-[80px] resize-none`;
+
+  const modalBody = (
+      <div className="px-4 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
             
             {/* Account Name */}
-            <div className="space-y-2">
-              <label htmlFor={fieldId('name')} className={modalLabelClass}>
-                Nome da Conta
-              </label>
-              <input 
-                id={fieldId('name')}
-                name="accountName"
-                type="text" 
-                placeholder="Conta PJ Banco Inter, Caixa MEI..."
-                value={accountName}
-                onChange={(e) => setAccountName(e.target.value)}
-                className={modalInputClass}
-              />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-5 items-start">
+              <div className="space-y-2 md:col-span-1">
+                <label htmlFor={fieldId('name')} className={modalLabelClass}>
+                  Nome da Conta
+                </label>
+                <input 
+                  id={fieldId('name')}
+                  name="accountName"
+                  type="text" 
+                  placeholder="Ex: Banco Inter PJ, Nubank PF"
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  className={dockFieldClass}
+                />
+              </div>
+              <div className="space-y-2 md:col-span-1">
+                <label className={modalLabelClass}>Natureza fiscal</label>
+                <SelectDropdown
+                  value={accountNature}
+                  onChange={(value) => setAccountNature(value as 'PJ' | 'PF')}
+                  options={[
+                    { label: 'Pessoa Jurídica', value: 'PJ' },
+                    { label: 'Pessoa Física', value: 'PF' }
+                  ]}
+                  placeholder="Selecione"
+                  buttonClassName={dockFieldClass}
+                  listClassName="max-h-56"
+                  placeholderClassName="text-[12px] font-light"
+                />
+              </div>
+              <div className="space-y-2 md:col-span-1">
+                <label className={modalLabelClass}>Tipo de conta</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTypeManagerError('');
+                    setIsTypeManagerOpen(true);
+                  }}
+                  className={`${dockFieldClass} flex items-center justify-between text-left`}
+                >
+                  <span className={selectedType ? 'text-zinc-900 dark:text-white' : 'text-zinc-400'}>
+                    {selectedType || 'Selecione'}
+                  </span>
+                  <ChevronDown size={16} className="text-zinc-400" />
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-              {/* Initial Balance */}
-              <div className="space-y-2 text-center">
+            <div className={`grid grid-cols-1 ${isEditMode ? 'md:grid-cols-2' : ''} gap-2 sm:gap-5 items-start`}>
+              <div className="space-y-2">
                 <label className={modalLabelClass}>
                   {isEditMode ? 'Saldo Inicial (somente leitura)' : 'Saldo Inicial (R$)'}
                 </label>
-                <input 
+                <input
                   id={fieldId('initial-balance')}
                   name="initialBalance"
-                  type="number" 
-                  placeholder="0,00"
+                  type="number"
+                  placeholder="Ex: R$0,00"
                   value={initialBalance}
                   onChange={(e) => setInitialBalance(e.target.value)}
                   disabled={isEditMode}
-                  className={`${modalInputClass} text-center ${isEditMode ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  className={`${dockFieldClass} ${isEditMode ? 'opacity-70 cursor-not-allowed' : ''}`}
                 />
               </div>
-
-              {/* Account Type Section */}
-              <div className="space-y-4 relative text-center">
-                  <div className="space-y-2">
-                      <label className={modalLabelClass}>Natureza da conta</label>
-                      <div className="flex justify-center">
-                        <SegmentedControl
-                          value={accountNature}
-                          options={[
-                            { label: 'PJ', value: 'PJ' },
-                            { label: 'PF', value: 'PF' }
-                          ]}
-                          onChange={setAccountNature}
-                          ariaLabel="Natureza da conta"
-                        />
-                      </div>
-                      <p className={modalHelperTextClass}>
-                        Use PJ para contas do negócio e PF para pessoais.
-                      </p>
-                  </div>
-
-                  <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                      <label id={fieldId('type-label')} className={modalLabelClass}>
-                        Tipo de Conta
-                      </label>
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <div className="relative" ref={addTypePopoverRef}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsAddTypeOpen((prev) => !prev);
-                              setIsManageTypesOpen(false);
-                              setIsDropdownOpen(false);
-                              setPendingDeleteType(null);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-full border border-zinc-200/80 dark:border-zinc-700 bg-white/80 dark:bg-[#111114] px-3 py-1.5 font-semibold text-zinc-600 dark:text-zinc-200 hover:border-indigo-400/60 hover:text-indigo-600 transition"
-                          >
-                            <Plus size={12} /> Adicionar tipo
-                          </button>
-                          {isAddTypeOpen && (
-                            <div className="absolute right-0 mt-2 w-72 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-[#0f1014]/95 p-4 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150">
-                              <label htmlFor={fieldId('type-new')} className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                                Novo tipo
-                              </label>
-                              <input
-                                id={fieldId('type-new')}
-                                name="accountTypeNew"
-                                autoFocus
-                                type="text"
-                                placeholder="Ex: Conta corrente"
-                                value={newTypeInputValue}
-                                onChange={(e) => setNewTypeInputValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleAddType();
-                                }}
-                                className={`${modalInputClass} mt-2 px-4 py-2.5 text-sm`}
-                              />
-                              <div className="mt-3 flex items-center justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setIsAddTypeOpen(false)}
-                                  className="px-3 py-1.5 rounded-full text-[11px] font-semibold text-zinc-500 hover:text-zinc-700 dark:text-zinc-300 dark:hover:text-white transition"
-                                >
-                                  Cancelar
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleAddType}
-                                  className="px-4 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold transition shadow-sm shadow-indigo-500/20"
-                                >
-                                  Salvar
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsManageTypesOpen((prev) => !prev);
-                            setIsAddTypeOpen(false);
-                            setIsDropdownOpen(false);
-                            setPendingDeleteType(null);
-                          }}
-                          className="text-[11px] font-semibold text-zinc-400 hover:text-indigo-500 transition"
-                        >
-                          {isManageTypesOpen ? 'Fechar tipos' : 'Gerenciar tipos'}
-                        </button>
-                      </div>
-                  </div>
-
-                  <div className="relative" ref={dropdownRef}>
-                      <button 
-                          type="button"
-                          onClick={() => {
-                            setIsDropdownOpen(!isDropdownOpen);
-                            setIsAddTypeOpen(false);
-                            setIsManageTypesOpen(false);
-                            setPendingDeleteType(null);
-                          }}
-                          aria-label="Selecionar tipo de conta"
-                          aria-labelledby={fieldId('type-label')}
-                          aria-haspopup="listbox"
-                          aria-expanded={isDropdownOpen}
-                          className="w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-2xl px-5 py-3.5 flex items-center justify-between focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-left"
-                      >
-                          <span className={selectedType ? 'text-zinc-900 dark:text-white' : 'text-zinc-400'}>
-                              {selectedType || 'Selecione...'}
-                          </span>
-                          <ChevronDown size={20} className={`text-zinc-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
-                      </button>
-
-                      {isDropdownOpen && (
-                          <div className="absolute top-full left-0 right-0 z-50 mt-3 bg-[#090a10] border border-white/10 rounded-3xl shadow-2xl max-h-60 overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200">
-                              {accountTypes.map((type) => (
-                                  <button
-                                      key={type}
-                                      type="button"
-                                      onClick={() => {
-                                          setSelectedType(type);
-                                          setIsDropdownOpen(false);
-                                      }}
-                                      className="w-full text-left px-5 py-3 text-white/90 hover:bg-white/5 transition-colors border-b border-white/5 last:border-0"
-                                  >
-                                      {type}
-                                  </button>
-                              ))}
-                          </div>
-                      )}
-                  </div>
-
-                  {isManageTypesOpen && (
-                    <div ref={manageTypesRef} className="mt-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-[#101114]/90 p-3 shadow-lg">
-                      <p className="text-[10px] uppercase tracking-[0.35em] text-zinc-400 mb-3">Tipos cadastrados</p>
-                      <div className="max-h-44 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-                        {accountTypes.map(type => {
-                          const isPending = pendingDeleteType === type;
-                          const canDelete = accountTypes.length > 1;
-                          return (
-                            <div key={type} className="flex items-center justify-between bg-zinc-50 dark:bg-white/5 border border-zinc-200/80 dark:border-white/10 p-2.5 rounded-xl">
-                              <span className="text-sm font-medium text-zinc-800 dark:text-white/90">{type}</span>
-                              {isPending ? (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[11px] text-zinc-400">Excluir?</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteType(type)}
-                                    disabled={!canDelete}
-                                    className="text-[11px] font-semibold text-rose-500 hover:text-rose-400 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                                  >
-                                    Excluir
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setPendingDeleteType(null)}
-                                    className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-600 dark:hover:text-white transition"
-                                  >
-                                    Cancelar
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setPendingDeleteType(type)}
-                                  disabled={!canDelete}
-                                  className="text-[11px] font-semibold text-zinc-400 hover:text-rose-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                                >
-                                  Excluir
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {!accountTypes.length && (
-                        <p className="text-xs text-zinc-500">Nenhum tipo cadastrado.</p>
-                      )}
-                    </div>
-                  )}
-                  </div>
-              </div>
-            </div>
-
-            {isEditMode && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-3">
+              {isEditMode ? (
+                <div className="space-y-2">
                   <label className={modalLabelClass}>Saldo Atual (R$)</label>
                   <input
                     id={fieldId('current-balance')}
                     name="currentBalance"
                     type="number"
-                    placeholder="0,00"
+                    placeholder="Ex: R$0,00"
                     value={currentBalance}
                     onChange={(e) => setCurrentBalance(e.target.value)}
-                    className={modalInputClass}
+                    className={dockFieldClass}
                   />
                 </div>
-                <div className="space-y-3">
-                  <label htmlFor={fieldId('notes')} className={modalLabelClass}>
-                    Observações
-                  </label>
-                  <textarea
-                    id={fieldId('notes')}
-                    name="notes"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    rows={3}
-                    placeholder="Observações internas da conta..."
-                    className={modalTextareaClass}
-                  />
-                </div>
+              ) : null}
+            </div>
+
+            {isEditMode && (
+              <div className="space-y-2">
+                <label htmlFor={fieldId('notes')} className={modalLabelClass}>
+                  Observações
+                </label>
+                <textarea
+                  id={fieldId('notes')}
+                  name="notes"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Observações internas da conta..."
+                  className={dockTextareaClass}
+                />
               </div>
             )}
 
-            <div className="space-y-4">
-                <ColorPickerPopover
-                  label="Cor da conta"
-                  value={accountColor}
-                  onChange={setAccountColor}
-                  presets={PREMIUM_COLOR_PRESETS}
-                  onOpenChange={(open) => {
-                    if (!open) return;
-                    setIsDropdownOpen(false);
-                    setIsAddTypeOpen(false);
-                    setIsManageTypesOpen(false);
-                    setPendingDeleteType(null);
-                  }}
-                />
-                {isMobile ? (
-                  <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-[#101014]/70 p-4">
+            <div className="space-y-2">
+              <label className={modalLabelClass}>Cor da tag</label>
+              <div className="flex flex-wrap gap-2">
+                {PREMIUM_COLOR_PRESETS.map((color) => {
+                  const isActive = accountColor === color;
+                  return (
                     <button
+                      key={color}
                       type="button"
-                      onClick={() => setIsPreviewOpen((prev) => !prev)}
-                      className="w-full flex items-center justify-between text-sm font-semibold text-zinc-700 dark:text-zinc-200"
+                      onClick={() => setAccountColor(color)}
+                      className={`h-7 w-7 rounded-full border transition ${isActive ? 'border-white/90 shadow-[0_0_0_2px_rgba(255,255,255,0.3)]' : 'border-white/20'}`}
+                      aria-label={`Selecionar cor ${color}`}
                     >
-                      Prévia
-                      <ChevronDown size={16} className={`transition-transform ${isPreviewOpen ? 'rotate-180' : ''}`} />
+                      <span className="block h-full w-full rounded-full" style={{ backgroundColor: color }} />
                     </button>
-                    <div className={`overflow-hidden transition-[max-height,opacity] duration-200 ease-out ${isPreviewOpen ? 'max-h-40 opacity-100 mt-3' : 'max-h-0 opacity-0'}`}>
-                      <div
-                        className="rounded-2xl p-5 border border-white/10 shadow-sm transition-all duration-200 ease-out"
-                        style={{ backgroundImage: `linear-gradient(135deg, ${accountColor}, ${withAlpha(accountColor, 0.25)})` }}
-                      >
-                        <p className="text-[10px] uppercase tracking-[0.4em] text-white/70 mb-2">Prévia</p>
-                        <p className="text-xl font-semibold text-white">{accountName || 'Nome da Conta'}</p>
-                        <p className="text-xs text-white/70">{selectedType || 'Tipo da Conta'}</p>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                      className="rounded-2xl p-5 border border-white/10 shadow-sm transition-all duration-200 ease-out"
-                      style={{ backgroundImage: `linear-gradient(135deg, ${accountColor}, ${withAlpha(accountColor, 0.25)})` }}
-                  >
-                      <p className="text-[10px] uppercase tracking-[0.4em] text-white/70 mb-2">Prévia</p>
-                      <p className="text-xl font-semibold text-white">{accountName || 'Nome da Conta'}</p>
-                      <p className="text-xs text-white/70">{selectedType || 'Tipo da Conta'}</p>
-                  </div>
-                )}
+                  );
+                })}
+              </div>
             </div>
 
             {/* CONDITIONAL YIELD FIELD */}
@@ -552,16 +350,214 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
             )}
 
           </div>
+  );
 
+  const modalFooter = (
       <PremiumModalFooter fullScreen>
-        <button onClick={onClose} className={modalSecondaryButtonClass}>
-          Cancelar
-        </button>
-        <button onClick={handleSave} className={modalPrimaryButtonClass}>
-          {primaryLabel}
-        </button>
+          <div className="grid grid-cols-2 gap-3 w-full">
+              <button onClick={onClose} className={`${modalSecondaryButtonClass} hover:text-zinc-600 dark:hover:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-600`}>
+                  Cancelar
+              </button>
+              <button
+                  onClick={handleSave}
+                  disabled={!accountName || !selectedType || !accountNature}
+                  className={`${modalPrimaryButtonClass} shadow-none ${!accountName || !selectedType || !accountNature ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                  Salvar
+              </button>
+          </div>
       </PremiumModalFooter>
-    </PremiumModalShell>
+  );
+
+  const typeManagerModal = isTypeManagerOpen ? (
+      <div className="fixed inset-0 z-[1400]">
+          <button
+              type="button"
+              onClick={closeTypeManager}
+              className="absolute inset-0 bg-black/60"
+              aria-label="Fechar tipos de conta"
+          />
+          <div
+              className={
+                  isMobile
+                      ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
+                      : 'absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+              }
+          >
+              <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                  <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">Tipos de Conta</p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Gerencie e personalize os tipos das contas (até 20).
+                      </p>
+                  </div>
+                  <button
+                      type="button"
+                      onClick={closeTypeManager}
+                      className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                      aria-label="Fechar tipos de conta"
+                  >
+                      <ChevronDown size={16} />
+                  </button>
+              </div>
+
+              <div className="pt-3 flex-1 overflow-auto space-y-4">
+                  <div className="space-y-2">
+                      <label htmlFor={fieldId('type-new')} className={modalLabelClass}>
+                          Novo tipo
+                      </label>
+                      <div className="flex items-center gap-2">
+                          <input
+                              id={fieldId('type-new')}
+                              name="accountTypeNew"
+                              type="text"
+                              placeholder="Ex: Conta corrente"
+                              value={newTypeInputValue}
+                              onChange={(e) => setNewTypeInputValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleAddType();
+                              }}
+                              className={dockFieldClass}
+                          />
+                          <button
+                              type="button"
+                              onClick={handleAddType}
+                              className="h-9 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm shadow-indigo-500/30"
+                          >
+                              Adicionar
+                          </button>
+                      </div>
+                      {typeManagerError && (
+                          <p className="text-[11px] text-rose-500">{typeManagerError}</p>
+                      )}
+                  </div>
+
+                  <div className="space-y-2">
+                      <p className="text-[10px] uppercase tracking-[0.35em] text-zinc-400">Tipos cadastrados</p>
+                      <div className="space-y-2">
+                          {accountTypes.map((type) => {
+                              const isPending = pendingDeleteType === type;
+                              const canDelete = accountTypes.length > 1;
+                              const isSelected = selectedType === type;
+                              return (
+                                  <div key={type} className={`flex items-center justify-between rounded-xl border px-3 py-2 transition ${
+                                      isSelected ? 'border-indigo-400/60 bg-indigo-500/10' : 'border-zinc-200/80 dark:border-white/10 bg-white/60 dark:bg-black/20'
+                                  }`}>
+                                      <button
+                                          type="button"
+                                          onClick={() => {
+                                              setSelectedType(type);
+                                              closeTypeManager();
+                                          }}
+                                          className="text-left flex-1 text-sm font-medium text-zinc-800 dark:text-white/90"
+                                      >
+                                          {type}
+                                      </button>
+                                      {isPending ? (
+                                          <div className="flex items-center gap-2">
+                                              <span className="text-[11px] text-zinc-400">Excluir?</span>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => handleDeleteType(type)}
+                                                  disabled={!canDelete}
+                                                  className="text-[11px] font-semibold text-rose-500 hover:text-rose-400 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                                              >
+                                                  Excluir
+                                              </button>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => setPendingDeleteType(null)}
+                                                  className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-600 dark:hover:text-white transition"
+                                              >
+                                                  Cancelar
+                                              </button>
+                                          </div>
+                                      ) : (
+                                          <button
+                                              type="button"
+                                              onClick={() => setPendingDeleteType(type)}
+                                              disabled={!canDelete}
+                                              className="text-[11px] font-semibold text-zinc-400 hover:text-rose-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                                          >
+                                              Excluir
+                                          </button>
+                                      )}
+                                  </div>
+                              );
+                          })}
+                          {!accountTypes.length && (
+                              <p className="text-xs text-zinc-500">Nenhum tipo cadastrado.</p>
+                          )}
+                      </div>
+                  </div>
+              </div>
+          </div>
+      </div>
+  ) : null;
+
+  if (variant === 'dock') {
+      if (!isOpen) return null;
+      return (
+          <>
+              <div className="fixed inset-0 z-[1300]">
+                  <button
+                      type="button"
+                      onClick={onClose}
+                      className="absolute inset-0 bg-black/60"
+                      aria-label="Fechar conta"
+                  />
+                  <div
+                      className={
+                          isMobile
+                              ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
+                              : 'absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+                      }
+                  >
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                          <div className="min-w-0">
+                              <p className="text-sm font-semibold truncate">{isEditMode ? 'Editar Conta' : 'Nova Conta'}</p>
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  Ajuste os dados principais da conta e a cor para facilitar a leitura.
+                              </p>
+                          </div>
+                          <button
+                              type="button"
+                              onClick={onClose}
+                              className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                              aria-label="Fechar conta"
+                          >
+                              <ChevronDown size={16} />
+                          </button>
+                      </div>
+                      <div className="pt-3 flex-1 overflow-auto">{modalBody}</div>
+                      {modalFooter}
+                  </div>
+              </div>
+              {typeManagerModal}
+          </>
+      );
+  }
+
+  return (
+      <>
+          <PremiumModalShell
+              isOpen={isOpen}
+              onClose={onClose}
+              zIndexClass="z-[1200]"
+              fullScreen
+          >
+              <PremiumModalHeader
+                  eyebrow="Contas Financeiras"
+                  title={isEditMode ? 'Editar Conta' : 'Nova Conta Financeira'}
+                  subtitle="Ajuste os dados principais da conta e a cor para facilitar a leitura."
+                  onClose={onClose}
+                  fullScreen
+              />
+              {modalBody}
+              {modalFooter}
+          </PremiumModalShell>
+          {typeManagerModal}
+      </>
   );
 };
 

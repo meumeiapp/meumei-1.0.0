@@ -21,6 +21,13 @@ interface CompanyDetailsViewProps {
 const CompanyDetailsView: React.FC<CompanyDetailsViewProps> = ({ onBack, company }) => {
   
   const [copiedField, setCopiedField] = React.useState<string | null>(null);
+  const formatISODate = (value: string) => {
+      if (!value) return '';
+      const [year, month, day] = value.split('-');
+      if (!year || !month || !day) return value;
+      const cleanDay = day.split('T')[0];
+      return `${cleanDay}/${month}/${year}`;
+  };
 
   const handleCopy = (text: string, field: string) => {
     if (!text) return;
@@ -116,7 +123,7 @@ const CompanyDetailsView: React.FC<CompanyDetailsViewProps> = ({ onBack, company
                             <InfoRow 
                                 icon={<Calendar size={20} />} 
                                 label="Data de Abertura" 
-                                value={new Date(company.startDate).toLocaleDateString('pt-BR')}
+                                value={formatISODate(company.startDate)}
                                 fieldName="startDate"
                             />
                         </div>

@@ -15,7 +15,10 @@ import {
   Sparkles,
   Target,
   Compass,
-  Award
+  Award,
+  Home,
+  History,
+  ChevronDown
 } from 'lucide-react';
 import { Account } from '../types';
 import { yieldsService, YieldRecord } from '../services/yieldsService';
@@ -23,6 +26,7 @@ import { AuditLogInput } from '../services/auditService';
 import NewYieldModal from './NewYieldModal';
 import CompoundInterestCalculatorModal, { CompoundCalculatorDefaults, CompoundCalculatorResult } from './CompoundInterestCalculatorModal';
 import useIsMobile from '../hooks/useIsMobile';
+import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import YieldsMobileV2 from './YieldsMobileV2';
 import MobileModalShell from './mobile/MobileModalShell';
 import { db } from '../services/firebase';
@@ -128,6 +132,19 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   } | null>(null);
   const recoveryLoggedRef = useRef(false);
   const isMobile = useIsMobile();
+  const isCompactHeight = useIsCompactHeight();
+
+  useEffect(() => {
+      if (isMobile) return;
+      const previousBodyOverflow = document.body.style.overflow;
+      const previousHtmlOverflow = document.documentElement.style.overflow;
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
+      return () => {
+          document.body.style.overflow = previousBodyOverflow;
+          document.documentElement.style.overflow = previousHtmlOverflow;
+      };
+  }, [isMobile]);
 
   // Filtra apenas contas de investimento (tratando contas sem tipo definido)
   const investmentAccounts = accounts.filter(acc => {
@@ -565,29 +582,26 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       setCalculatorSummary(summary);
   };
 
-  const startOfMonth = useMemo(() => {
-      return new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
-  }, [viewDate]);
-
-  const previousMonthEnd = useMemo(() => {
-      const prev = new Date(startOfMonth);
-      prev.setDate(0);
-      prev.setHours(23, 59, 59, 999);
-      return prev;
-  }, [startOfMonth]);
-
-  const previousMonthTotal = useMemo(() => {
-      return investmentAccounts.reduce((sum, account) => sum + getAccountValueAtDate(account, previousMonthEnd), 0);
-  }, [investmentAccounts, previousMonthEnd]);
-
-  const monthlyDelta = totalInvested - previousMonthTotal;
-  const monthlyDeltaText = `${monthlyDelta >= 0 ? '+' : '-'} ${formatCurrency(Math.abs(monthlyDelta))} vs mês anterior`;
   const todayLabel = new Date().toLocaleDateString('pt-BR');
   const selectedYear = viewDate.getFullYear();
   const selectedMonthIndex = viewDate.getMonth();
   const monthName = viewDate.toLocaleDateString('pt-BR', { month: 'long' });
   const monthLabel = `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)}/${selectedYear}`;
   const currentMonthKey = `${selectedYear}-${selectedMonthIndex}`;
+  const previousMonthKey =
+      selectedMonthIndex === 0
+          ? `${selectedYear - 1}-11`
+          : `${selectedYear}-${selectedMonthIndex - 1}`;
+
+  const activeAccountIds = useMemo(
+      () => new Set(investmentAccounts.map((account) => account.id)),
+      [investmentAccounts]
+  );
+
+  const activeYieldEntries = useMemo(
+      () => yieldEntries.filter((entry) => activeAccountIds.has(entry.accountId)),
+      [yieldEntries, activeAccountIds]
+  );
 
   useEffect(() => {
       console.info('[yields-monthly] month', {
@@ -599,7 +613,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
 
   const monthlyYieldTotalsByAccount = useMemo(() => {
       const totals: Record<string, number> = {};
-      yieldEntries.forEach(entry => {
+      activeYieldEntries.forEach(entry => {
           const date = new Date(`${entry.date}T12:00:00`);
           const key = `${date.getFullYear()}-${date.getMonth()}`;
           if (key === currentMonthKey) {
@@ -607,7 +621,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
           }
       });
       return totals;
-  }, [yieldEntries, currentMonthKey]);
+  }, [activeYieldEntries, currentMonthKey]);
 
   interface MonthlySummaryItem {
       account: Account;
@@ -619,7 +633,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
 
   const monthlySummary = useMemo<MonthlySummaryItem[]>(() => {
       const entriesByAccount = new Map<string, YieldEntry[]>();
-      yieldEntries.forEach(entry => {
+      activeYieldEntries.forEach(entry => {
           const date = parseHistoryDate(entry.date);
           if (date.getFullYear() !== selectedYear || date.getMonth() !== selectedMonthIndex) {
               return;
@@ -645,7 +659,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
               color: account.color || getStrokeColor(account.name)
           };
       });
-  }, [yieldEntries, investmentAccounts, selectedYear, selectedMonthIndex]);
+  }, [activeYieldEntries, investmentAccounts, selectedYear, selectedMonthIndex]);
 
   const monthlySummaryMap = useMemo(() => {
       const map = new Map<string, MonthlySummaryItem>();
@@ -659,7 +673,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       () => monthlySummary.reduce((sum, item) => sum + item.count, 0),
       [monthlySummary]
   );
-
+  const summaryCountLabel = `${monthlyEntriesCount} ${monthlyEntriesCount === 1 ? 'registro' : 'registros'}`;
   useEffect(() => {
       monthlySummary.forEach(item => {
           console.info('[yields-monthly] perAccount', {
@@ -688,7 +702,67 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       setDetailAccount(account);
   };
 
+  const closeMonthlyDrawer = () => {
+      setDetailAccount(null);
+  };
+
   const monthlyTotalYield = useMemo(() => Object.values(monthlyYieldTotalsByAccount).reduce((sum, value) => sum + value, 0), [monthlyYieldTotalsByAccount]);
+  const previousMonthYieldTotal = useMemo(() => {
+      let total = 0;
+      activeYieldEntries.forEach(entry => {
+          const date = new Date(`${entry.date}T12:00:00`);
+          const key = `${date.getFullYear()}-${date.getMonth()}`;
+          if (key === previousMonthKey) {
+              total += entry.amount;
+          }
+      });
+      return total;
+  }, [activeYieldEntries, previousMonthKey]);
+  const monthlyDelta = monthlyTotalYield - previousMonthYieldTotal;
+  const monthlyDeltaPercent = previousMonthYieldTotal > 0 ? (monthlyDelta / previousMonthYieldTotal) * 100 : null;
+  const monthlyDeltaText = `${monthlyDelta >= 0 ? '+' : '-'} ${formatCurrency(Math.abs(monthlyDelta))} vs mês anterior`;
+  const daysInMonth = useMemo(() => new Date(selectedYear, selectedMonthIndex + 1, 0).getDate(), [selectedYear, selectedMonthIndex]);
+  const dailyTotals = useMemo(() => {
+      const totals = new Map<number, number>();
+      activeYieldEntries.forEach(entry => {
+          const date = parseHistoryDate(entry.date);
+          if (date.getFullYear() !== selectedYear || date.getMonth() !== selectedMonthIndex) return;
+          const day = date.getDate();
+          totals.set(day, (totals.get(day) || 0) + entry.amount);
+      });
+      return totals;
+  }, [activeYieldEntries, selectedYear, selectedMonthIndex]);
+  const sparklinePoints = useMemo(() => {
+      const bucketCount = 12;
+      const buckets = Array.from({ length: bucketCount }, () => 0);
+      const daysPerBucket = Math.max(Math.ceil(daysInMonth / bucketCount), 1);
+
+      for (let day = 1; day <= daysInMonth; day += 1) {
+          const bucketIndex = Math.min(Math.floor((day - 1) / daysPerBucket), bucketCount - 1);
+          buckets[bucketIndex] += dailyTotals.get(day) || 0;
+      }
+
+      const cumulative: number[] = [];
+      buckets.reduce((acc, value, index) => {
+          const next = acc + value;
+          cumulative[index] = next;
+          return next;
+      }, 0);
+
+      const max = Math.max(...cumulative, 1);
+      return {
+          points: cumulative,
+          max
+      };
+  }, [dailyTotals, daysInMonth]);
+  const sparklineBars = useMemo(() => {
+      const max = sparklinePoints.max || 1;
+      return sparklinePoints.points.map(value => value / max);
+  }, [sparklinePoints]);
+  const isCurrentMonth =
+      selectedYear === new Date().getFullYear() && selectedMonthIndex === new Date().getMonth();
+  const daysElapsed = isCurrentMonth ? Math.max(new Date().getDate(), 1) : daysInMonth;
+  const averageDailyYield = monthlyTotalYield / Math.max(daysElapsed, 1);
   const topAccountId = useMemo(() => {
       const entries = Object.entries(monthlyYieldTotalsByAccount);
       if (!entries.length) return null;
@@ -722,6 +796,8 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       color: string;
       points: LineSeriesPoint[];
   }
+
+  const [hiddenLineSeries, setHiddenLineSeries] = useState<string[]>([]);
 
   const monthlyLineData = useMemo(() => {
       const daysInMonth = new Date(selectedYear, selectedMonthIndex + 1, 0).getDate();
@@ -810,28 +886,53 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   };
 
   const renderLineChart = () => {
+      const isDarkMode = typeof document !== 'undefined'
+          ? document.documentElement.classList.contains('dark')
+          : true;
+      const chartColors = isDarkMode
+          ? {
+                grid: '#1f1f23',
+                gridStrong: '#27272a',
+                axis: '#3f3f46',
+                label: '#a1a1aa',
+                tooltipBg: 'rgba(24,24,27,0.95)',
+                tooltipBorder: '#3f3f46',
+                tooltipText: '#f4f4f5',
+                tooltipSub: '#d4d4d8'
+            }
+          : {
+                grid: '#e5e7eb',
+                gridStrong: '#d1d5db',
+                axis: '#9ca3af',
+                label: '#6b7280',
+                tooltipBg: 'rgba(255,255,255,0.98)',
+                tooltipBorder: '#e5e7eb',
+                tooltipText: '#111827',
+                tooltipSub: '#6b7280'
+            };
+
+      const chartHeight = 170;
       if (!monthlyLineData.series.length) {
           return (
-              <div className="h-48 flex items-center justify-center text-zinc-500 text-sm">
+              <div className="relative h-[170px] flex items-center justify-center text-zinc-500 text-sm">
                   Cadastre rendimentos para visualizar a evolução.
               </div>
           );
       }
 
-      const hasData = monthlyLineData.series.some(line => line.points.some(point => point.value !== 0));
-      if (!hasData) {
-          return (
-              <div className="h-48 flex items-center justify-center text-zinc-500 text-sm">
-                  Sem rendimentos registrados no mês selecionado.
-              </div>
-          );
-      }
+      const visibleSeries = monthlyLineData.series.filter(line => !hiddenLineSeries.includes(line.accountId));
+      const sourceSeries = visibleSeries.length ? visibleSeries : monthlyLineData.series;
+      const hasVisibleData = visibleSeries.some(line => line.points.some(point => point.value !== 0));
 
       const width = 720;
-      const height = 260;
-      const padding = 48;
-      const maxValue = monthlyLineData.maxValue;
-      const minValue = monthlyLineData.series.reduce((min, line) => {
+      const height = chartHeight;
+      const paddingX = 64;
+      const paddingY = 32;
+      const maxValue = sourceSeries.reduce((max, line) => {
+          const lineMax = line.points.reduce((linePeak, point) => Math.max(linePeak, point.value), 0);
+          return Math.max(max, lineMax);
+      }, 0);
+      const minValue = sourceSeries.reduce((min, line) => {
           const lineMin = line.points.reduce((lineFloor, point) => Math.min(lineFloor, point.value), 0);
           return Math.min(min, lineMin);
       }, 0);
@@ -839,22 +940,15 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       const dayCount = monthlyLineData.daysInMonth;
 
       const getX = (day: number) => {
-          if (dayCount <= 1) return padding;
-          return padding + ((width - padding * 2) * ((day - 1) / (dayCount - 1)));
+          if (dayCount <= 1) return paddingX;
+          return paddingX + ((width - paddingX * 2) * ((day - 1) / (dayCount - 1)));
       };
 
       const getY = (value: number) => {
-          return height - padding - ((value - minValue) / valueRange) * (height - padding * 2);
+          return height - paddingY - ((value - minValue) / valueRange) * (height - paddingY * 2);
       };
 
-      const tickStep = Math.max(1, Math.ceil(dayCount / 6));
-      const dayTicks: number[] = [];
-      for (let day = 1; day <= dayCount; day += tickStep) {
-          dayTicks.push(day);
-      }
-      if (dayTicks[dayTicks.length - 1] !== dayCount) {
-          dayTicks.push(dayCount);
-      }
+      const dayTicks: number[] = Array.from({ length: dayCount }, (_, index) => index + 1);
 
       const valueTicks: number[] = [];
       for (let i = 0; i <= 4; i += 1) {
@@ -864,37 +958,49 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       return (
           <div className="relative">
               <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
+                  {dayTicks.map(day => (
+                      <line
+                          key={`v-${day}`}
+                          x1={getX(day)}
+                          y1={paddingY}
+                          x2={getX(day)}
+                          y2={height - paddingY}
+                          stroke={chartColors.grid}
+                          strokeWidth="1"
+                          strokeDasharray="4"
+                      />
+                  ))}
                   {[0.25, 0.5, 0.75, 1].map(ratio => {
-                      const y = padding + (height - padding * 2) * ratio;
+                      const y = paddingY + (height - paddingY * 2) * ratio;
                       return (
                           <line
                               key={ratio}
-                              x1={padding}
+                              x1={paddingX}
                               y1={y}
-                              x2={width - padding}
+                              x2={width - paddingX}
                               y2={y}
-                              stroke="#27272a"
+                              stroke={chartColors.gridStrong}
                               strokeWidth="1"
                               strokeDasharray="4"
                           />
                       );
                   })}
-                  <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="#3f3f46" strokeWidth="1.5" />
-                  <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#3f3f46" strokeWidth="1.5" />
+                  <line x1={paddingX} y1={paddingY} x2={paddingX} y2={height - paddingY} stroke={chartColors.axis} strokeWidth="1.5" />
+                  <line x1={paddingX} y1={height - paddingY} x2={width - paddingX} y2={height - paddingY} stroke={chartColors.axis} strokeWidth="1.5" />
 
-                  {monthlyLineData.series.map(line => (
+                  {visibleSeries.map(line => (
                       <polyline
                           key={line.accountId}
                           points={line.points.map(point => `${getX(point.day)},${getY(point.value)}`).join(' ')}
                           fill="none"
                           stroke={line.color}
-                          strokeWidth="3"
+                          strokeWidth="0.5"
                           strokeLinecap="round"
                           strokeLinejoin="round"
                       />
                   ))}
 
-                  {monthlyLineData.series.map(line =>
+                  {visibleSeries.map(line =>
                       line.points.map(point => {
                           const x = getX(point.day);
                           const y = getY(point.value);
@@ -921,35 +1027,72 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                   )}
 
                   {dayTicks.map(day => (
-                      <text key={day} x={getX(day)} y={height - padding + 16} textAnchor="middle" className="text-[10px] fill-zinc-500">
+                      <text key={day} x={getX(day)} y={height - paddingY + 16} textAnchor="middle" className="text-[10px]" fill={chartColors.label}>
                           {day.toString().padStart(2, '0')}
                       </text>
                   ))}
                   {valueTicks.map((tick, index) => (
-                      <text key={index} x={padding - 8} y={getY(tick)} textAnchor="end" className="text-[10px] fill-zinc-500">
+                      <text key={index} x={paddingX - 12} y={getY(tick)} textAnchor="end" className="text-[10px]" fill={chartColors.label}>
                           {formatCurrency(tick)}
                       </text>
                   ))}
               </svg>
 
-              {lineTooltip && (
-                  <div
-                      className="absolute bg-zinc-900/90 border border-zinc-700 text-xs text-white px-3 py-2 rounded-xl shadow-2xl"
-                      style={{ left: lineTooltip.x - 60, top: lineTooltip.y - 70 }}
-                  >
-                      <p className="font-semibold">{lineTooltip.accountName}</p>
-                      <p className="text-zinc-300">Dia {lineTooltip.day.toString().padStart(2, '0')}</p>
-                      <p className="text-zinc-300">Acumulado: {formatCurrency(lineTooltip.value)}</p>
+              {!hasVisibleData && (
+                  <div className="absolute inset-0 flex items-center justify-center text-zinc-500 text-sm pointer-events-none">
+                      Nenhuma linha selecionada.
                   </div>
               )}
 
-              <div className="flex flex-wrap justify-center gap-4 mt-4 text-[11px] text-zinc-500">
-                  {monthlyLineData.series.map(line => (
-                      <span key={line.accountId} className="flex items-center gap-2">
-                          <span className="w-3 h-1 rounded-full" style={{ background: line.color }}></span>
-                          {line.accountName}
-                      </span>
-                  ))}
+              {lineTooltip && (
+                  <div
+                      className="absolute text-xs px-3 py-2 rounded-xl shadow-2xl"
+                      style={{
+                          background: chartColors.tooltipBg,
+                          borderColor: chartColors.tooltipBorder,
+                          borderWidth: 1,
+                          left: lineTooltip.x - 60,
+                          top: lineTooltip.y - 70
+                      }}
+                  >
+                      <p className="font-semibold" style={{ color: chartColors.tooltipText }}>{lineTooltip.accountName}</p>
+                      <p style={{ color: chartColors.tooltipSub }}>Dia {lineTooltip.day.toString().padStart(2, '0')}</p>
+                      <p style={{ color: chartColors.tooltipSub }}>Acumulado: {formatCurrency(lineTooltip.value)}</p>
+                  </div>
+              )}
+
+              <div className="flex flex-wrap justify-center gap-3 mt-2 text-[11px] text-zinc-500">
+                  {monthlyLineData.series.map(line => {
+                      const isHidden = hiddenLineSeries.includes(line.accountId);
+                      return (
+                          <button
+                              key={line.accountId}
+                              type="button"
+                              onClick={() => {
+                                  setLineTooltip(null);
+                                  setHiddenLineSeries(prev =>
+                                      prev.includes(line.accountId)
+                                          ? prev.filter(id => id !== line.accountId)
+                                          : [...prev, line.accountId]
+                                  );
+                              }}
+                              className="flex items-center gap-2 rounded-full border border-zinc-200 dark:border-zinc-800/60 bg-zinc-100 dark:bg-zinc-900/40 px-2.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-200 transition hover:border-zinc-300 dark:hover:border-zinc-600"
+                              aria-pressed={!isHidden}
+                          >
+                              <span
+                                  className={`h-5 w-5 rounded-[7px] border ${
+                                      isHidden
+                                          ? 'border-zinc-400/70 dark:border-zinc-600/70 bg-transparent'
+                                          : isDarkMode
+                                              ? 'border-white/40'
+                                              : 'border-zinc-300'
+                                  }`}
+                                  style={{ backgroundColor: isHidden ? 'transparent' : line.color }}
+                              />
+                              {line.accountName}
+                          </button>
+                      );
+                  })}
               </div>
           </div>
       );
@@ -957,21 +1100,121 @@ const YieldsView: React.FC<YieldsViewProps> = ({
 
   const yieldModals = (
       <>
-          <NewYieldModal 
-              isOpen={isModalOpen}
-              onClose={closeYieldModal}
-              onSave={handleSaveYield}
-              accounts={investmentAccounts}
-              licenseId={licenseId}
-              initialData={editingYield}
-          />
+          {isMobile && (
+              <NewYieldModal 
+                  isOpen={isModalOpen}
+                  onClose={closeYieldModal}
+                  onSave={handleSaveYield}
+                  accounts={investmentAccounts}
+                  licenseId={licenseId}
+                  initialData={editingYield}
+              />
+          )}
+          {!isMobile && (
+              <NewYieldModal
+                  isOpen={isModalOpen}
+                  onClose={closeYieldModal}
+                  onSave={handleSaveYield}
+                  accounts={investmentAccounts}
+                  licenseId={licenseId}
+                  initialData={editingYield}
+                  variant="dock"
+              />
+          )}
 
           <CompoundInterestCalculatorModal
               isOpen={isCalculatorOpen}
               onClose={() => setIsCalculatorOpen(false)}
               defaults={calculatorDefaults}
               onResult={handleCalculatorResult}
+              variant={isMobile ? 'default' : 'dock'}
           />
+
+          {detailAccount && (
+              isMobile ? (
+                  <MobileModalShell
+                      isOpen={!!detailAccount}
+                      onClose={closeMonthlyDrawer}
+                      title={`Rendimentos • ${detailAccount.name}`}
+                      subtitle="Lançamentos do mês selecionado"
+                      modalName="yield_month_entries"
+                  >
+                      <div className="space-y-3">
+                          {accountMonthlyEntries.length === 0 ? (
+                              <p className="text-sm text-zinc-500">Nenhum lançamento neste mês.</p>
+                          ) : (
+                              <div className="space-y-2">
+                                  {accountMonthlyEntries.map((entry) => (
+                                      <div
+                                          key={entry.id}
+                                          className="flex items-center justify-between rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#141417]/90 px-4 py-3"
+                                      >
+                                          <div>
+                                              <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+                                                  {parseHistoryDate(entry.date).toLocaleDateString('pt-BR')}
+                                              </p>
+                                              {entry.notes && (
+                                                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{entry.notes}</p>
+                                              )}
+                                          </div>
+                                          <p className="text-sm font-semibold text-emerald-500">{formatCurrency(entry.amount)}</p>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
+                  </MobileModalShell>
+              ) : (
+                  <div className="fixed inset-0 z-[1200]">
+                      <button
+                          type="button"
+                          onClick={closeMonthlyDrawer}
+                          className="absolute inset-0 bg-black/60"
+                          aria-label="Fechar lançamentos"
+                      />
+                      <div className="absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]">
+                          <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                              <div className="min-w-0">
+                                  <p className="text-sm font-semibold truncate">{detailAccount.name}</p>
+                                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Lançamentos do mês selecionado</p>
+                              </div>
+                              <button
+                                  type="button"
+                                  onClick={closeMonthlyDrawer}
+                                  className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                                  aria-label="Fechar lançamentos"
+                              >
+                                  <ChevronDown size={16} />
+                              </button>
+                          </div>
+                          <div className="pt-3 flex-1 overflow-auto">
+                              {accountMonthlyEntries.length === 0 ? (
+                                  <p className="text-sm text-zinc-500">Nenhum lançamento neste mês.</p>
+                              ) : (
+                                  <div className="space-y-2">
+                                      {accountMonthlyEntries.map((entry) => (
+                                          <div
+                                              key={entry.id}
+                                              className="flex items-center justify-between rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#141417]/90 px-4 py-3"
+                                          >
+                                              <div className="min-w-0">
+                                                  <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+                                                      {parseHistoryDate(entry.date).toLocaleDateString('pt-BR')}
+                                                  </p>
+                                                  {entry.notes && (
+                                                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{entry.notes}</p>
+                                                  )}
+                                              </div>
+                                              <p className="text-sm font-semibold text-emerald-500">{formatCurrency(entry.amount)}</p>
+                                          </div>
+                                      ))}
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+                  </div>
+              )
+          )}
           
           {isGoalModalOpen &&
               (isMobile ? (
@@ -1021,41 +1264,49 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                       </div>
                   </MobileModalShell>
               ) : (
-                  <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
-                      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsGoalModalOpen(false)}></div>
-                      <div className="relative w-full max-w-lg bg-white dark:bg-[#0f0f13] rounded-[28px] border border-white/10 shadow-2xl p-8 space-y-6">
-                          <div className="flex items-center justify-between">
-                              <div>
-                                  <p className="text-xs uppercase tracking-[0.3em] text-indigo-500/80 mb-2">Meta</p>
-                                  <h2 className="text-2xl font-semibold text-zinc-900 dark:text-white">Definir meta de patrimônio</h2>
+                  <div className="fixed inset-0 z-[1200]">
+                      <button
+                          type="button"
+                          onClick={() => setIsGoalModalOpen(false)}
+                          className="absolute inset-0 bg-black/60"
+                          aria-label="Fechar meta"
+                      />
+                      <div className="absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]">
+                          <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                              <div className="min-w-0">
+                                  <p className="text-sm font-semibold truncate">Definir meta de patrimônio</p>
+                                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Ajuste o valor alvo da sua carteira.</p>
                               </div>
                               <button
-                                onClick={() => setIsGoalModalOpen(false)}
-                                aria-label="Fechar modal"
-                                className="p-2 rounded-full hover:bg-white/10 text-zinc-400"
+                                  type="button"
+                                  onClick={() => setIsGoalModalOpen(false)}
+                                  className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                                  aria-label="Fechar meta"
                               >
-                                  <X size={18} />
+                                  <ChevronDown size={16} />
                               </button>
                           </div>
-                          <div className="space-y-2">
-                              <label htmlFor={goalInputIdDesktop} className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-                                Valor alvo (R$)
-                              </label>
-                              <input
-                                  id={goalInputIdDesktop}
-                                  name="goalAmount"
-                                  type="number"
-                                  value={goalInput}
-                                  onChange={(e) => setGoalInput(e.target.value)}
-                                  placeholder="1.000.000,00"
-                                  className="w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 rounded-2xl px-5 py-4 text-lg font-semibold text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                              />
-                              <p className="text-xs text-zinc-500 dark:text-zinc-400">Você pode ajustar esta meta sempre que quiser.</p>
+                          <div className="pt-3 flex-1 overflow-auto">
+                              <div className="space-y-2">
+                                  <label htmlFor={goalInputIdDesktop} className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+                                    Valor alvo (R$)
+                                  </label>
+                                  <input
+                                      id={goalInputIdDesktop}
+                                      name="goalAmount"
+                                      type="number"
+                                      value={goalInput}
+                                      onChange={(e) => setGoalInput(e.target.value)}
+                                      placeholder="1.000.000,00"
+                                      className="w-full bg-white/80 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 rounded-xl px-4 py-3 text-base font-semibold text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                  />
+                                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Você pode ajustar esta meta sempre que quiser.</p>
+                              </div>
                           </div>
-                          <div className="flex items-center justify-end gap-3">
+                          <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 mt-3 pt-3 grid grid-cols-2 gap-2">
                               <button
                                   onClick={() => setIsGoalModalOpen(false)}
-                                  className="px-5 py-3 rounded-2xl border border-white/20 text-sm font-semibold text-zinc-500 dark:text-zinc-200 hover:bg-white/50 dark:hover:bg-white/10"
+                                  className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
                               >
                                   Cancelar
                               </button>
@@ -1067,7 +1318,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                           setIsGoalModalOpen(false);
                                       }
                                   }}
-                                  className="px-6 py-3 rounded-2xl bg-indigo-600 text-white font-semibold shadow-lg shadow-indigo-500/40"
+                                  className="rounded-lg py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
                               >
                                   Salvar meta
                               </button>
@@ -1102,356 +1353,273 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
-      
-      {/* Header Area */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6 relative z-10 -mt-2">
-          <button 
-             onClick={onBack}
-             className="mb-6 flex items-center gap-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-          >
-              <ArrowLeft size={16} /> Voltar ao Dashboard
-          </button>
+    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-6 transition-colors duration-300 ${isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 relative z-10">
+        <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+          <div className="space-y-2">
+            <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
+              <button
+                type="button"
+                onClick={onBack}
+                className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+                aria-label="Voltar para o início"
+              >
+                <Home size={16} />
+              </button>
+              <div className="min-w-0 text-center">
+                <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Rendimentos</p>
+                <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
+                  {monthLabel} • {summaryCountLabel}
+                </p>
+              </div>
+              <div className="min-w-[32px]" />
+            </div>
 
-          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-6">
-              <div>
-                  <h1 className="text-3xl font-bold tracking-tight mb-1 flex items-center gap-3">
-                      <TrendingUp className="text-purple-600 dark:text-purple-500" />
-                      Carteira de Rendimentos
-                  </h1>
-                  <p className="text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
-                      <ShieldCheck size={14} className="text-emerald-500" />
-                      Acompanhamento dos seus investimentos e da jornada rumo ao primeiro milhão.
-                  </p>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Patrimônio</p>
+                <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+                  {formatCurrency(totalInvested)}
+                </p>
               </div>
-              <div className="flex items-center gap-3">
-                  {goalSavedAt && (
-                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                          Meta atualizada em {new Date(goalSavedAt).toLocaleDateString('pt-BR')}
-                      </span>
-                  )}
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Mês</p>
+                <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
+                  {formatCurrency(monthlyTotalYield)}
+                </p>
               </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Variação</p>
+                <p
+                  className={`text-[12px] font-semibold truncate ${
+                    monthlyDelta > 0
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : monthlyDelta < 0
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-zinc-500 dark:text-zinc-400'
+                  }`}
+                  title={monthlyDeltaText}
+                >
+                  {formatCurrency(monthlyDelta)}
+                </p>
+              </div>
+            </div>
+
+            <div className={`grid ${onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+              {onOpenAudit && (
+                <button
+                  type="button"
+                  onClick={onOpenAudit}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+                >
+                  <History size={14} />
+                  Auditoria
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleOpenYieldModal}
+                className="w-full rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2"
+              >
+                Novo Rendimento
+              </button>
+            </div>
+
           </div>
+        </div>
       </div>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          
-          {/* Wealth + Goal Cards */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-gradient-to-br from-indigo-900 via-purple-900 to-violet-900 rounded-3xl p-8 text-white relative overflow-hidden shadow-xl shadow-indigo-900/30">
-                  <div className="absolute inset-0 opacity-20 blur-3xl" style={{ background: 'radial-gradient(circle at top right, rgba(255,255,255,0.4), transparent 60%)' }}></div>
-                  <div className="relative z-10 space-y-6">
-                      <div className="flex items-start justify-between gap-4">
-                          <div>
-                              <p className="text-xs uppercase tracking-[0.2em] text-indigo-100 font-semibold">Patrimônio em Aplicações</p>
-                              <h2 className="text-4xl md:text-5xl font-bold tracking-tight mt-2">
-                                  {formatCurrency(totalInvested)}
-                              </h2>
-                              <div className="flex flex-wrap items-center gap-3 mt-3 text-sm">
-                                  <span className={`${monthlyDelta >= 0 ? 'text-emerald-200' : 'text-rose-200'} font-semibold`}>
-                                      {monthlyDeltaText}
-                                  </span>
-                                  <span className="text-[11px] uppercase tracking-wide bg-white/10 px-3 py-1 rounded-full text-indigo-50 border border-white/20">
-                                      Baseado nos rendimentos lançados
-                                  </span>
-                              </div>
-                              <div className="mt-4 flex flex-wrap gap-3 text-sm">
-                                  <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 ${performance.color}`}>
-                                      <performance.icon size={16} />
-                                      {performance.text}
-                                  </span>
-                                  <span className="text-indigo-50/80">{rankingMessage}</span>
-                              </div>
-                          </div>
-                          <div className="p-4 bg-white/10 rounded-2xl backdrop-blur-md">
-                              <LineChart size={28} className="text-indigo-100" />
-                          </div>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-white/10">
-                          <div className="flex items-center gap-2 text-indigo-100 text-sm">
-                              <Calendar size={16} />
-                              <span>Hoje, {todayLabel}</span>
-                          </div>
-                          <button 
-                            onClick={() => {
-                                setEditingYield(null);
-                                setIsModalOpen(true);
-                            }}
-                            className="w-full sm:w-auto bg-white text-indigo-900 hover:bg-indigo-50 font-bold py-3 px-6 rounded-2xl shadow-lg shadow-indigo-900/30 transition-all active:scale-95 flex items-center justify-center gap-2 text-sm"
-                          >
-                            <PlayCircle size={18} fill="currentColor" className="text-indigo-900" />
-                            Adicionar Rendimento Diário
-                          </button>
-                      </div>
-                      <p className="text-sm text-indigo-100/80 leading-relaxed">{motivationalInsight}</p>
+      <main className="max-w-7xl mx-auto px-3 sm:px-5 mt-[var(--mm-content-gap)] animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <section className="yield-density rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 backdrop-blur-xl shadow-sm p-3 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <div>
+                      <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">Rendimentos</p>
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">{monthLabel} • {summaryCountLabel}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      {goalSavedAt && (
+                          <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Meta atualizada em {new Date(goalSavedAt).toLocaleDateString('pt-BR')}</span>
+                      )}
                   </div>
               </div>
 
-              <div className="bg-white dark:bg-[#151517] rounded-3xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm relative overflow-hidden">
-                  <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ background: 'radial-gradient(circle at top right, rgba(123,97,255,0.4), transparent 60%)' }}></div>
-                  <div className="relative z-10 space-y-5">
-                      <div className="flex items-start justify-between gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-2.5">
+                  <div className="space-y-1.5">
+                      <div className="flex items-start justify-between gap-1.5">
                           <div>
-                              <p className="text-xs uppercase tracking-[0.2em] text-zinc-500 font-semibold">Calculadora de Juros Compostos</p>
-                              <h3 className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">Simule o crescimento dos seus investimentos</h3>
-                              <span className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide font-bold text-indigo-500 mt-2 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 px-3 py-1 rounded-full">
-                                  <Target size={14} /> {progressLabel}
-                              </span>
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">Patrimônio em aplicações</p>
+                              <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">{formatCurrency(totalInvested)}</h2>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                                  <span className={`font-semibold ${monthlyDelta >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                      {monthlyDeltaText}
+                                      {monthlyDeltaPercent !== null && (
+                                          <span className="ml-2 text-[10px]">({monthlyDeltaPercent >= 0 ? '+' : ''}{monthlyDeltaPercent.toFixed(1)}%)</span>
+                                      )}
+                                  </span>
+                                  <span className="text-[9px] uppercase tracking-wide bg-zinc-100 dark:bg-zinc-900 px-2 py-0.5 rounded-full text-zinc-500 dark:text-zinc-400">Baseado nos rendimentos lançados</span>
+                              </div>
+                              <div className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">{rankingMessage}</div>
                           </div>
-                          <div className="flex flex-col items-end gap-3">
-                              <button
-                                  onClick={() => {
-                                      setGoalInput(metaGoal.toString());
-                                      setIsGoalModalOpen(true);
-                                  }}
-                                  className="text-xs font-semibold px-3 py-1 rounded-full border border-indigo-500/40 text-indigo-500 hover:bg-indigo-500/10 transition"
-                              >
-                                  Definir meta
-                              </button>
-                              <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl">
-                                  <Target size={28} className="text-indigo-500" />
+                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 px-2 py-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                              <Calendar size={12} className="inline-block mr-1" /> {todayLabel}
+                          </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-2 py-1">
+                              <p className="uppercase tracking-[0.2em] text-[9px] text-zinc-500 dark:text-zinc-400">Rend. mês</p>
+                              <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{formatCurrency(monthlyTotalYield)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-2 py-1">
+                              <p className="uppercase tracking-[0.2em] text-[9px] text-zinc-500 dark:text-zinc-400">Registros</p>
+                              <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{monthlyEntriesCount}</p>
+                          </div>
+                          <div className="col-span-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-2 py-1">
+                              <p className="uppercase tracking-[0.2em] text-[9px] text-zinc-500 dark:text-zinc-400">Tendência do mês</p>
+                              <div className="mt-1 h-5">
+                                  <svg viewBox="0 0 120 24" className="w-full h-5">
+                                      {sparklineBars.map((ratio, index) => {
+                                          const barWidth = 8;
+                                          const gap = 2;
+                                          const x = index * (barWidth + gap);
+                                          const height = Math.max(3, ratio * 20);
+                                          const y = 22 - height;
+                                          return (
+                                              <rect
+                                                  key={`bar-${index}`}
+                                                  x={x}
+                                                  y={y}
+                                                  width={barWidth}
+                                                  height={height}
+                                                  rx={2}
+                                                  fill="rgba(99,102,241,0.9)"
+                                              />
+                                          );
+                                      })}
+                                  </svg>
                               </div>
                           </div>
+                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-2 py-1">
+                              <p className="uppercase tracking-[0.2em] text-[9px] text-zinc-500 dark:text-zinc-400">Média diária</p>
+                              <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{formatCurrency(averageDailyYield)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-2 py-1">
+                              <p className="uppercase tracking-[0.2em] text-[9px] text-zinc-500 dark:text-zinc-400">Top conta</p>
+                              <p className="text-[13px] font-semibold text-zinc-900 dark:text-white truncate">{topAccount?.name || '—'}</p>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                      <div className="flex items-start justify-between gap-1.5">
+                          <div>
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">Calculadora de Juros Compostos</p>
+                              <p className="text-sm font-semibold text-zinc-900 dark:text-white">Simule o crescimento dos seus investimentos</p>
+                              <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-wide font-bold text-indigo-500 mt-1 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 px-2 py-0.5 rounded-full">
+                                  <Target size={12} /> {progressLabel}
+                              </span>
+                          </div>
+                          <button
+                              onClick={() => {
+                                  setGoalInput(metaGoal.toString());
+                                  setIsGoalModalOpen(true);
+                              }}
+                              className="text-[10px] font-semibold px-2 py-1 rounded-full border border-indigo-500/40 text-indigo-500 hover:bg-indigo-500/10 transition"
+                          >
+                              Definir meta
+                          </button>
                       </div>
 
                       <div>
-                          <div className="h-3 rounded-full bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
+                          <div className="h-2 rounded-full bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
                               <div className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-violet-500 transition-all duration-700" style={{ width: `${progressPercent}%` }}></div>
                           </div>
-                          <div className="flex justify-between text-[11px] text-zinc-500 mt-2">
+                          <div className="flex justify-between text-[10px] text-zinc-500 mt-1">
                               <span>Meta: {formatCurrency(metaGoal)}</span>
-                              <span>Projeção: {formatCurrency(projectedAmount)}</span>
+                              <span>Proj.: {formatCurrency(projectedAmount)}</span>
                           </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-1.5">
                           <div>
-                              <p className="text-xs uppercase text-zinc-500 font-semibold">Meta atual</p>
-                              <p className="text-lg font-bold text-zinc-900 dark:text-white mt-1">{formatCurrency(metaGoal)}</p>
+                              <p className="text-[10px] uppercase text-zinc-500 font-semibold">Meta atual</p>
+                              <p className="text-sm font-bold text-zinc-900 dark:text-white">{formatCurrency(metaGoal)}</p>
                           </div>
                           <div>
-                              <p className="text-xs uppercase text-zinc-500 font-semibold">Você já acumulou</p>
-                              <p className="text-lg font-bold text-zinc-900 dark:text-white mt-1">{formatCurrency(totalInvested)}</p>
+                              <p className="text-[10px] uppercase text-zinc-500 font-semibold">Você já acumulou</p>
+                              <p className="text-sm font-bold text-zinc-900 dark:text-white">{formatCurrency(totalInvested)}</p>
                           </div>
                       </div>
 
                       <div>
                           <p className="text-sm font-semibold text-zinc-900 dark:text-white">{calculatorSummaryText}</p>
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 flex items-center gap-2">
-                              <Sparkles size={14} className="text-amber-500" />
-                              {calculatorSummarySubtext}
-                          </p>
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 flex items-center gap-2">
-                              <Compass size={14} className="text-cyan-400" />
-                              {projectionText}
-                          </p>
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 flex items-center gap-2">
-                              <Award size={14} className="text-emerald-400" />
-                              {projectionBoostText}
-                          </p>
+                          <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5">{calculatorSummarySubtext}</p>
+                          <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5">{projectionText}</p>
                       </div>
 
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                          <span className="text-xs text-zinc-500 dark:text-zinc-400">Planeje seus aportes e compare cenários.</span>
+                      <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Planeje seus aportes e compare cenários.</span>
                           <button
-                            onClick={() => setIsCalculatorOpen(true)}
-                            className="px-5 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 text-sm font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition"
+                              onClick={() => setIsCalculatorOpen(true)}
+                              className="px-3 py-1.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition"
                           >
-                              Abrir Calculadora
+                              Abrir calculadora
                           </button>
                       </div>
                   </div>
               </div>
-          </div>
 
-          <section className="bg-white dark:bg-[#151517] rounded-3xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                  <div>
-                      <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Resumo do mês</h3>
-                      <p className="text-sm text-zinc-500 dark:text-zinc-400">Total de rendimentos por conta no mês selecionado.</p>
+              <div className="border-t border-zinc-200/70 dark:border-zinc-800/70 pt-3 space-y-2.5">
+                  <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] p-2.5">
+                      <div className="flex items-center justify-between mb-1.5">
+                          <div>
+                              <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Curva de crescimento</h3>
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Evolução diária do mês.</p>
+                          </div>
+                      </div>
+                      <div className="w-full">{renderLineChart()}</div>
                   </div>
-                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-900 px-3 py-1 rounded-full">
-                      {monthLabel}
-                  </span>
-              </div>
-              <div className="space-y-3">
-                  {monthlyEntriesCount === 0 && (
-                      <p className="text-sm text-zinc-500">Nenhum rendimento registrado no mês selecionado.</p>
-                  )}
-                  {monthlySummary.map(item => {
-                      const countLabel = item.count === 1 ? '1 lançamento no mês' : `${item.count} lançamentos no mês`;
-                      const isArchived = item.account.locked && item.account.lockedReason === 'epoch_mismatch';
-                      return (
-                          <button
-                              key={item.account.id}
-                              type="button"
-                              onClick={() => openMonthlyDrawer(item.account)}
-                              className="w-full text-left bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-4 py-3 flex items-center justify-between gap-4 hover:shadow-md hover:-translate-y-0.5 transition focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                              style={{ borderLeftWidth: '4px', borderLeftColor: item.color }}
-                          >
-                              <div className="flex items-center gap-3">
-                                  <span className="inline-flex w-3 h-3 rounded-full" style={{ background: item.color }}></span>
-                                  <div>
-                                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">{item.account.name}</p>
-                                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                                          {item.count > 0 ? countLabel : 'Sem lançamentos neste mês'}
+
+                  <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] p-2.5">
+                      <div className="flex items-center justify-between">
+                          <div>
+                              <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Resumo do mês</h3>
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Total por conta no mês.</p>
+                          </div>
+                          <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">{summaryCountLabel}</span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-4 gap-2">
+                          {investmentAccounts.slice(0, 8).length === 0 && (
+                              <p className="col-span-4 text-sm text-zinc-500">Nenhum rendimento registrado no mês selecionado.</p>
+                          )}
+                          {investmentAccounts.slice(0, 8).map(account => {
+                              const displayYield = account.lastYield || 0;
+                              const monthYield = monthlyYieldTotalsByAccount[account.id] || 0;
+                              const launchCount = monthlySummaryMap.get(account.id)?.count || 0;
+                              return (
+                                  <button
+                                      key={account.id}
+                                      type="button"
+                                      onClick={() => openMonthlyDrawer(account)}
+                                      className="text-left rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#171717] px-2 py-2 hover:shadow-sm transition focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                  >
+                                      <div className="flex items-center justify-between">
+                                          <span className="text-[10px] font-semibold text-zinc-900 dark:text-white truncate">{account.name}</span>
+                                          <span className="text-[9px] text-zinc-500 dark:text-zinc-400">{launchCount} lanç.</span>
+                                      </div>
+                                      <p className="text-sm font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(monthYield)}</p>
+                                      <p className="text-[9px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                                          Último: <span className={displayYield >= 0 ? 'text-emerald-500' : 'text-rose-500'}>{formatSignedCurrency(displayYield)}</span>
                                       </p>
-                                  </div>
-                              </div>
-                              {isArchived && (
-                                  <span className="text-[10px] uppercase tracking-wide font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
-                                      Arquivado
-                                  </span>
-                              )}
-                              <div className="text-right">
-                                  <p className={`text-lg font-bold ${item.total > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
-                                      {formatCurrency(item.total)}
-                                  </p>
-                              </div>
-                          </button>
-                      );
-                  })}
+                                      <div className="mt-1 h-0.5 w-full rounded-full" style={{ backgroundColor: account.color || '#7c3aed' }} />
+                                  </button>
+                              );
+                          })}
+                      </div>
+                  </div>
               </div>
           </section>
-
-          {/* Chart Section */}
-          <div className="bg-white dark:bg-[#151517] rounded-3xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm">
-               <div className="flex items-center justify-between mb-6">
-                   <div>
-                       <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Curva de Crescimento</h3>
-                       <p className="text-sm text-zinc-500 dark:text-zinc-400">Evolução diária do rendimento acumulado no mês.</p>
-                   </div>
-                   <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-900 px-3 py-1 rounded-full">
-                       {monthLabel}
-                   </span>
-               </div>
-               <div className="w-full">
-                  {renderLineChart()}
-               </div>
-          </div>
-
-          {/* Individual Accounts Grid */}
-          <div>
-              <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-4 ml-1">Detalhamento por Conta</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {investmentAccounts.map(account => {
-                      const displayYield = account.lastYield || 0;
-                      
-                      return (
-                      <div 
-                          key={account.id} 
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openMonthlyDrawer(account)}
-                          onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault();
-                                  openMonthlyDrawer(account);
-                              }
-                          }}
-                          className="bg-white dark:bg-[#1a1a1a] rounded-[24px] p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                          <div className="absolute inset-0 opacity-5" style={{ background: `linear-gradient(135deg, ${account.color || '#7c3aed'}, transparent)` }}></div>
-                          <div className="relative z-10 space-y-4">
-                              <div className="flex justify-between items-start">
-                                  <div>
-                                      <h4 className="font-bold text-zinc-900 dark:text-white text-lg">{account.name}</h4>
-                                      <div className="flex items-center gap-1.5 mt-1">
-                                          <span className="text-[10px] font-bold bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 px-2 py-0.5 rounded-md border border-violet-200 dark:border-violet-800">
-                                              {account.yieldRate}% do CDI
-                                          </span>
-                                          {account.lockedReason === 'epoch_mismatch' && (
-                                              <span className="text-[10px] uppercase tracking-wide font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
-                                                  Arquivado
-                                              </span>
-                                          )}
-                                      </div>
-                                  </div>
-                              </div>
-                              <div>
-                                  <p className="text-xs text-zinc-500 uppercase font-semibold">Saldo Atual</p>
-                                  <p className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">
-                                      R$ {account.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                  </p>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                  <div>
-                                      <p className="text-xs text-zinc-500 uppercase">Último rendimento</p>
-                                      <p className="text-sm font-semibold text-emerald-500">
-                                          {formatSignedCurrency(displayYield)}
-                                      </p>
-                                  </div>
-                                  <div className="text-right text-xs text-zinc-500">
-                                      <p>{account.lastYieldDate ? new Date(account.lastYieldDate).toLocaleDateString('pt-BR') : 'Sem data'}</p>
-                                      {account.lastYieldNote && <p className="text-[11px] text-zinc-400">{account.lastYieldNote}</p>}
-                                  </div>
-                              </div>
-                          </div>
-                      </div>
-                  )})}
-              </div>
-          </div>
-
-          {detailAccount && (
-              <div className="fixed inset-0 z-[70]">
-                  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closeDetailPanel}></div>
-                  <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white dark:bg-[#111114] border-l border-zinc-200 dark:border-zinc-800 shadow-2xl flex flex-col">
-                      <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-200 dark:border-zinc-800">
-                          <div>
-                              <p className="text-xs uppercase tracking-[0.2em] text-zinc-400 font-semibold">Conta</p>
-                              <h3 className="text-xl font-bold text-zinc-900 dark:text-white">{detailAccount.name}</h3>
-                              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{detailAccount.type || 'Conta'}</p>
-                              <p className="text-[11px] text-zinc-400 mt-2">Rendimentos de {monthLabel}</p>
-                          </div>
-                          <button
-                              type="button"
-                              onClick={closeDetailPanel}
-                              className="p-2 rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
-                              aria-label="Fechar detalhes"
-                          >
-                              <X size={18} />
-                          </button>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
-                          {accountMonthlyEntries.length === 0 && (
-                              <p className="text-sm text-zinc-500">Nenhum rendimento registrado para esta conta no mês selecionado.</p>
-                          )}
-                          {accountMonthlyEntries.map(entry => (
-                              <div key={`${entry.accountId}-${entry.date}-${entry.amount}-${entry.source}`} className="border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50 dark:bg-zinc-900/60">
-                                  <div className="flex items-center justify-between">
-                                      <div>
-                                          <div className="flex items-center gap-2">
-                                              <span className="inline-flex w-2.5 h-2.5 rounded-full" style={{ background: entry.color || detailAccount.color || getStrokeColor(detailAccount.name) }}></span>
-                                              <p className="text-sm font-semibold text-zinc-900 dark:text-white">
-                                                  {new Date(`${entry.date}T12:00:00`).toLocaleDateString('pt-BR')}
-                                              </p>
-                                              {entry.lockedReason === 'epoch_mismatch' && (
-                                                  <span className="text-[10px] uppercase tracking-wide font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
-                                                      Arquivado
-                                                  </span>
-                                              )}
-                                          </div>
-                                          {entry.notes && (
-                                              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{entry.notes}</p>
-                                          )}
-                                      </div>
-                                      <div className="text-right">
-                                          <p className="text-sm font-bold text-emerald-500">{formatCurrency(entry.amount)}</p>
-                                      </div>
-                                  </div>
-                              </div>
-                          ))}
-                      </div>
-                  </div>
-              </div>
-          )}
-          
-          {yieldModals}
-
       </main>
+      {yieldModals}
     </div>
   );
 };

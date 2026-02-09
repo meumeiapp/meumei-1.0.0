@@ -76,9 +76,9 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, onClose, licenseI
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-      <div className="absolute inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-white dark:bg-[#111114] rounded-[28px] border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center px-4 pb-6">
+      <div className="absolute inset-0 bg-black/15" onClick={onClose} />
+      <div className="relative w-full max-w-2xl bg-white dark:bg-[#111114] rounded-[28px] border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200 md:absolute md:left-1/2 md:bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] md:-translate-x-1/2 md:w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] md:max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] md:rounded-[26px] md:border md:border-black/10 md:dark:border-white/20 md:bg-white/80 md:dark:bg-white/5 md:backdrop-blur-2xl md:shadow-[0_10px_24px_rgba(0,0,0,0.35)] md:p-0 md:max-h-[80vh]">
         <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-200 dark:border-zinc-800">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-indigo-500/80 mb-2">Auditoria</p>

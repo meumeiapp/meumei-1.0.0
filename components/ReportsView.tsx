@@ -5,10 +5,12 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Maximize2,
+  Minimize2,
   X,
   Home
 } from 'lucide-react';
-import type { Account, Expense, Income, CreditCard } from '../types';
+import type { Account, Expense, Income, CreditCard, ExpenseTypeOption } from '../types';
 import type { YieldRecord } from '../services/yieldsService';
 import {
   getAnnualTrend,
@@ -22,6 +24,7 @@ import {
 import { dataService } from '../services/dataService';
 import { yieldsService } from '../services/yieldsService';
 import useIsMobile from '../hooks/useIsMobile';
+import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import FinancialMap from './reports/FinancialMap';
 import EventMap from './reports/EventMap';
 import ExecutiveSummary from './reports/ExecutiveSummary';
@@ -42,6 +45,7 @@ interface ReportsViewProps {
   viewDate: Date;
   companyName: string;
   licenseId?: string;
+  expenseTypeOptions?: ExpenseTypeOption[];
 }
 
 const buildMonthLabel = (date: Date) =>
@@ -54,9 +58,11 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   creditCards,
   viewDate,
   companyName,
-  licenseId
+  licenseId,
+  expenseTypeOptions
 }) => {
   const isMobile = useIsMobile();
+  const isCompactHeight = useIsCompactHeight();
   const [tab, setTab] = useState<ReportTab>('map');
   const [mapMode, setMapMode] = useState<MapMode>('financial');
   const [taxFilter, setTaxFilter] = useState<TaxFilter>('all');
@@ -67,6 +73,9 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   const [isRangeModalOpen, setIsRangeModalOpen] = useState(false);
   const [reportAccounts, setReportAccounts] = useState<Account[]>([]);
   const [reportYields, setReportYields] = useState<YieldRecord[]>([]);
+  const summaryContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isSummaryFullscreen, setIsSummaryFullscreen] = useState(false);
+  const [supportsSummaryFullscreen, setSupportsSummaryFullscreen] = useState(false);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
@@ -199,6 +208,34 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     }, 0);
   }, [creditCards, expenses, currentMonth]);
 
+  const summaryExpensesTotal = useMemo(
+    () => expensesByType.fixed + expensesByType.variable + expensesByType.personal,
+    [expensesByType]
+  );
+  const summaryNet = useMemo(
+    () => summary.totalReceitas - summaryExpensesTotal,
+    [summary.totalReceitas, summaryExpensesTotal]
+  );
+  const healthScore = useMemo(() => {
+    if (summary.totalReceitas <= 0 && summary.totalDespesas <= 0) return 0.5;
+    if (summary.totalReceitas <= 0) return 0;
+    const margin = summaryNet / summary.totalReceitas;
+    const clamped = Math.max(-1, Math.min(1, margin));
+    return (clamped + 1) / 2;
+  }, [summary.totalDespesas, summary.totalReceitas, summaryNet]);
+  const summaryMargin = useMemo(
+    () => (summary.totalReceitas > 0 ? summaryNet / summary.totalReceitas : 0),
+    [summary.totalReceitas, summaryNet]
+  );
+  const summaryCommitment = useMemo(
+    () => (summary.totalReceitas > 0 ? summaryExpensesTotal / summary.totalReceitas : 0),
+    [summary.totalReceitas, summaryExpensesTotal]
+  );
+  const summaryCoverage = useMemo(
+    () => (summaryExpensesTotal > 0 ? totalContas / summaryExpensesTotal : 0),
+    [summaryExpensesTotal, totalContas]
+  );
+
   const headerSummary = useMemo(() => {
     const totalComprometido = summary.totalDespesas;
     const totalDisponivel = summary.totalReceitas - summary.totalDespesas;
@@ -208,6 +245,26 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       totalDisponivel
     };
   }, [summary.totalDespesas, summary.totalReceitas]);
+
+  const expenseTypeColors = useMemo(() => {
+    const defaults = {
+      fixed: '#f59e0b',
+      variable: '#ef4444',
+      personal: '#22d3ee'
+    };
+    if (!expenseTypeOptions || expenseTypeOptions.length === 0) return defaults;
+    const next = { ...defaults };
+    expenseTypeOptions.forEach(option => {
+      if (!option?.id || !option?.color) return;
+      const normalized = option.id === 'variable' && option.color.toLowerCase() === '#ec4899'
+        ? '#ef4444'
+        : option.color;
+      next[option.id] = normalized;
+    });
+    return next;
+  }, [expenseTypeOptions]);
+  const incomeAccent = '#10b981';
+  const expenseAccent = expenseTypeColors.variable;
 
   const handleMonthChange = (increment: number) => {
     const next = new Date(currentMonth);
@@ -256,6 +313,68 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       document.body.classList.remove('lock-scroll');
     };
   }, [isMobile]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (tab !== 'summary') return;
+    const element = summaryContainerRef.current;
+    setSupportsSummaryFullscreen(Boolean(document.fullscreenEnabled && element?.requestFullscreen));
+  }, [tab]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (!supportsSummaryFullscreen) return;
+    const handleChange = () => {
+      setIsSummaryFullscreen(document.fullscreenElement === summaryContainerRef.current);
+    };
+    document.addEventListener('fullscreenchange', handleChange);
+    return () => document.removeEventListener('fullscreenchange', handleChange);
+  }, [supportsSummaryFullscreen]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (tab !== 'summary' && isSummaryFullscreen) {
+      if (document.fullscreenElement === summaryContainerRef.current) {
+        void document.exitFullscreen();
+      } else {
+        setIsSummaryFullscreen(false);
+      }
+    }
+  }, [isSummaryFullscreen, tab]);
+
+  const isSummaryOverlay = isSummaryFullscreen && !supportsSummaryFullscreen;
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (!isSummaryOverlay) return;
+    const { style } = document.body;
+    const prevOverflow = style.overflow;
+    style.overflow = 'hidden';
+    return () => {
+      style.overflow = prevOverflow;
+    };
+  }, [isSummaryOverlay]);
+
+  const handleSummaryFullscreenToggle = async () => {
+    if (typeof document === 'undefined') return;
+    const element = summaryContainerRef.current;
+    if (!element) return;
+    if (!supportsSummaryFullscreen) {
+      setIsSummaryFullscreen(prev => !prev);
+      return;
+    }
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await element.requestFullscreen();
+      }
+    } catch (error) {
+      console.warn('[summary fullscreen] fallback', error);
+      setSupportsSummaryFullscreen(false);
+      setIsSummaryFullscreen(true);
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -314,6 +433,11 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             key={item.id}
             type="button"
             onClick={() => handleMapModeChange(item.id)}
+            title={
+              item.id === 'financial'
+                ? 'Distribuição de receitas e despesas do período em um mapa.'
+                : 'Sequência de entradas e saídas por conta/cartão no período.'
+            }
             className={`px-3 py-1.5 rounded-full text-[10px] flex-1 font-semibold transition ${
               mapMode === item.id
                 ? 'bg-white text-zinc-900 shadow-sm'
@@ -335,6 +459,11 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           key={item.id}
           type="button"
           onClick={() => handleMapModeChange(item.id)}
+          title={
+            item.id === 'financial'
+              ? 'Distribuição de receitas e despesas do período em um mapa.'
+              : 'Sequência de entradas e saídas por conta/cartão no período.'
+          }
           className={getDesktopControlClass(mapMode === item.id)}
         >
           {item.label}
@@ -349,6 +478,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
         onClick={() => handleMonthChange(-1)}
         className="p-2 rounded-full border border-zinc-200 dark:border-white/10 text-zinc-500 hover:text-zinc-900 dark:text-slate-200 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/10"
         aria-label="Mês anterior"
+        title="Voltar um mês no período exibido."
       >
         <ChevronLeft size={16} />
       </button>
@@ -359,12 +489,14 @@ const ReportsView: React.FC<ReportsViewProps> = ({
         onClick={() => handleMonthChange(1)}
         className="p-2 rounded-full border border-zinc-200 dark:border-white/10 text-zinc-500 hover:text-zinc-900 dark:text-slate-200 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/10"
         aria-label="Próximo mês"
+        title="Avançar um mês no período exibido."
       >
         <ChevronRight size={16} />
       </button>
       <button
         onClick={handleOpenCustomRange}
         className={`${isMobile ? 'w-full' : 'ml-2'} px-3 py-1 text-xs rounded-full border border-zinc-200 dark:border-white/10 text-zinc-600 dark:text-slate-200 hover:bg-zinc-100 dark:hover:bg-white/10`}
+        title="Definir um intervalo de datas personalizado."
       >
         Personalizar
       </button>
@@ -401,58 +533,105 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     </div>
   );
 
+  const healthBar = (
+    <div className={`${isMobile ? 'px-1' : ''}`}>
+      <div className="flex items-center justify-between text-[9px] uppercase tracking-[0.24em] text-slate-400">
+        <span>Saúde da empresa</span>
+        <span className="text-slate-500">{Math.round(healthScore * 100)}%</span>
+      </div>
+      <div className="relative mt-1 h-2 rounded-full bg-gradient-to-r from-red-600 via-amber-400 to-emerald-500">
+        <div
+          className="absolute top-1/2"
+          style={{ left: `${healthScore * 100}%`, transform: 'translate(-50%, -50%)' }}
+        >
+          <div
+            className="h-3 w-3 rounded-full border border-white/80 shadow-[0_0_0_2px_rgba(0,0,0,0.35)]"
+            style={{ backgroundColor: healthScore >= 0.5 ? incomeAccent : expenseAccent }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+
   const summaryCards = (
-    <div className={isMobile ? 'grid grid-cols-3 gap-1.5' : 'grid grid-cols-1 md:grid-cols-3 gap-3'}>
-      <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
-        <div className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px] text-zinc-500 dark:text-zinc-400' : 'text-[10px] text-emerald-600 dark:text-emerald-300/80'}`}>
-          Receita total
+    <div className={isMobile ? 'space-y-2' : 'space-y-3'}>
+      <div className={isMobile ? 'grid grid-cols-3 gap-1.5' : 'grid grid-cols-1 md:grid-cols-3 gap-3'}>
+        <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+          <div
+            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
+            style={{ color: incomeAccent }}
+          >
+            Receita total
+          </div>
+          <div
+            className={`${isMobile ? 'text-[11px]' : 'text-lg'} font-semibold mt-1`}
+            style={{ color: incomeAccent }}
+          >
+            {formatCurrency(headerSummary.totalReceitas)}
+          </div>
         </div>
-        <div className={`${isMobile ? 'text-[11px] text-amber-600 dark:text-amber-400' : 'text-lg text-amber-600 dark:text-amber-300'} font-semibold mt-1`}>
-          {formatCurrency(headerSummary.totalReceitas)}
+        <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+          <div
+            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
+            style={{ color: expenseAccent }}
+          >
+            Total gasto
+          </div>
+          <div
+            className={`${isMobile ? 'text-[11px]' : 'text-lg'} font-semibold mt-1`}
+            style={{ color: expenseAccent }}
+          >
+            {formatCurrency(headerSummary.totalComprometido)}
+          </div>
+        </div>
+        <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+          <div
+            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
+            style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
+          >
+            Total disponível
+          </div>
+          <div
+            className={`${isMobile ? 'text-[11px]' : 'text-lg'} font-semibold mt-1`}
+            style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
+          >
+            {formatCurrency(headerSummary.totalDisponivel)}
+          </div>
         </div>
       </div>
-      <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
-        <div className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px] text-zinc-500 dark:text-zinc-400' : 'text-[10px] text-rose-600 dark:text-rose-300/80'}`}>
-          Total gasto
-        </div>
-        <div className={`${isMobile ? 'text-[11px] text-rose-600 dark:text-rose-400' : 'text-lg text-rose-600 dark:text-rose-300'} font-semibold mt-1`}>
-          {formatCurrency(headerSummary.totalComprometido)}
-        </div>
-      </div>
-      <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
-        <div className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px] text-zinc-500 dark:text-zinc-400' : 'text-[10px] text-cyan-600 dark:text-cyan-300/80'}`}>
-          Total disponível
-        </div>
-        <div className={`${isMobile ? 'text-[11px] text-emerald-600 dark:text-emerald-400' : 'text-lg text-emerald-600 dark:text-emerald-300'} font-semibold mt-1`}>
-          {formatCurrency(headerSummary.totalDisponivel)}
-        </div>
-      </div>
+      {healthBar}
     </div>
   );
 
   const desktopSummaryCards = (
     <div className="grid grid-cols-3 gap-2">
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-        <div className="text-[9px] uppercase tracking-[0.25em] text-emerald-600 dark:text-emerald-300/80">
+        <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: incomeAccent }}>
           Receita total
         </div>
-        <div className="text-[14px] font-semibold text-amber-600 dark:text-amber-300 mt-1">
+        <div className="text-[14px] font-semibold mt-1" style={{ color: incomeAccent }}>
           {formatCurrency(headerSummary.totalReceitas)}
         </div>
       </div>
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-        <div className="text-[9px] uppercase tracking-[0.25em] text-rose-600 dark:text-rose-300/80">
+        <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: expenseAccent }}>
           Total gasto
         </div>
-        <div className="text-[14px] font-semibold text-rose-600 dark:text-rose-300 mt-1">
+        <div className="text-[14px] font-semibold mt-1" style={{ color: expenseAccent }}>
           {formatCurrency(headerSummary.totalComprometido)}
         </div>
       </div>
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-        <div className="text-[9px] uppercase tracking-[0.25em] text-cyan-600 dark:text-cyan-300/80">
+        <div
+          className="text-[9px] uppercase tracking-[0.25em]"
+          style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
+        >
           Total disponível
         </div>
-        <div className="text-[14px] font-semibold text-emerald-600 dark:text-emerald-300 mt-1">
+        <div
+          className="text-[14px] font-semibold mt-1"
+          style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
+        >
           {formatCurrency(headerSummary.totalDisponivel)}
         </div>
       </div>
@@ -510,6 +689,13 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                   <button
                     key={option}
                     onClick={() => setTaxFilter(option)}
+                    title={
+                      option === 'all'
+                        ? 'Mostra lançamentos PF e PJ juntos.'
+                        : option === 'PJ'
+                          ? 'Mostra apenas lançamentos de Pessoa Jurídica (PJ).'
+                          : 'Mostra apenas lançamentos de Pessoa Física (PF).'
+                    }
                     className={getDesktopControlClass(taxFilter === option)}
                   >
                     {option === 'all' ? 'Tudo' : option}
@@ -519,6 +705,11 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                   <button
                     key={option}
                     onClick={() => setViewMode(option)}
+                    title={
+                      option === 'caixa'
+                        ? 'Considera quando o dinheiro entrou/saiu (fluxo de caixa).'
+                        : 'Considera quando a transação ocorreu, mesmo que pago depois.'
+                    }
                     className={getDesktopControlClass(viewMode === option)}
                   >
                     {option === 'caixa' ? 'Visão Caixa' : 'Visão Competência'}
@@ -532,21 +723,23 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             <div className="flex flex-col gap-3">
               <div className="text-[11px] uppercase tracking-[0.3em] text-zinc-500 dark:text-slate-400">Modos</div>
               <div className="flex flex-wrap gap-2">
-                {mapSelector}
-                <button
-                  type="button"
-                  onClick={() => setTab('summary')}
-                  className={getDesktopControlClass(tab === 'summary')}
-                >
-                  Resumo
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTab('export')}
-                  className="px-3.5 py-2 rounded-full text-[11px] font-semibold transition bg-emerald-500 text-white hover:bg-emerald-600"
-                >
-                  Exportar
-                </button>
+              {mapSelector}
+              <button
+                type="button"
+                onClick={() => setTab('summary')}
+                title="Resumo com totais, distribuição e evolução do período."
+                className={getDesktopControlClass(tab === 'summary')}
+              >
+                Resumo
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('export')}
+                title="Exportar relatórios ou importar dados para análise externa."
+                className="px-3.5 py-2 rounded-full text-[11px] font-semibold transition bg-emerald-500 text-white hover:bg-emerald-600"
+              >
+                Exportar
+              </button>
               </div>
             </div>
           )}
@@ -557,7 +750,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   );
 
   const reportContent = (
-    <div className={`${isMobile ? 'rounded-none border-0 bg-transparent p-0' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-[32px] px-6 pb-4 pt-3 md:px-8 md:pb-4 md:pt-3 flex flex-col overflow-hidden h-[800px]'}`}>
+    <div className={`${isMobile ? 'rounded-none border-0 bg-transparent p-0' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-[32px] px-6 pb-4 pt-3 md:px-8 md:pb-4 md:pt-3 flex flex-col overflow-hidden mm-desktop-panel'}`}>
       {!isMobile && (
         <div className="flex justify-center mb-3">
           {periodControls}
@@ -567,7 +760,11 @@ const ReportsView: React.FC<ReportsViewProps> = ({
         className={
           isMobile
             ? ''
-            : `flex-1 min-h-0 ${tab === 'map' ? 'overflow-hidden' : 'overflow-y-auto'}`
+            : `flex-1 min-h-0 ${
+                tab === 'export' || (isCompactHeight && tab === 'summary')
+                  ? 'overflow-y-auto'
+                  : 'overflow-hidden'
+              }`
         }
       >
         {tab === 'map' && (
@@ -600,15 +797,137 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         )}
         {(tab === 'summary' || isMobile) && (
-          <ExecutiveSummary
-            expensesByType={expensesByType}
-            totalReceitas={summary.totalReceitas}
-            totalContas={totalContas}
-            totalFaturas={totalFaturas}
-            annualTrend={annualTrend}
-            periodLabel={periodLabel}
-            isMobile={isMobile}
-          />
+          isMobile ? (
+            <ExecutiveSummary
+              expensesByType={expensesByType}
+              totalReceitas={summary.totalReceitas}
+              totalContas={totalContas}
+              totalFaturas={totalFaturas}
+              expenseTypeColors={expenseTypeColors}
+              annualTrend={annualTrend}
+              periodLabel={periodLabel}
+              isMobile={isMobile}
+            />
+          ) : (
+            <div
+              className={`relative ${isSummaryOverlay ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0'}`}
+              style={{
+                paddingTop: isSummaryOverlay ? 'env(safe-area-inset-top)' : undefined,
+                paddingBottom: isSummaryOverlay ? 'env(safe-area-inset-bottom)' : undefined
+              }}
+            >
+              <div className="flex flex-col gap-4 h-full min-h-0">
+                {!isSummaryFullscreen && (
+                  <div className="flex items-start justify-start">
+                    <div>
+                      <h2 className="text-lg font-semibold text-white">Resumo</h2>
+                      <p className="text-sm text-slate-400">{periodLabel}</p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-4 items-stretch flex-1 min-h-0">
+                <div
+                  ref={summaryContainerRef}
+                  className={`relative flex-1 ${
+                    isSummaryFullscreen
+                      ? 'border border-white/10 overflow-hidden rounded-none h-full w-full box-border bg-slate-950/60'
+                      : 'h-full min-h-[420px] md:min-h-[520px] overflow-visible'
+                  }`}
+                >
+                  <div className={isSummaryFullscreen ? 'h-full p-4 pb-[170px]' : 'h-full'}>
+                    <ExecutiveSummary
+                      expensesByType={expensesByType}
+                      totalReceitas={summary.totalReceitas}
+                      totalContas={totalContas}
+                      totalFaturas={totalFaturas}
+                      expenseTypeColors={expenseTypeColors}
+                      annualTrend={annualTrend}
+                      periodLabel={periodLabel}
+                      isMobile={isMobile}
+                      isFullscreen={isSummaryFullscreen}
+                      hideHeader={!isSummaryFullscreen}
+                    />
+                  </div>
+                  {isSummaryFullscreen && (
+                    <div className="absolute bottom-0 left-0 right-0 z-20">
+                      <div
+                        className="relative flex items-center justify-center rounded-t-[26px] border-t border-white/20 bg-white/5 px-10 py-6 shadow-[0_-10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl min-h-[150px]"
+                        onPointerDown={event => event.stopPropagation()}
+                      >
+                        <div className="mx-auto w-full max-w-[1200px] text-center">
+                          <div className="flex flex-wrap justify-center gap-x-10 gap-y-4">
+                            <div className="min-w-[180px] max-w-[240px]">
+                              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Resultado</div>
+                              <div
+                                className="text-[16px] font-semibold"
+                                style={{ color: summaryNet >= 0 ? incomeAccent : expenseAccent }}
+                              >
+                                {formatCurrency(summaryNet)}
+                              </div>
+                              <div className="text-[11px] text-slate-500">Receita menos despesas do período.</div>
+                            </div>
+                            <div className="min-w-[180px] max-w-[240px]">
+                              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Margem líquida</div>
+                              <div className="text-[16px] font-semibold text-slate-100">
+                                {(summaryMargin * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-[11px] text-slate-500">Quanto sobra da receita.</div>
+                            </div>
+                            <div className="min-w-[180px] max-w-[240px]">
+                              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Comprometimento</div>
+                              <div className="text-[16px] font-semibold text-slate-100">
+                                {(summaryCommitment * 100).toFixed(1)}%
+                              </div>
+                              <div className="text-[11px] text-slate-500">Percentual da receita gasto.</div>
+                            </div>
+                            <div className="min-w-[180px] max-w-[240px]">
+                              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Fôlego</div>
+                              <div className="text-[16px] font-semibold text-slate-100">
+                                {summaryCoverage.toFixed(1)} meses
+                              </div>
+                              <div className="text-[11px] text-slate-500">Cobertura das despesas atuais.</div>
+                            </div>
+                            <div className="min-w-[180px] max-w-[240px]">
+                              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Despesas totais</div>
+                              <div className="text-[16px] font-semibold text-slate-100">
+                                {formatCurrency(summaryExpensesTotal)}
+                              </div>
+                              <div className="text-[11px] text-slate-500">Soma de fixas + variáveis + pessoais.</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="pointer-events-auto absolute right-6 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleSummaryFullscreenToggle}
+                            className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+                            aria-label="Sair da tela cheia"
+                            title="Sair da tela cheia e voltar ao layout normal."
+                          >
+                            <Minimize2 size={16} className="mx-auto" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {!isSummaryFullscreen && (
+                  <div className="flex flex-col items-center gap-2 self-stretch rounded-2xl border border-white/10 bg-slate-950/40 px-2 py-3 min-w-[52px]">
+                    <button
+                      type="button"
+                      onClick={handleSummaryFullscreenToggle}
+                      className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+                      aria-label="Abrir em tela cheia"
+                      title="Abrir resumo em tela cheia."
+                    >
+                      <Maximize2 size={16} className="mx-auto" />
+                    </button>
+                  </div>
+                )}
+                </div>
+              </div>
+            </div>
+          )
         )}
         {tab === 'export' && (
           <ExportImportPanel
@@ -667,6 +986,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
 
           {desktopSummaryCards}
+          {healthBar}
         </div>
       </div>
     </div>
@@ -814,9 +1134,9 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 pb-6 overflow-hidden">
+    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 pb-6 ${isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
       {desktopSummarySection}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-4 pb-0">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] pb-0">
         <div className="space-y-3">
           {filtersSection}
           {reportContent}

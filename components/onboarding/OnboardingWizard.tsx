@@ -5,7 +5,7 @@ import NewAccountModal from '../NewAccountModal';
 import NewCreditCardModal from '../NewCreditCardModal';
 import type { OnboardingSettings } from '../../services/onboardingService';
 import useIsMobile from '../../hooks/useIsMobile';
-import MobileSelect from '../mobile/MobileSelect';
+import SelectDropdown from '../common/SelectDropdown';
 
 interface OnboardingWizardProps {
   companyInfo: CompanyInfo;
@@ -504,7 +504,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                 inputMode="decimal"
                 value={totalBalanceInput}
                 onChange={(e) => setTotalBalanceInput(e.target.value)}
-                placeholder="0,00"
+                      placeholder="R$ 0,00"
                 className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] pl-12 pr-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
@@ -559,24 +559,17 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                   </div>
                   <div className="flex flex-col gap-2 md:items-center text-center">
                     <label className="text-[10px] uppercase tracking-wide text-zinc-400">Natureza</label>
-                    {isMobile ? (
-                      <MobileSelect
-                        value={account.nature || DEFAULT_NATURE}
-                        options={natureOptions}
-                        onChange={(value) => handleAccountNatureChange(account.id, value as 'PJ' | 'PF')}
-                        size="compact"
-                        buttonClassName="bg-white dark:bg-[#121216] border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-100 text-center focus:ring-indigo-500"
-                      />
-                    ) : (
-                      <select
-                        value={account.nature || DEFAULT_NATURE}
-                        onChange={(e) => handleAccountNatureChange(account.id, e.target.value as 'PJ' | 'PF')}
-                        className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-xs text-zinc-700 dark:text-zinc-100 text-center"
-                      >
-                        <option value="PJ">PJ</option>
-                        <option value="PF">PF</option>
-                      </select>
-                    )}
+                    <SelectDropdown
+                      value={account.nature || ''}
+                      onChange={(value) => handleAccountNatureChange(account.id, value as 'PJ' | 'PF')}
+                      options={[
+                        { value: 'PJ', label: 'PJ' },
+                        { value: 'PF', label: 'PF' }
+                      ]}
+                      placeholder="Selecione"
+                      buttonClassName="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-xs text-zinc-700 dark:text-zinc-100 text-center focus:ring-indigo-500"
+                      listClassName="max-h-40"
+                    />
                   </div>
                   <div className="flex flex-col gap-2 md:items-center text-center">
                     <label className="text-[10px] uppercase tracking-wide text-zinc-400">Saldo inicial</label>
@@ -585,7 +578,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                       inputMode="decimal"
                       value={balanceDrafts[account.id] ?? ''}
                       onChange={(e) => handleAccountBalanceChange(account.id, e.target.value)}
-                      placeholder="0,00"
+                      placeholder="R$ 0,00"
                       className="w-32 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#121216] px-3 py-2 text-sm text-zinc-700 dark:text-zinc-100 text-center"
                     />
                     <button

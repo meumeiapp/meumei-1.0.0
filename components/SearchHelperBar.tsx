@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, Sparkles, Send } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Bot, ChevronDown, ChevronUp, Search, Sparkles, Send } from 'lucide-react';
 import type { HelperSignals } from '../helpers/meumeiHelperEngine';
 import { getHelperTips, trackHelperEvent } from '../helpers/meumeiHelperEngine';
 import { askMeumeiAssistant } from '../services/assistantService';
@@ -12,6 +13,7 @@ type SearchHelperBarProps = {
   modeToggle?: 'tabs' | 'button' | 'none';
   assistantButtonLabel?: string;
   assistantBackLabel?: string;
+  assistantPlacement?: 'inline' | 'floating';
   searchQuery: string;
   setSearchQuery: (value: string) => void;
   setActiveSearchIndex: (value: number) => void;
@@ -31,6 +33,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   modeToggle = 'tabs',
   assistantButtonLabel = 'Ajudante do meumei',
   assistantBackLabel = 'Voltar para busca',
+  assistantPlacement = 'inline',
   searchQuery,
   setSearchQuery,
   setActiveSearchIndex,
@@ -49,15 +52,20 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   const [assistantSuggestions, setAssistantSuggestions] = useState<string[]>([]);
   const [tipIndex, setTipIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [assistantCollapsed, setAssistantCollapsed] = useState(false);
 
   const isDesktop = variant === 'desktop';
   const isSubheader = appearance === 'subheader';
-  const showModeTabs = modeToggle === 'tabs';
-  const showAssistantButton = modeToggle === 'button';
-  const showTrailingActionButton = showModeTabs ? mode === 'assistant' : modeToggle === 'button';
+  const isFloatingAssistant = assistantPlacement === 'floating' && isDesktop;
+  const desktopFooterOffset = '0px';
+  const effectiveMode = isFloatingAssistant ? 'search' : mode;
+  const showModeTabs = !isFloatingAssistant && modeToggle === 'tabs';
+  const showAssistantButton = !isFloatingAssistant && modeToggle === 'button';
+  const showTrailingActionButton = showModeTabs ? effectiveMode === 'assistant' : modeToggle === 'button';
+  const assistantActive = !isFloatingAssistant && effectiveMode === 'assistant';
   const containerPadding = isSubheader
     ? isDesktop
-      ? 'px-4 py-2'
+      ? 'px-4 py-1.5'
       : 'px-2.5 py-1.5'
     : isDesktop
       ? 'px-6 py-3'
@@ -75,8 +83,8 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   const modePillText = isSubheader ? 'text-[11px]' : isDesktop ? 'text-[11px]' : 'text-[10px]';
   const modeButtonPadding = isSubheader ? (isDesktop ? 'px-2.5 py-1' : 'px-2 py-1') : isDesktop ? 'px-3 py-1' : 'px-2 py-1';
   const modeButtonIconSize = isSubheader ? 12 : isDesktop ? 12 : 10;
-  const containerShape = isSubheader ? 'rounded-2xl' : isDesktop ? 'rounded-full' : 'rounded-none';
-  const pillShape = isSubheader ? 'rounded-xl' : isDesktop ? 'rounded-full' : 'rounded-md';
+  const containerShape = isSubheader ? 'rounded-xl' : isDesktop ? 'rounded-full' : 'rounded-none';
+  const pillShape = isSubheader ? 'rounded-lg' : isDesktop ? 'rounded-full' : 'rounded-md';
   const mobileContainerStyle = isSubheader
     ? 'border-zinc-200/70 dark:border-white/10 bg-white/95 dark:bg-[#0c0c10]/85 shadow-[0_12px_30px_rgba(0,0,0,0.2)] backdrop-blur-xl'
     : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] shadow-sm';
@@ -110,11 +118,19 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   }, [showTips, tips.length]);
 
   useEffect(() => {
-    if (mode !== 'assistant') return;
+    if (!isFloatingAssistant) return;
+    if (mode !== 'search') {
+      setMode('search');
+    }
+  }, [isFloatingAssistant, mode]);
+
+  useEffect(() => {
+    if (effectiveMode !== 'assistant') return;
     inputRef.current?.focus();
-  }, [mode]);
+  }, [effectiveMode]);
 
   const handleModeChange = (next: 'search' | 'assistant') => {
+    if (isFloatingAssistant) return;
     setMode(next);
     setIsSearchActive(next === 'search');
     if (next === 'assistant') {
@@ -125,7 +141,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   };
 
   const handleInputChange = (value: string) => {
-    if (mode === 'assistant') {
+    if (effectiveMode === 'assistant') {
       setAssistantQuery(value);
       return;
     }
@@ -165,7 +181,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (mode === 'assistant') {
+    if (effectiveMode === 'assistant') {
       if (event.key === 'Enter') {
         event.preventDefault();
         void submitAssistantQuestion();
@@ -175,9 +191,9 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
     onSearchKeyDown(event);
   };
 
-  const inputValue = mode === 'assistant' ? assistantQuery : searchQuery;
+  const inputValue = effectiveMode === 'assistant' ? assistantQuery : searchQuery;
   const inputPlaceholder =
-    mode === 'assistant'
+    effectiveMode === 'assistant'
       ? 'Pergunte ao Ajudante do meumei...'
       : 'Pesquisar despesas, entradas, contas e cartões...';
 
@@ -199,7 +215,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
             ref={inputRef}
             value={inputValue}
             onChange={(e) => handleInputChange(e.target.value)}
-            onFocus={() => setIsSearchActive(mode === 'search')}
+            onFocus={() => setIsSearchActive(effectiveMode === 'search')}
             onKeyDown={handleKeyDown}
             placeholder={inputPlaceholder}
             aria-label="Pesquisar ou perguntar ao Ajudante do meumei"
@@ -212,42 +228,44 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                   type="button"
                   onClick={() => handleModeChange('search')}
                   className={`${pillShape} ${modeButtonPadding} font-semibold transition ${
-                    mode === 'search'
+                    effectiveMode === 'search'
                       ? 'bg-zinc-900 text-white dark:bg-white/20 dark:text-white'
                       : 'text-zinc-600 hover:text-zinc-900 dark:text-white/60 dark:hover:text-white'
                   }`}
                 >
                   Buscar
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('assistant')}
-                  className={`flex items-center gap-1 ${pillShape} ${modeButtonPadding} font-semibold transition ${
-                    mode === 'assistant'
-                      ? 'bg-gradient-to-r from-indigo-500/80 via-sky-500/80 to-fuchsia-500/80 text-white'
-                      : 'text-zinc-600 hover:text-zinc-900 dark:text-white/60 dark:hover:text-white'
-                  }`}
-                >
-                  <Sparkles size={modeButtonIconSize} />
-                  Ajudante
-                </button>
+                {!isFloatingAssistant && (
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('assistant')}
+                    className={`flex items-center gap-1 ${pillShape} ${modeButtonPadding} font-semibold transition ${
+                      effectiveMode === 'assistant'
+                        ? 'bg-gradient-to-r from-indigo-500/80 via-sky-500/80 to-fuchsia-500/80 text-white'
+                        : 'text-zinc-600 hover:text-zinc-900 dark:text-white/60 dark:hover:text-white'
+                    }`}
+                  >
+                    <Sparkles size={modeButtonIconSize} />
+                    Ajudante
+                  </button>
+                )}
               </div>
             )}
             {!showModeTabs && showTrailingActionButton && (
               <button
                 type="button"
                 onClick={() => {
-                  if (mode === 'assistant') {
+                  if (effectiveMode === 'assistant') {
                     void submitAssistantQuestion();
                   } else {
                     inputRef.current?.focus();
                   }
                 }}
-                disabled={mode !== 'assistant'}
+                disabled={effectiveMode !== 'assistant'}
                 className={`flex h-8 w-8 items-center justify-center ${pillShape} bg-zinc-900 text-white transition hover:bg-zinc-800 dark:bg-white/15 dark:text-white/90 dark:hover:bg-white/25 ${
-                  mode === 'assistant' ? '' : 'opacity-40'
+                  effectiveMode === 'assistant' ? '' : 'opacity-40'
                 }`}
-                aria-label={mode === 'assistant' ? 'Enviar pergunta ao Ajudante' : 'Enviar indisponível'}
+                aria-label={effectiveMode === 'assistant' ? 'Enviar pergunta ao Ajudante' : 'Enviar indisponível'}
               >
                 <Send size={14} />
               </button>
@@ -260,22 +278,22 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
       {showAssistantButton && (
         <button
           type="button"
-          onClick={() => handleModeChange(mode === 'assistant' ? 'search' : 'assistant')}
+          onClick={() => handleModeChange(effectiveMode === 'assistant' ? 'search' : 'assistant')}
           className={`w-full border border-zinc-200/80 dark:border-white/10 bg-white/90 dark:bg-white/5 font-semibold ${assistantButtonClasses} ${
-            mode === 'assistant'
+            effectiveMode === 'assistant'
               ? 'text-indigo-600 dark:text-indigo-300'
               : 'text-zinc-600 dark:text-white/70'
           }`}
         >
-          {mode === 'assistant' ? assistantBackLabel : assistantButtonLabel}
+          {effectiveMode === 'assistant' ? assistantBackLabel : assistantButtonLabel}
         </button>
       )}
 
-      {showTips && (
+      {!isFloatingAssistant && showTips && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3 text-xs text-zinc-600 dark:text-white/70">
           <div className="flex items-start gap-3">
             <span className="mt-1 inline-flex rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
-              Dica
+              Curiosidade
             </span>
             <div>
               <p className="text-sm font-semibold text-zinc-900 dark:text-white/90">{currentTip.title}</p>
@@ -292,20 +310,11 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                 {currentTip.ctaLabel}
               </button>
             )}
-            {tips.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setTipIndex((prev) => (prev + 1) % tips.length)}
-                className="rounded-full border border-zinc-300 dark:border-white/15 px-3 py-1 text-[11px] font-semibold text-zinc-500 hover:border-zinc-400 hover:text-zinc-900 dark:text-white/60 dark:hover:border-white/30 dark:hover:text-white"
-              >
-                Próxima dica
-              </button>
-            )}
           </div>
         </div>
       )}
 
-      {mode === 'assistant' && (assistantLoading || assistantError || assistantAnswer) && (
+      {!isFloatingAssistant && assistantActive && (assistantLoading || assistantError || assistantAnswer) && (
         <div className="rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3 text-sm text-zinc-800 dark:text-white/85">
           {assistantLoading && <p className="text-xs text-zinc-500 dark:text-white/60">Pensando...</p>}
           {assistantError && <p className="text-xs text-red-300/80">{assistantError}</p>}
@@ -324,6 +333,103 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
           )}
         </div>
       )}
+      {isFloatingAssistant &&
+        (typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                className="fixed right-6 z-[1100] w-[min(92vw,360px)]"
+                style={{ bottom: desktopFooterOffset }}
+              >
+                {assistantCollapsed ? (
+                  <button
+                    type="button"
+                    onClick={() => setAssistantCollapsed(false)}
+                    className="w-full rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/95 dark:bg-[#0f0f12] px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-white/80 shadow-2xl flex items-center justify-between"
+                    aria-label="Abrir ajudante"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Bot size={14} />
+                      Ajudante
+                    </span>
+                    <ChevronUp size={14} />
+                  </button>
+                ) : (
+                  <div className="rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/95 dark:bg-[#0f0f12] px-4 py-3 text-sm text-zinc-800 dark:text-white/85 shadow-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-[11px] font-semibold text-zinc-500 dark:text-white/60 uppercase tracking-[0.2em]">
+                        <Bot size={14} className="text-zinc-500 dark:text-white/60" />
+                        Ajudante
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAssistantCollapsed(true)}
+                        className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-white/10 text-zinc-500 dark:text-white/70 flex items-center justify-center hover:text-zinc-800 dark:hover:text-white"
+                        aria-label="Recolher ajudante"
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    </div>
+                    {showTips && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-3 py-2 text-xs text-zinc-600 dark:text-white/70">
+                        <div className="flex items-start gap-3">
+                          <span className="mt-1 inline-flex rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
+                            Curiosidade
+                          </span>
+                          <div>
+                            <p className="text-sm font-semibold text-zinc-900 dark:text-white/90">{currentTip.title}</p>
+                            <p className="text-xs text-zinc-600 dark:text-white/60">{currentTip.body}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {currentTip.ctaLabel && actions[currentTip.ctaId || ''] && (
+                            <button
+                              type="button"
+                              onClick={handleTipAction}
+                              className="rounded-full border border-zinc-300 dark:border-white/15 px-3 py-1 text-[11px] font-semibold text-zinc-700 hover:border-zinc-400 dark:text-white/80 dark:hover:border-white/30 dark:hover:text-white"
+                            >
+                              {currentTip.ctaLabel}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={assistantQuery}
+                          onChange={(event) => setAssistantQuery(event.target.value)}
+                          placeholder="Pergunte ao meumei..."
+                          className="flex-1 rounded-full border border-zinc-200/80 dark:border-white/10 bg-white/90 dark:bg-white/5 px-3 py-2 text-sm outline-none"
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              void submitAssistantQuestion();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void submitAssistantQuestion()}
+                          className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-900 text-white transition hover:bg-zinc-800 dark:bg-white/15 dark:text-white/90 dark:hover:bg-white/25"
+                          aria-label="Enviar pergunta ao Ajudante"
+                        >
+                          <Send size={14} />
+                        </button>
+                      </div>
+                      {(assistantLoading || assistantError || assistantAnswer) && (
+                        <div className="mt-3 text-xs text-zinc-600 dark:text-white/70">
+                          {assistantLoading && <p>Pensando...</p>}
+                          {assistantError && <p className="text-red-300/80">{assistantError}</p>}
+                          {assistantAnswer && <p className="whitespace-pre-line">{assistantAnswer}</p>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>,
+              document.body
+            )
+          : null)}
     </div>
   );
 };

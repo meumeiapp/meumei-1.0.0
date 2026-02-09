@@ -37,36 +37,39 @@ const TipsBalloons: React.FC<TipsBalloonsProps> = ({ onOpenInstall, onOpenSettin
   const tips = useMemo<Tip[]>(
     () => [
       {
-        id: 'install_app',
-        title: 'Dica rápida',
-        message: 'Você sabia que pode instalar o Meumei e ter acesso direto na sua área de trabalho?',
-        ctaLabel: 'Instalar app',
-        onClick: onOpenInstall
+        id: 'security_firebase_platform',
+        title: 'Curiosidade',
+        message: 'O Meumei utiliza a infraestrutura Google Cloud para armazenar seus dados com segurança e escalabilidade.'
       },
       {
-        id: 'dashboard_drag',
-        title: 'Organize do seu jeito',
-        message: 'Arraste os blocos do dashboard para organizar o que você quer ver primeiro.'
+        id: 'security_encryption_at_rest',
+        title: 'Curiosidade',
+        message: 'Seus dados trafegam com criptografia (HTTPS) e ficam protegidos com criptografia em repouso na Google Cloud.'
       },
       {
-        id: 'esc_shortcut',
-        title: 'Atalho rápido',
-        message: 'Use a tecla ESC para fechar modais e voltar etapas sem precisar do mouse.'
+        id: 'security_client_encryption',
+        title: 'Curiosidade',
+        message: 'Alguns valores sensíveis são criptografados antes de serem salvos, reforçando a proteção das informações.'
       },
       {
-        id: 'quick_access_shortcuts',
-        title: 'Atalhos do Acesso Rápido',
-        message: 'Use as teclas 1 a 9 para abrir os botões do Acesso Rápido sem precisar do mouse.'
+        id: 'security_access_controls',
+        title: 'Curiosidade',
+        message: 'As regras de segurança isolam os dados por usuário, garantindo acesso apenas à própria conta.'
       },
       {
-        id: 'tips_settings_toggle',
-        title: 'Dicas sob controle',
-        message: 'Você pode ativar ou desativar estas dicas nas Configurações.',
+        id: 'security_settings_toggle',
+        title: 'Curiosidade',
+        message: 'Você pode ativar ou desativar estas curiosidades nas Configurações.',
         ctaLabel: 'Abrir configurações',
         onClick: onOpenSettings
+      },
+      {
+        id: 'security_maps_hint',
+        title: 'Curiosidade',
+        message: 'Nos mapas em tela cheia você pode navegar livremente (financeiro) ou apenas na horizontal (eventos).'
       }
     ],
-    [onOpenInstall, onOpenSettings]
+    [onOpenSettings]
   );
 
   const visibleTips = tips.filter((tip) => !dismissed.includes(tip.id));
@@ -101,10 +104,10 @@ const TipsBalloons: React.FC<TipsBalloonsProps> = ({ onOpenInstall, onOpenSettin
       <div className="flex items-start justify-between gap-4 rounded-2xl border border-indigo-200/70 bg-white px-5 py-4 text-indigo-950 shadow-sm dark:border-indigo-500/30 dark:bg-indigo-950/70 dark:text-indigo-50">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
-            {visibleTip.id === 'install_app' ? (
-              <Sparkles size={18} />
-            ) : visibleTip.id === 'tips_settings_toggle' ? (
+            {visibleTip.id === 'security_settings_toggle' ? (
               <SlidersHorizontal size={18} />
+            ) : visibleTip.id.startsWith('security_') ? (
+              <Sparkles size={18} />
             ) : (
               <Info size={18} />
             )}

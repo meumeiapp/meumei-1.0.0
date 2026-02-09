@@ -68,9 +68,22 @@ export interface CompanyInfo {
   licenseId?: string; // Primary Key for Tenant
 }
 
+export interface AgendaItem {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  time?: string; // HH:mm
+  notes?: string;
+  notifyAtMs?: number;
+  notifyStatus?: 'pending' | 'sent' | 'failed' | 'skipped';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export enum ViewState {
   LOGIN = 'LOGIN',
   DASHBOARD = 'DASHBOARD',
+  AGENDA = 'AGENDA',
   DAS = 'DAS',
   SETTINGS = 'SETTINGS',
   ACCOUNTS = 'ACCOUNTS',
@@ -131,9 +144,18 @@ export interface CreditCard {
   limit?: number; 
   licenseId?: string;
   cardColor?: string;
+  nature?: 'PJ' | 'PF';
 }
 
 export type ExpenseType = 'variable' | 'fixed' | 'personal';
+
+export interface ExpenseTypeOption {
+  id: ExpenseType;
+  label: string;
+  enabled: boolean;
+  nature: 'PJ' | 'PF';
+  color: string;
+}
 
 export interface Expense {
   id: string;

@@ -1,13 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Hand, Maximize2, Minimize2, Minus, Plus, X } from 'lucide-react';
+import { Hand, Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
 import type { Account, CreditCard, Expense, Income } from '../../types';
 import type { YieldRecord } from '../../services/yieldsService';
-import {
-  formatCompactCurrency,
-  formatCurrency,
-  formatShortDate,
-  isTaxExpense
-} from './reportUtils';
+import { formatCompactCurrency, formatCurrency, isTaxExpense } from './reportUtils';
 
 export type ReportTransactions = {
   incomes: Income[];
@@ -270,6 +265,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   >(null);
   const [viewport, setViewport] = useState({ x: 0, y: 0, scale: 1 });
   const viewportRef = useRef(viewport);
+  const [autoCenter, setAutoCenter] = useState(true);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const gestureRef = useRef<{
     type: 'pan' | 'pinch';
@@ -658,6 +654,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
         }
         return next;
       });
+      setActiveNode(node);
       return;
     }
     if (node.kind === 'center') {
@@ -673,6 +670,9 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     if (isMobile && event.pointerType === 'touch' && !isTouchInteractionEnabled) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('button')) return;
+    if (autoCenter) {
+      setAutoCenter(false);
+    }
     containerRef.current.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointersRef.current.size === 1) {
@@ -763,6 +763,9 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     if (!event.ctrlKey) return;
     event.preventDefault();
+    if (autoCenter) {
+      setAutoCenter(false);
+    }
     const scaleDelta = event.deltaY * -0.0015;
     const nextScale = clamp(viewportRef.current.scale + scaleDelta, MIN_ZOOM, MAX_ZOOM);
     const next = { ...viewportRef.current, scale: nextScale };
@@ -771,6 +774,9 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   };
 
   const handleZoom = (direction: 'in' | 'out') => {
+    if (autoCenter) {
+      setAutoCenter(false);
+    }
     const step = direction === 'in' ? 0.12 : -0.12;
     const nextScale = clamp(viewportRef.current.scale + step, MIN_ZOOM, MAX_ZOOM);
     const next = { ...viewportRef.current, scale: nextScale };
@@ -816,6 +822,11 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
           isMobile ? 'bg-white/5 text-white/60' : 'bg-white/10 hover:bg-white/20'
         }`}
         aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
+        title={
+          isFullscreen
+            ? 'Sair da tela cheia e voltar ao layout normal.'
+            : 'Abrir em tela cheia para visualizar o mapa melhor.'
+        }
       >
         {isFullscreen ? (
           <Minimize2 size={16} className="mx-auto" />
@@ -841,6 +852,11 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
             isTouchInteractionEnabled ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'
           }`}
           aria-label={isTouchInteractionEnabled ? 'Desativar interação no mapa' : 'Ativar interação no mapa'}
+          title={
+            isTouchInteractionEnabled
+              ? 'Desativa o arrastar no mapa para permitir rolagem da tela.'
+              : 'Ativa o modo de arrastar o mapa com o dedo.'
+          }
         >
           <span className="flex items-center gap-2">
             <Hand size={14} />
@@ -850,36 +866,6 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
       )}
     </>
   );
-
-  const fullscreenFooter = !isMobile && isFullscreen ? (
-    <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-slate-950/60 px-4 py-2 shadow-lg backdrop-blur">
-      <button
-        type="button"
-        onClick={handleFullscreenClick}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Sair da tela cheia"
-      >
-        <Minimize2 size={16} className="mx-auto" />
-      </button>
-      <div className="h-5 w-px bg-white/10" />
-      <button
-        type="button"
-        onClick={() => handleZoom('out')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Diminuir zoom"
-      >
-        <Minus size={16} className="mx-auto" />
-      </button>
-      <button
-        type="button"
-        onClick={() => handleZoom('in')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Aumentar zoom"
-      >
-        <Plus size={16} className="mx-auto" />
-      </button>
-    </div>
-  ) : null;
 
   const layout = useMemo(() => {
     if (!mapSize.width || !mapSize.height) return null;
@@ -975,6 +961,19 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     };
   }, [edges, hoveredNodeId, isMobile, mapSize.height, mapSize.width, nodes]);
 
+  useEffect(() => {
+    if (!layout || !autoCenter) return;
+    const next = {
+      x: Math.round((mapSize.width - layout.canvas.width) / 2),
+      y: Math.round((mapSize.height - layout.canvas.height) / 2),
+      scale: 1
+    };
+    const current = viewportRef.current;
+    if (current.x === next.x && current.y === next.y && current.scale === next.scale) return;
+    viewportRef.current = next;
+    setViewport(next);
+  }, [autoCenter, layout, mapSize.height, mapSize.width]);
+
   const details = useMemo(() => {
     if (!activeNode) return null;
     if (!activeNode.group) {
@@ -1006,47 +1005,102 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     };
   }, [activeNode, groupData, transactions.expenses]);
 
-  const cardNameById = useMemo(
-    () => new Map(creditCards.map(card => [card.id, card.name])),
-    [creditCards]
+  const renderInfoItem = (label: string, value: string, hint: string, accent?: string) => (
+    <div className="min-w-[180px] max-w-[240px] text-center">
+      <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">{label}</div>
+      <div className={`text-[15px] font-semibold ${accent || 'text-white'}`}>{value}</div>
+      <div className="text-[11px] text-slate-500">{hint}</div>
+    </div>
   );
 
-  const accountNameById = useMemo(
-    () => new Map(accounts.map(account => [account.id, account.name])),
-    [accounts]
+  const groupLabels: Record<NodeGroup | 'center', string> = {
+    fixed: 'Despesas fixas',
+    variable: 'Despesas variáveis',
+    personal: 'Despesas pessoais',
+    cards: 'Cartões',
+    rendimentos: 'Rendimentos',
+    taxes: 'Impostos',
+    center: 'Geral'
+  };
+
+  const footerContent = details ? (
+    <div className="flex flex-col gap-3 min-w-0 items-center text-center">
+      <div className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
+        Detalhes do node
+      </div>
+      <div className="flex flex-wrap justify-center gap-x-8 gap-y-4">
+        {renderInfoItem('Node', details.title, 'Categoria/agrupamento selecionado.')}
+        {renderInfoItem(
+          'Grupo',
+          groupLabels[details.group ?? 'center'],
+          'Tipo de bloco no mapa.'
+        )}
+        {renderInfoItem('Total', formatCurrency(details.value), 'Soma dos valores.')}
+        {renderInfoItem(
+          'Participação',
+          `${details.percent.toFixed(1)}%`,
+          'Percentual dentro do mapa.',
+          'text-slate-200'
+        )}
+        {renderInfoItem('Itens', String(details.items.length), 'Quantidade de lançamentos.')}
+      </div>
+    </div>
+  ) : (
+    <div className="text-sm text-slate-400 text-center">Clique em um node para ver detalhes.</div>
   );
 
-  const detailRows = useMemo(() => {
-    if (!details) return [];
-    if (details.group === 'rendimentos') {
-      const sorted = [...(details.items as YieldRecord[])].sort((a, b) => {
-        const aDate = new Date(a.date + 'T12:00:00').getTime();
-        const bDate = new Date(b.date + 'T12:00:00').getTime();
-        return bDate - aDate;
-      });
-      return sorted.slice(0, 12).map(item => ({
-        id: item.id,
-        title: accountNameById.get(item.accountId) || 'Conta',
-        subtitle: item.notes || 'Rendimento',
-        date: formatShortDate(item.date),
-        amount: item.amount,
-        badge: 'Rendimento'
-      }));
-    }
-    const sorted = [...(details.items as Expense[])].sort((a, b) => {
-      const aDate = new Date((a.dueDate || a.date) + 'T12:00:00').getTime();
-      const bDate = new Date((b.dueDate || b.date) + 'T12:00:00').getTime();
-      return bDate - aDate;
-    });
-    return sorted.slice(0, 12).map(item => ({
-      id: item.id,
-      title: item.description || 'Lançamento',
-      subtitle: item.category || 'Sem categoria',
-      date: formatShortDate(item.dueDate || item.date),
-      amount: item.amount,
-      badge: item.cardId ? cardNameById.get(item.cardId) || 'Cartão' : 'Despesa'
-    }));
-  }, [accountNameById, cardNameById, details]);
+  const footerControls = !isMobile ? (
+    <div className="pointer-events-auto absolute right-6 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={handleFullscreenClick}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
+        title={
+          isFullscreen
+            ? 'Sair da tela cheia e voltar ao layout normal.'
+            : 'Abrir em tela cheia para visualizar o mapa melhor.'
+        }
+      >
+        {isFullscreen ? (
+          <Minimize2 size={16} className="mx-auto" />
+        ) : (
+          <Maximize2 size={16} className="mx-auto" />
+        )}
+      </button>
+      <div className="h-px w-8 bg-white/10" />
+      <button
+        type="button"
+        onClick={() => handleZoom('out')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Diminuir zoom"
+        title="Reduz o zoom para ver mais do mapa."
+      >
+        <Minus size={16} className="mx-auto" />
+      </button>
+      <button
+        type="button"
+        onClick={() => handleZoom('in')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Aumentar zoom"
+        title="Aumenta o zoom para ver detalhes dos nodes."
+      >
+        <Plus size={16} className="mx-auto" />
+      </button>
+    </div>
+  ) : null;
+
+  const mapFooter = !isMobile && isFullscreen ? (
+    <div className="absolute bottom-0 left-0 right-0 z-20">
+      <div
+        className="relative flex items-center justify-center rounded-t-[26px] border-t border-white/20 bg-white/5 px-10 py-6 shadow-[0_-10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl min-h-[150px]"
+        onPointerDown={event => event.stopPropagation()}
+      >
+        <div className="mx-auto w-full max-w-[1200px]">{footerContent}</div>
+        {footerControls}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="flex flex-col h-full gap-4">
@@ -1076,7 +1130,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
             onPointerCancel={handlePointerUp}
             onPointerLeave={handlePointerUp}
             onWheel={handleWheel}
-            className={`relative border border-white/10 overflow-hidden flex-1 ${
+            className={`mm-map-surface relative border border-white/10 overflow-hidden flex-1 select-none ${
               isFullscreen
                 ? 'rounded-none h-full w-full box-border'
                 : 'rounded-3xl h-full min-h-[420px] md:min-h-[520px]'
@@ -1092,7 +1146,12 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
                 {mapControls}
               </div>
             )}
-            {fullscreenFooter}
+            {!isMobile && isFullscreen && (
+              <div className="pointer-events-none absolute left-5 top-5 z-20 rounded-full border border-white/10 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-white/80 backdrop-blur">
+                Movimento livre: arraste para qualquer direção
+              </div>
+            )}
+            {mapFooter}
 
             <div
               className="absolute inset-0"
@@ -1180,65 +1239,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
               </div>
             )}
 
-            {activeNode && details && (
-              <div
-                className={`absolute top-0 right-0 h-full w-full max-w-sm bg-slate-950/95 border-l border-white/10 p-5 overflow-y-auto ${
-                  isMobile ? 'max-w-full' : ''
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Detalhes</div>
-                    <h3 className="text-lg font-semibold text-white mt-2">{details.title}</h3>
-                    <p className="text-sm text-slate-300">
-                      {formatCurrency(details.value)} • {details.percent.toFixed(1)}%
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setActiveNode(null);
-                    }}
-                    className="text-slate-400 hover:text-white"
-                    aria-label="Fechar detalhes"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-
-                <div className="mt-6 space-y-3">
-                  {detailRows.length === 0 && (
-                    <div className="text-sm text-slate-400">Sem lançamentos no período.</div>
-                  )}
-                  {detailRows.map(row => (
-                    <div
-                      key={row.id}
-                      className="flex items-start justify-between gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3"
-                    >
-                      <div>
-                        <div className="text-sm font-semibold text-white">{row.title}</div>
-                        <div className="text-xs text-slate-400">{row.subtitle}</div>
-                        <div className="text-[11px] text-slate-500">{row.date}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm font-semibold text-white">
-                          {formatCurrency(row.amount)}
-                        </div>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-widest">
-                          {row.badge}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {details.items.length > detailRows.length && (
-                    <div className="text-xs text-slate-400">
-                      Mostrando {detailRows.length} de {details.items.length} lançamentos.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
-
           {!isMobile && !isFullscreen && (
             <div className="flex flex-col items-center gap-2 self-stretch rounded-2xl border border-white/10 bg-slate-950/40 px-2 py-3 min-w-[52px]">
               {mapControls}

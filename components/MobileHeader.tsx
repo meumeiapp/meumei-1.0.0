@@ -1,16 +1,6 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  BarChart3,
-  Calculator,
-  History,
-  LogOut,
-  Menu,
-  Settings,
-  Sun,
-  Moon,
-  X
-} from 'lucide-react';
+import { BarChart3, CalendarDays, LogOut, Menu, Settings, Sun, Moon, X } from 'lucide-react';
 import Logo from './Logo';
 
 interface MobileHeaderProps {
@@ -20,11 +10,13 @@ interface MobileHeaderProps {
   onThemeChange: (theme: 'light' | 'dark') => void;
   onOpenSettings: () => void;
   onOpenReports?: () => void;
+  onOpenAgenda?: () => void;
   onOpenAudit: () => void;
   onOpenCalculator: () => void;
   onLogout: () => void;
   onCompanyClick: () => void;
   canAccessSettings: boolean;
+  versionLabel?: string;
 }
 
 const MobileHeader: React.FC<MobileHeaderProps> = ({
@@ -33,10 +25,12 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
   onThemeChange,
   onOpenSettings,
   onOpenReports,
+  onOpenAgenda,
   onOpenAudit,
   onOpenCalculator,
   onLogout,
-  canAccessSettings
+  canAccessSettings,
+  versionLabel
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const isDark = theme === 'dark';
@@ -135,32 +129,21 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
               </span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              closeMenu();
-              onOpenAudit();
-            }}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3 text-sm font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
-          >
-            <span className="flex items-center gap-2">
-              <History size={16} />
-              Auditoria do dia
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              closeMenu();
-              onOpenCalculator();
-            }}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3 text-sm font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
-          >
-            <span className="flex items-center gap-2">
-              <Calculator size={16} />
-              Calculadora
-            </span>
-          </button>
+          {onOpenAgenda && (
+            <button
+              type="button"
+              onClick={() => {
+                closeMenu();
+                onOpenAgenda();
+              }}
+              className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3 text-sm font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+            >
+              <span className="flex items-center gap-2">
+                <CalendarDays size={16} />
+                Agenda
+              </span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -174,6 +157,11 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
               Sair
             </span>
           </button>
+          {versionLabel && (
+            <div className="pt-2 text-center text-[10px] text-zinc-400">
+              {versionLabel}
+            </div>
+          )}
         </div>
       </aside>
     </div>

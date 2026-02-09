@@ -73,6 +73,9 @@ export default function Privacidade() {
             Os dados são armazenados em infraestrutura de nuvem segura, como Firebase/Google Cloud.
           </p>
           <p className="text-zinc-700 dark:text-zinc-300">
+            Isso pode envolver processamento e armazenamento em servidores localizados fora do Brasil.
+          </p>
+          <p className="text-zinc-700 dark:text-zinc-300">
             São aplicadas medidas técnicas de proteção, autenticação e controle de acesso.
           </p>
           <p className="text-zinc-700 dark:text-zinc-300">
@@ -87,8 +90,8 @@ export default function Privacidade() {
             Os dados podem ser compartilhados apenas quando necessário com:
           </p>
           <ul className="list-disc pl-6 space-y-1 text-zinc-700 dark:text-zinc-300">
-            <li>provedores de hospedagem e autenticação</li>
-            <li>processadores de pagamento</li>
+            <li>provedores de hospedagem e autenticação (ex: Firebase/Google Cloud)</li>
+            <li>processadores de pagamento (ex: Stripe)</li>
             <li>exigências legais ou judiciais</li>
           </ul>
           <p className="text-zinc-700 dark:text-zinc-300">

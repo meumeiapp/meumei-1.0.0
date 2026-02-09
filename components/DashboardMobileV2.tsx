@@ -1241,7 +1241,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                 </div>
             </div>
             <div
-                className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+128px)]"
+                className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
                 style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
             >
                 <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-4 duration-500">

@@ -6,6 +6,7 @@ import {
   CreditCard, 
   BarChart3, 
   Home, 
+  Repeat,
   ShoppingCart, 
   User,
   ArrowUpCircle,
@@ -411,7 +412,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               border: 'border-blue-100 dark:border-blue-500/20',
               tipTitle: 'Contas Bancárias',
               tipBody:
-                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.\nAtalho: 1",
+                  "Cadastre suas contas (banco, caixa, carteira). Aqui você acompanha saldo e movimentações. Dica: mantenha uma conta ‘Dinheiro’ para gastos rápidos.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.",
               onClick: onOpenAccounts,
               showWhen: canViewBalances
           },
@@ -424,19 +425,19 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               border: 'border-emerald-100 dark:border-emerald-500/20',
               tipTitle: 'Entradas',
               tipBody:
-                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.\nAtalho: 2',
+                  'Registre tudo o que entra: vendas, serviços, recebimentos. Dica: categorize bem para ver quais fontes mais rendem.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenIncomes,
               showWhen: canManageIncomes
           },
           {
               id: 'fixed_expenses',
               label: 'Despesas Fixas',
-              icon: <Home />,
+              icon: <Repeat />,
               color: 'text-amber-500 dark:text-amber-400',
               bg: 'bg-amber-50 dark:bg-amber-500/10',
               border: 'border-amber-100 dark:border-amber-500/20',
               tipTitle: 'Despesas Fixas',
-              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.\nAtalho: 3',
+              tipBody: 'Gastos recorrentes como aluguel, internet, assinaturas. Dica: revise mensalmente para cortar vazamentos.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenFixedExpenses,
               showWhen: canManageExpenses
           },
@@ -449,7 +450,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               border: 'border-pink-100 dark:border-pink-500/20',
               tipTitle: 'Despesas Variáveis',
               tipBody:
-                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.\nAtalho: 4',
+                  'Gastos do dia a dia que mudam: mercado, combustível, extras. Dica: anote na hora para não esquecer.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenVariableExpenses,
               showWhen: canManageExpenses
           },
@@ -461,7 +462,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               bg: 'bg-cyan-50 dark:bg-cyan-500/10',
               border: 'border-cyan-100 dark:border-cyan-500/20',
               tipTitle: 'Despesas Pessoais',
-              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.\nAtalho: 5',
+              tipBody: 'Separação do MEI e do pessoal. Dica: use aqui para evitar misturar despesas da empresa.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenPersonalExpenses,
               showWhen: canManageExpenses
           },
@@ -474,7 +475,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               border: 'border-violet-100 dark:border-violet-500/20',
               tipTitle: 'Rendimentos',
               tipBody:
-                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.\nAtalho: 6',
+                  'Acompanhe rendas e retornos (investimentos, juros, etc.). Dica: registre a data para entender evolução no tempo.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenYields,
               showWhen: canViewBalances
           },
@@ -486,7 +487,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               bg: 'bg-rose-50 dark:bg-rose-500/10',
               border: 'border-rose-100 dark:border-rose-500/20',
               tipTitle: 'Faturas',
-              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.\nAtalho: 7',
+              tipBody: 'Controle de cartão e faturas abertas/fechadas. Dica: confira antes de fechar para não perder lançamentos.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenInvoices,
               showWhen: canViewInvoices
           },
@@ -498,7 +499,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               bg: 'bg-zinc-100 dark:bg-zinc-500/10',
               border: 'border-zinc-200 dark:border-zinc-500/20',
               tipTitle: 'Relatórios',
-              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.\nAtalho: 8',
+              tipBody: 'Visão geral do mês, comparativos e totais. Dica: olhe semanalmente para corrigir rota rápido.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenReports,
               showWhen: canViewReports && Boolean(onOpenReports)
           },
@@ -510,7 +511,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
               bg: 'bg-teal-50 dark:bg-teal-500/10',
               border: 'border-teal-100 dark:border-teal-500/20',
               tipTitle: 'Emissão DAS',
-              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.\nAtalho: 9',
+              tipBody: 'Acesso rápido ao DAS do MEI. Dica: mantenha o pagamento em dia para evitar multa e juros.\nAtalho: use ←/→ para navegar pelo Acesso Rápido.',
               onClick: onOpenDas,
               showWhen: true
           }

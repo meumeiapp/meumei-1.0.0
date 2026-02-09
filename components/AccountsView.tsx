@@ -2,8 +2,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Landmark,
+  Wallet,
   Trash2,
   X,
+  Edit2,
+  Plus,
+  CheckSquare,
+  Square,
+  Lock,
   AlertTriangle,
   History,
   Info,
@@ -13,12 +19,14 @@ import {
 import NewAccountModal from './NewAccountModal';
 import { Account, Expense, Income } from '../types';
 import { AuditLogInput } from '../services/auditService';
-import { getAccountColor } from '../services/cardColorUtils';
+import { getAccountColor, withAlpha } from '../services/cardColorUtils';
 import { PREMIUM_COLOR_PRESETS } from './ui/colorPresets';
+import { DEFAULT_ACCOUNT_TYPES } from '../constants';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import useIsMobile from '../hooks/useIsMobile';
+import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
-import MobileTransactionCard from './mobile/MobileTransactionCard';
+import SelectDropdown from './common/SelectDropdown';
 import MobileEmptyState from './mobile/MobileEmptyState';
 import type { BalanceTrailEntry, RealBalanceDebug } from '../services/realBalanceEngine';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
@@ -65,6 +73,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   onOpenAudit,
   balanceSnapshot
 }) => {
+  const chunkItems = <T,>(items: T[], size: number): T[][] => {
+      if (size <= 0) return [items];
+      const result: T[][] = [];
+      for (let i = 0; i < items.length; i += size) {
+          result.push(items.slice(i, i + size));
+      }
+      return result;
+  };
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -88,20 +104,45 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       type: '',
       initialBalance: '',
       currentBalance: '',
-      nature: 'PJ' as 'PJ' | 'PF',
+      nature: '' as '' | 'PJ' | 'PF',
       notes: '',
       yieldRate: '',
       color: PREMIUM_COLOR_PRESETS[0] || '#0ea5e9'
   });
-  const [isAccountListExpanded, setIsAccountListExpanded] = useState(false);
+  const [inlineNewEditId, setInlineNewEditId] = useState<string | null>(null);
+  const [inlineNewNotesOpen, setInlineNewNotesOpen] = useState(false);
+  const [inlineNewTypesOpen, setInlineNewTypesOpen] = useState(false);
+  const [inlineNewTypeName, setInlineNewTypeName] = useState('');
+  const [inlineNewTypeError, setInlineNewTypeError] = useState('');
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [mobilePageIndex, setMobilePageIndex] = useState(0);
+  const mobilePagerRef = useRef<HTMLDivElement | null>(null);
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const loggedLockedRef = useRef<Set<string>>(new Set());
   const renderLogRef = useRef<number | null>(null);
   const isMobile = useIsMobile();
+  const isCompactHeight = useIsCompactHeight();
+  const isInlineAllowed = isMobile;
+  const useDockModal = !isInlineAllowed;
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
+
+  useEffect(() => {
+      if (typeof document === 'undefined') return;
+      if (useDockModal && inlineNewOpen) {
+          setInlineNewOpen(false);
+      }
+      if (isInlineAllowed && inlineNewOpen) {
+          document.body.classList.add('hide-quick-access');
+      } else {
+          document.body.classList.remove('hide-quick-access');
+      }
+      return () => {
+          document.body.classList.remove('hide-quick-access');
+      };
+  }, [inlineNewOpen, isMobile, useDockModal]);
 
   useEffect(() => {
       console.info('[ui][accounts] mount', { count: accounts.length });
@@ -143,6 +184,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const unlockedAccounts = accounts.filter(acc => !acc.locked);
   const isSelectionMode = selectedIds.length > 0;
+  const selectableAccounts = accounts.filter(acc => !acc.locked && !acc.decryptError);
 
   const resolveRealBalance = (account: Account) => {
     const computed = balanceSnapshot?.byAccountId?.[account.id];
@@ -155,16 +197,25 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const totalBalance = unlockedAccounts.reduce((acc, curr) => acc + resolveRealBalance(curr), 0);
   const displayCount = isSelectionMode ? selectedIds.length : accounts.length;
+  const headerTotalBalance = isSelectionMode ? displayBalance : totalBalance;
   const displayLabel = isSelectionMode ? 'Saldo Parcial (Selecionado)' : 'Saldo Total';
   const listSubtitle = `${accounts.length} ${accounts.length === 1 ? 'conta' : 'contas'}`;
-  const ACCOUNT_COLLAPSE_LIMIT = 2;
-  const shouldCollapseAccounts = accounts.length > ACCOUNT_COLLAPSE_LIMIT;
-  const extraAccountCount = Math.max(accounts.length - ACCOUNT_COLLAPSE_LIMIT, 0);
-  const visibleAccounts =
-      shouldCollapseAccounts && !isAccountListExpanded
-          ? accounts.slice(0, ACCOUNT_COLLAPSE_LIMIT)
-          : accounts;
-  const expandVerb = isMobile ? 'Toque' : 'Clique';
+  const ACCOUNT_DESKTOP_VISIBLE_LIMIT = 10;
+  const visibleAccounts = accounts;
+  const accountDesktopNeedsScroll = isCompactHeight || accounts.length > ACCOUNT_DESKTOP_VISIBLE_LIMIT;
+  const allowPageScroll = isMobile ? false : accountDesktopNeedsScroll;
+  const MOBILE_PAGE_SIZE = 6;
+  const mobilePages = chunkItems(visibleAccounts, MOBILE_PAGE_SIZE);
+  const hasMobilePages = mobilePages.length > 1;
+  useEffect(() => {
+      const shouldLock = !allowPageScroll;
+      document.documentElement.classList.toggle('lock-scroll', shouldLock);
+      document.body.classList.toggle('lock-scroll', shouldLock);
+      return () => {
+          document.documentElement.classList.remove('lock-scroll');
+          document.body.classList.remove('lock-scroll');
+      };
+  }, [allowPageScroll]);
   const auditAccount = auditAccountId ? accounts.find(acc => acc.id === auditAccountId) || null : null;
   const auditTrails = auditAccountId ? balanceSnapshot?.debug?.trailsByAccountId?.[auditAccountId] ?? [] : [];
   const sortedAuditTrails = React.useMemo(() => {
@@ -427,26 +478,42 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const handleOpenNew = () => {
       setInlineEditAccountId(null);
       setDrawerAccount(null);
+      setInlineNewEditId(null);
       setInlineNewDraft({
           name: '',
           type: '',
           initialBalance: '',
           currentBalance: '',
-          nature: 'PJ',
+          nature: '',
           notes: '',
           yieldRate: '',
           color: PREMIUM_COLOR_PRESETS[0] || '#0ea5e9'
       });
-      setInlineNewOpen(prev => !prev);
       setEditingAccount(null);
+      if (isInlineAllowed) {
+          setInlineNewOpen(prev => !prev);
+          return;
+      }
+      setInlineNewOpen(false);
+      setIsModalOpen(true);
   };
 
   const handleEditAccountDirect = (account: Account) => {
       if (account.locked) return;
       console.info('[ui][accounts][edit]', { accountId: account.id, source: 'drawer' });
-      if (isMobile) {
-          setInlineNewOpen(false);
-          startInlineEdit(account);
+      if (isInlineAllowed) {
+          setInlineNewEditId(account.id);
+          setInlineNewDraft({
+              name: account.name || '',
+              type: account.type || '',
+              initialBalance: Number.isFinite(account.initialBalance) ? String(account.initialBalance) : '',
+              currentBalance: Number.isFinite(account.currentBalance) ? String(account.currentBalance) : '',
+              nature: account.nature || 'PJ',
+              notes: account.notes || '',
+              yieldRate: Number.isFinite(account.yieldRate) ? String(account.yieldRate) : '',
+              color: account.color || getAccountColor(account)
+          });
+          setInlineNewOpen(true);
           return;
       }
       setEditingAccount(account);
@@ -505,7 +572,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const handleInlineCreate = () => {
       const nextName = inlineNewDraft.name.trim();
-      if (!nextName || !inlineNewDraft.type) return;
+      if (!nextName || !inlineNewDraft.type || !inlineNewDraft.nature) return;
       const parsedInitial = parseInlineNumber(inlineNewDraft.initialBalance);
       const parsedCurrent = parseInlineNumber(inlineNewDraft.currentBalance);
       const parsedYield = parseInlineNumber(inlineNewDraft.yieldRate);
@@ -513,7 +580,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       const nextColor = inlineNewDraft.color || PREMIUM_COLOR_PRESETS[0] || '#0ea5e9';
       const nextYieldRate = parsedYield ?? undefined;
 
-      handleSaveAccount({
+      const payload = {
           name: nextName,
           type: inlineNewDraft.type,
           balance: nextInitialBalance,
@@ -523,14 +590,19 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           color: nextColor,
           yieldRate: nextYieldRate,
           yieldIndex: nextYieldRate !== undefined ? 'CDI' : undefined
-      });
+      } as any;
+      if (inlineNewEditId) {
+          payload.id = inlineNewEditId;
+      }
+      handleSaveAccount(payload);
       setInlineNewOpen(false);
+      setInlineNewEditId(null);
       setInlineNewDraft({
           name: '',
           type: '',
           initialBalance: '',
           currentBalance: '',
-          nature: 'PJ',
+          nature: '',
           notes: '',
           yieldRate: '',
           color: nextColor
@@ -542,6 +614,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           setSelectedIds(selectedIds.filter(i => i !== id));
       } else {
           setSelectedIds([...selectedIds, id]);
+      }
+  };
+
+  const toggleSelectAll = () => {
+      if (selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0) {
+          setSelectedIds([]);
+      } else {
+          setSelectedIds(selectableAccounts.map(acc => acc.id));
       }
   };
 
@@ -628,7 +708,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const listWrapperClass = isMobile
     ? 'space-y-4'
-    : 'max-w-7xl mx-auto px-4 sm:px-6 py-10 animate-in fade-in slide-in-from-bottom-4 duration-500';
+    : 'max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] pb-10 animate-in fade-in slide-in-from-bottom-4 duration-500';
 
   const accountsHeader = (
       <div className="space-y-2">
@@ -651,12 +731,12 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Contas</p>
-                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{accounts.length}</p>
+                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{displayCount}</p>
               </div>
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo total</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
-                      {formatCurrency(totalBalance)}
+                      {formatCurrency(headerTotalBalance)}
                   </p>
               </div>
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
@@ -690,28 +770,123 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const summarySection = (
       <div className={summaryWrapperClass}>
-          <div className="rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
               {accountsHeader}
           </div>
       </div>
   );
 
-  const inlineNewCard = inlineNewOpen ? (
-      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
-          <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-wide text-zinc-400">Nova conta</span>
-              <button
-                  type="button"
-                  onClick={() => setInlineNewOpen(false)}
-                  className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
-                  aria-label="Fechar nova conta"
-              >
-                  <X size={14} className="mx-auto" />
-              </button>
+  const inlineNewCardStyle =
+      isInlineAllowed && inlineNewOpen
+          ? { minHeight: `calc(var(--app-height, 100vh) - ${subHeaderHeight + 28}px)` }
+          : undefined;
+  const inlineNewActions = isInlineAllowed && inlineNewOpen ? (
+      <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+6px)] grid grid-cols-2 gap-2">
+          <button
+              type="button"
+              onClick={() => setInlineNewOpen(false)}
+              className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+          >
+              Cancelar
+          </button>
+          <button
+              type="button"
+              disabled={!inlineNewDraft.name.trim() || !inlineNewDraft.type || !inlineNewDraft.nature}
+              onClick={handleInlineCreate}
+              className={`rounded-lg border border-indigo-500/40 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition ${
+                  !inlineNewDraft.name.trim() || !inlineNewDraft.type || !inlineNewDraft.nature
+                      ? 'opacity-80 cursor-not-allowed'
+                      : ''
+              }`}
+          >
+              Salvar
+          </button>
+      </div>
+  ) : null;
+  const inlineNewTagColors = buildColorOptions(inlineNewDraft.color);
+  const inlineNewTagMid = Math.ceil(inlineNewTagColors.length / 2);
+  const normalizedAccountTypes = accountTypes.map((type) => type.trim());
+
+  const handleAddInlineType = () => {
+      const normalized = inlineNewTypeName.trim().replace(/\s+/g, ' ');
+      if (normalizedAccountTypes.length >= 20) {
+          setInlineNewTypeError('Limite de categorias atingido.');
+          setInlineNewTypeName('');
+          return;
+      }
+      if (!normalized) {
+          setInlineNewTypeError('Informe um nome para a categoria.');
+          setInlineNewTypeName('');
+          return;
+      }
+      const exists = normalizedAccountTypes.some(
+          (type) => type.toLowerCase() === normalized.toLowerCase()
+      );
+      if (exists) {
+          setInlineNewTypeError('Categoria já existe.');
+          setInlineNewTypeName('');
+          return;
+      }
+      onUpdateAccountTypes?.([...normalizedAccountTypes, normalized]);
+      setInlineNewTypeName('');
+      setInlineNewTypeError('');
+  };
+
+  const handleRemoveInlineType = (typeToDelete: string) => {
+      if (normalizedAccountTypes.length <= 1) return;
+      const nextTypes = normalizedAccountTypes.filter((type) => type !== typeToDelete);
+      onUpdateAccountTypes?.(nextTypes);
+      if (inlineNewDraft.type === typeToDelete) {
+          setInlineNewDraft((prev) => ({ ...prev, type: nextTypes[0] || '' }));
+      }
+  };
+
+  const toggleTypeSelection = (type: string) => {
+      setSelectedTypes((prev) =>
+          prev.includes(type) ? prev.filter((item) => item !== type) : [...prev, type]
+      );
+  };
+
+  const handleBulkDeleteTypes = () => {
+      if (selectedTypes.length === 0) return;
+      const nextTypes = normalizedAccountTypes.filter((type) => !selectedTypes.includes(type));
+      if (nextTypes.length === 0) return;
+      onUpdateAccountTypes?.(nextTypes);
+      if (selectedTypes.includes(inlineNewDraft.type)) {
+          setInlineNewDraft((prev) => ({ ...prev, type: nextTypes[0] || '' }));
+      }
+      setSelectedTypes([]);
+  };
+
+  const handleResetTypes = () => {
+      onUpdateAccountTypes?.(DEFAULT_ACCOUNT_TYPES);
+      setSelectedTypes([]);
+  };
+
+  const inlineNewCard = isInlineAllowed && inlineNewOpen ? (
+      <div className="rounded-none border-0 bg-transparent p-0 flex flex-col" style={inlineNewCardStyle}>
+          <div className="px-3 pt-2 pb-2 bg-gradient-to-r from-indigo-500/80 via-indigo-500/35 to-black">
+                      <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                  <Wallet size={16} className="text-white" />
+                          <p className="text-sm font-semibold text-white truncate">{inlineNewEditId ? 'Editar Conta' : 'Nova Conta'}</p>
+                              </div>
+                              <p className="text-[10px] text-white/70">Preencha os dados da conta.</p>
+                          </div>
+                  <button
+                      type="button"
+                      onClick={() => setInlineNewOpen(false)}
+                      className="h-8 w-8 rounded-full bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                      aria-label="Fechar nova conta"
+                  >
+                      <X size={16} />
+                  </button>
+              </div>
           </div>
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="sm:col-span-2">
-                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+          <div className="mt-3 px-3 grid grid-cols-1 gap-2">
+              <div>
+                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
                       Nome da conta
                   </label>
                   <input
@@ -720,51 +895,68 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       onChange={(event) =>
                           setInlineNewDraft(prev => ({ ...prev, name: event.target.value }))
                       }
-                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      placeholder="EX: CONTA CORRENTE PJ, CARTEIRA DIGITAL"
+                      className="mt-0.5 w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[10px]"
                   />
               </div>
 
               <div>
-                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
-                      Tipo
-                  </label>
-                  <select
+                  <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                          Tipo
+                      </label>
+                      <button
+                          type="button"
+                          onClick={() => {
+                              setInlineNewTypesOpen(true);
+                              setInlineNewTypeError('');
+                          }}
+                          className="text-[10px] font-bold flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
+                      >
+                          <Edit2 size={10} /> Editar
+                      </button>
+                  </div>
+                  <SelectDropdown
                       value={inlineNewDraft.type}
-                      onChange={(event) =>
-                          setInlineNewDraft(prev => ({ ...prev, type: event.target.value }))
-                      }
-                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                  >
-                      <option value="">Selecione</option>
-                      {accountTypes.map(type => (
-                          <option key={type} value={type}>
-                              {type}
-                          </option>
-                      ))}
-                  </select>
-              </div>
-
-              <div>
-                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
-                      Natureza
-                  </label>
-                  <select
-                      value={inlineNewDraft.nature}
-                      onChange={(event) =>
+                      onChange={(value) =>
                           setInlineNewDraft(prev => ({
                               ...prev,
-                              nature: event.target.value as 'PJ' | 'PF'
+                              type: value
                           }))
                       }
-                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                  >
-                      <option value="PJ">Pessoa Jurídica</option>
-                      <option value="PF">Pessoa Física</option>
-                  </select>
+                      placeholder="SELECIONE"
+                      options={normalizedAccountTypes.map(type => ({ value: type, label: type }))}
+                      buttonClassName="mt-0.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      placeholderClassName="text-[10px] font-light uppercase"
+                      listClassName="max-h-48"
+                  />
               </div>
 
               <div>
-                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                      Natureza Fiscal
+                  </label>
+                  <SelectDropdown
+                      value={inlineNewDraft.nature}
+                      onChange={(value) =>
+                          setInlineNewDraft(prev => ({
+                              ...prev,
+                              nature: value as 'PJ' | 'PF'
+                          }))
+                      }
+                      placeholder="SELECIONE"
+                      options={[
+                          { value: 'PJ', label: 'Pessoa Jurídica' },
+                          { value: 'PF', label: 'Pessoa Física' }
+                      ]}
+                      buttonClassName="mt-0.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      placeholderClassName="text-[10px] font-light uppercase"
+                      listClassName="max-h-48"
+                  />
+              </div>
+
+              <div>
+                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
                       Saldo inicial
                   </label>
                   <input
@@ -776,12 +968,13 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               initialBalance: event.target.value
                           }))
                       }
-                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      placeholder="EX: R$0,00"
+                      className="mt-0.5 w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[10px]"
                   />
               </div>
 
               <div>
-                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
                       Saldo atual
                   </label>
                   <input
@@ -793,21 +986,21 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               currentBalance: event.target.value
                           }))
                       }
-                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      placeholder="EX: R$0,00"
+                      className="mt-0.5 w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[10px]"
                   />
               </div>
-
-              <div className="sm:col-span-2">
-                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+              <div>
+                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
                       Cor da tag
                   </label>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                      {buildColorOptions(inlineNewDraft.color).map(color => (
+                  <div className="mt-1.5 grid [grid-template-columns:repeat(15,minmax(0,1fr))] gap-1.5">
+                      {inlineNewTagColors.slice(0, inlineNewTagMid).map(color => (
                           <button
                               key={color}
                               type="button"
                               onClick={() => setInlineNewDraft(prev => ({ ...prev, color }))}
-                              className={`h-7 w-7 rounded-full border ${
+                              className={`h-6 w-6 rounded-full border ${
                                   inlineNewDraft.color === color
                                       ? 'ring-2 ring-indigo-500 border-white'
                                       : 'border-white/40'
@@ -817,12 +1010,82 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           />
                       ))}
                   </div>
+                  <div className="mt-1.5 grid [grid-template-columns:repeat(15,minmax(0,1fr))] gap-1.5">
+                      {inlineNewTagColors.slice(inlineNewTagMid).map(color => (
+                          <button
+                              key={`${color}-row2`}
+                              type="button"
+                              onClick={() => setInlineNewDraft(prev => ({ ...prev, color }))}
+                              className={`h-6 w-6 rounded-full border ${
+                                  inlineNewDraft.color === color
+                                      ? 'ring-2 ring-indigo-500 border-white'
+                                      : 'border-white/40'
+                              }`}
+                              style={{ backgroundColor: color }}
+                              aria-label={`Selecionar cor ${color} segunda linha`}
+                          />
+                      ))}
+                  </div>
               </div>
 
-              <div className="sm:col-span-2">
-                  <label className="text-[10px] uppercase tracking-wide text-zinc-400">
+              <div>
+                  <button
+                      type="button"
+                      onClick={() => setInlineNewNotesOpen(true)}
+                      className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-2 text-[13px] text-left text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 flex items-center justify-between"
+                  >
                       Observações
-                  </label>
+                      <span className="text-[10px] font-light text-zinc-400 uppercase">Adicionar</span>
+                  </button>
+              </div>
+          </div>
+      </div>
+  ) : null;
+
+  const inlineNewSheet = isInlineAllowed && inlineNewOpen ? (
+      <div className="fixed inset-0 z-[1200]">
+          <button
+              type="button"
+              onClick={() => setInlineNewOpen(false)}
+              className="absolute inset-0 bg-black/70"
+              aria-label="Fechar nova conta"
+          />
+          <div
+              className="absolute left-0 right-0 bottom-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+              style={{ top: 0 }}
+          >
+              <div className="flex-1 overflow-hidden px-0 pt-0 pb-16">
+                  {inlineNewCard}
+              </div>
+              {inlineNewActions}
+          </div>
+      </div>
+  ) : null;
+
+  const inlineNewNotesSheet = isMobile && inlineNewNotesOpen ? (
+      <div className="fixed inset-0 z-[1300]">
+          <button
+              type="button"
+              onClick={() => setInlineNewNotesOpen(false)}
+              className="absolute inset-0 bg-black/40"
+              aria-label="Fechar observações"
+          />
+          <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4">
+              <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                  <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">Observações</p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Anote detalhes adicionais.</p>
+                  </div>
+                  <button
+                      type="button"
+                      onClick={() => setInlineNewNotesOpen(false)}
+                      className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                      aria-label="Fechar observações"
+                  >
+                      <X size={16} />
+                  </button>
+              </div>
+              <div className="mt-4">
                   <textarea
                       value={inlineNewDraft.notes}
                       onChange={(event) =>
@@ -831,34 +1094,138 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               notes: event.target.value
                           }))
                       }
-                      rows={3}
-                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
+                      rows={4}
+                      placeholder="DETALHES ADICIONAIS..."
+                      className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
                   />
               </div>
-          </div>
-          <div className="mt-4 flex justify-end gap-2">
-              <button
-                  type="button"
-                  onClick={() => setInlineNewOpen(false)}
-                  className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
-              >
-                  Cancelar
-              </button>
-              <button
-                  type="button"
-                  disabled={!inlineNewDraft.name.trim() || !inlineNewDraft.type}
-                  onClick={handleInlineCreate}
-                  className={`rounded-xl px-4 py-2 text-xs font-semibold text-white transition ${
-                      !inlineNewDraft.name.trim() || !inlineNewDraft.type
-                          ? 'bg-zinc-300 dark:bg-zinc-700 cursor-not-allowed'
-                          : 'bg-indigo-600 hover:bg-indigo-500'
-                  }`}
-              >
-                  Salvar
-              </button>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                  <button
+                      type="button"
+                      onClick={() => setInlineNewNotesOpen(false)}
+                      className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                  >
+                      Cancelar
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => setInlineNewNotesOpen(false)}
+                      className="rounded-xl border border-indigo-500/40 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
+                  >
+                      Salvar
+                  </button>
+              </div>
           </div>
       </div>
   ) : null;
+
+  const inlineNewTypesSheet = isMobile && inlineNewTypesOpen ? (
+      <div className="fixed inset-0 z-[1300]">
+          <button
+              type="button"
+              onClick={() => setInlineNewTypesOpen(false)}
+              className="absolute inset-0 bg-black/40"
+              aria-label="Fechar categorias"
+          />
+          <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col">
+              <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                  <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">Categorias</p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
+                  </div>
+                  <button
+                      type="button"
+                      onClick={() => setInlineNewTypesOpen(false)}
+                      className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                      aria-label="Fechar categorias"
+                  >
+                      <X size={16} />
+                  </button>
+              </div>
+              <div className="pt-3 flex-1 overflow-hidden px-0.5">
+                  <div className="flex gap-2 mb-3">
+                      <input
+                          type="text"
+                          autoFocus
+                          value={inlineNewTypeName}
+                          onChange={(event) => {
+                              setInlineNewTypeName(event.target.value);
+                              setInlineNewTypeError('');
+                          }}
+                          onKeyDown={(event) => event.key === 'Enter' && handleAddInlineType()}
+                          placeholder={inlineNewTypeError || 'NOVA CATEGORIA...'}
+                          className={`w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm text-zinc-900 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-zinc-400 placeholder:uppercase placeholder:font-light placeholder:text-[10px] flex-1 w-auto ${
+                              inlineNewTypeError ? 'border-red-500 focus:border-red-500 focus:ring-red-500 placeholder:text-red-500' : ''
+                          }`}
+                      />
+                      <button
+                          type="button"
+                          onClick={handleAddInlineType}
+                          aria-label="Adicionar categoria"
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md"
+                      >
+                          <Plus size={16} />
+                      </button>
+                  </div>
+                  <div className="space-y-0.5">
+                      {normalizedAccountTypes.slice(0, 20).map((type) => (
+                          <div
+                              key={type}
+                              className="flex items-center justify-between px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+                          >
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                      type="checkbox"
+                                      checked={selectedTypes.includes(type)}
+                                      onChange={() => toggleTypeSelection(type)}
+                                      className="h-3.5 w-3.5 accent-indigo-500"
+                                      aria-label={`Selecionar categoria ${type}`}
+                                  />
+                                  <span className="text-sm text-zinc-700 dark:text-zinc-300">{type}</span>
+                              </label>
+                              <button
+                                  type="button"
+                                  onClick={() => handleRemoveInlineType(type)}
+                                  disabled={normalizedAccountTypes.length <= 1}
+                                  className={`text-red-500 p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded ${
+                                      normalizedAccountTypes.length <= 1 ? 'opacity-40 cursor-not-allowed' : ''
+                                  }`}
+                                  aria-label={`Remover categoria ${type}`}
+                              >
+                                  <Trash2 size={12} />
+                              </button>
+                          </div>
+                      ))}
+                  </div>
+                  <div className={`mt-2 ${selectedTypes.length > 0 ? 'grid grid-cols-2 gap-2' : ''}`}>
+                      {selectedTypes.length > 0 && (
+                          <button
+                              type="button"
+                              onClick={handleBulkDeleteTypes}
+                              className="w-full rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
+                          >
+                              Excluir selecionados ({selectedTypes.length})
+                          </button>
+                      )}
+                      <button
+                          type="button"
+                          onClick={handleResetTypes}
+                          className={`${selectedTypes.length > 0 ? '' : 'w-full'} rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20`}
+                      >
+                          Zerar categorias
+                      </button>
+                  </div>
+              </div>
+          </div>
+      </div>
+  ) : null;
+
+  useEffect(() => {
+      if (!inlineNewTypesOpen) {
+          setSelectedTypes([]);
+          setInlineNewTypeError('');
+      }
+  }, [inlineNewTypesOpen]);
 
   const renderInlineEditForm = (account: Account) => {
       const typeOptions =
@@ -886,6 +1253,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                   name: event.target.value
                               }))
                           }
+                          placeholder="Ex: Conta Corrente PJ, Carteira Digital"
                           className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
                       />
                   </div>
@@ -894,42 +1262,41 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       <label className="text-[10px] uppercase tracking-wide text-zinc-400">
                           Tipo
                       </label>
-                      <select
+                      <SelectDropdown
                           value={inlineEditDraft.type}
-                          onChange={(event) =>
+                          onChange={(value) =>
                               setInlineEditDraft(prev => ({
                                   ...prev,
-                                  type: event.target.value
+                                  type: value
                               }))
                           }
-                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                      >
-                          <option value="">Selecione</option>
-                          {typeOptions.map(type => (
-                              <option key={type} value={type}>
-                                  {type}
-                              </option>
-                          ))}
-                      </select>
+                          placeholder="Selecione"
+                          options={typeOptions.map(type => ({ value: type, label: type }))}
+                          buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                          listClassName="max-h-48"
+                      />
                   </div>
 
                   <div>
                       <label className="text-[10px] uppercase tracking-wide text-zinc-400">
-                          Natureza
+                          Natureza Fiscal
                       </label>
-                      <select
+                      <SelectDropdown
                           value={inlineEditDraft.nature}
-                          onChange={(event) =>
+                          onChange={(value) =>
                               setInlineEditDraft(prev => ({
                                   ...prev,
-                                  nature: event.target.value as 'PJ' | 'PF'
+                                  nature: value as 'PJ' | 'PF'
                               }))
                           }
-                          className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                      >
-                          <option value="PJ">Pessoa Jurídica</option>
-                          <option value="PF">Pessoa Física</option>
-                      </select>
+                          placeholder="Selecione"
+                          options={[
+                              { value: 'PJ', label: 'Pessoa Jurídica' },
+                              { value: 'PF', label: 'Pessoa Física' }
+                          ]}
+                          buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                          listClassName="max-h-48"
+                      />
                   </div>
 
                   <div>
@@ -945,6 +1312,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                   initialBalance: event.target.value
                               }))
                           }
+                          placeholder="R$ 0,00"
                           className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
                       />
                   </div>
@@ -962,6 +1330,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                   currentBalance: event.target.value
                               }))
                           }
+                          placeholder="R$ 0,00"
                           className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
                       />
                   </div>
@@ -1057,39 +1426,70 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const listSection = (
       <main className={listWrapperClass}>
           <div className="space-y-3">
-              {inlineNewCard}
+              {isInlineAllowed ? inlineNewCard : null}
 
-              {accounts.length > 0 ? (
+              {!isMobile || !inlineNewOpen ? (
+              accounts.length > 0 ? (
                   <>
+                      <div className="flex items-center justify-between rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+                          <button
+                              type="button"
+                              onClick={toggleSelectAll}
+                              disabled={selectableAccounts.length === 0}
+                              className="flex items-center gap-2 font-semibold disabled:opacity-50"
+                          >
+                              {selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? (
+                                  <CheckSquare size={14} className="text-indigo-600" />
+                              ) : (
+                                  <Square size={14} />
+                              )}
+                              <span>{selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                          </button>
+                          <span className="text-[11px]">{selectedIds.length} selecionados</span>
+                      </div>
                       {visibleAccounts.map(account => {
                           const isHighlighted = highlightedId === account.id;
                           const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
                           const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
                           const isLocked = Boolean(account.locked || account.decryptError);
+                          const isSelected = selectedIds.includes(account.id);
                           const computedBalance = resolveRealBalance(account);
                           const isExpanded = drawerAccount?.id === account.id;
                           const isInlineEditing = inlineEditAccountId === account.id;
                           const details = isExpanded ? buildAccountDetails(account) : [];
+                          const rowBg = withAlpha(account.color || getAccountColor(account), 0.12);
 
                           return (
                               <div key={account.id} id={`account-${account.id}`}>
-                                  <MobileTransactionCard
-                                      title={account.name}
-                                      amount={formatCurrency(computedBalance)}
-                                      amountClassName={isLocked ? 'text-zinc-400 dark:text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}
-                                      dateLabel={account.type || 'Conta'}
-                                      category={`Inicial ${formatCurrency(account.initialBalance)}`}
-                                      isHighlighted={isHighlighted}
-                                      isLocked={isLocked}
-                                      lockedLabel={lockedLabel}
-                                      onClick={
-                                          isLocked
-                                              ? undefined
-                                              : () => {
-                                                    setDrawerAccount(prev => (prev?.id === account.id ? null : account));
-                                                }
-                                      }
-                                  />
+                                  <div
+                                      className="py-2 rounded-md"
+                                      style={{ backgroundColor: rowBg }}
+                                  >
+                                      <button
+                                          type="button"
+                                          onClick={() => setDrawerAccount(prev => (prev?.id === account.id ? null : account))}
+                                          className="w-full flex items-center justify-between gap-3 text-left"
+                                          disabled={isLocked}
+                                      >
+                                          <div className="flex items-center gap-2 min-w-0">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={isSelected}
+                                                  onChange={() => toggleSelection(account.id)}
+                                                  onClick={(event) => event.stopPropagation()}
+                                                  disabled={isLocked}
+                                                  className="h-4 w-4 accent-indigo-500"
+                                                  aria-label={`Selecionar conta ${account.name}`}
+                                              />
+                                              <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                                                  {account.name}
+                                              </span>
+                                          </div>
+                                          <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                              {formatCurrency(computedBalance)}
+                                          </span>
+                                      </button>
+                                  </div>
                                   {!isMobile && isExpanded && (
                                       <div className="mt-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
                                           <div className="flex items-center justify-between">
@@ -1143,28 +1543,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               </div>
                           );
                       })}
-                      {shouldCollapseAccounts && (
-                          <button
-                              type="button"
-                              onClick={() => setIsAccountListExpanded(prev => !prev)}
-                              className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[12px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                          >
-                              {isAccountListExpanded
-                                  ? `${expandVerb} para recolher`
-                                  : `${expandVerb} para expandir (+${extraAccountCount})`}
-                              <ChevronDown
-                                  size={14}
-                                  className={`transition-transform ${isAccountListExpanded ? 'rotate-180' : ''}`}
-                              />
-                          </button>
-                      )}
                   </>
               ) : (
                   <MobileEmptyState
                       icon={<Landmark size={18} />}
                       message="Nenhuma conta cadastrada."
                   />
-              )}
+              )
+              ) : null}
           </div>
       </main>
   );
@@ -1172,7 +1558,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const drawerLocked = Boolean(drawerAccount?.locked || drawerAccount?.decryptError);
   const drawerDetails = drawerAccount ? buildAccountDetails(drawerAccount) : [];
   const desktopScrollPadding =
-      isAccountListExpanded || inlineNewOpen || inlineEditAccountId ? 'pb-28' : 'pb-6';
+      (accountDesktopNeedsScroll || inlineNewOpen || inlineEditAccountId) ? 'pb-28' : 'pb-6';
 
   const modals = (
       <>
@@ -1185,6 +1571,8 @@ const AccountsView: React.FC<AccountsViewProps> = ({
             accountTypes={accountTypes}
             onUpdateAccountTypes={onUpdateAccountTypes}
             source="accounts"
+            variant="dock"
+            forceDock={useDockModal}
           />
 
           {auditAccount && (
@@ -1294,7 +1682,9 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                             <div className="mt-2 space-y-1">
                                                 {relatedIncomes.slice(0, 3).map(inc => (
                                                     <div key={inc.id} className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                        <span className="flex-1 min-w-0 truncate">{inc.description || 'Entrada'}</span>
+                                                        <span className="flex-1 min-w-0 truncate" title={inc.description || 'Entrada'}>
+                                                            {inc.description || 'Entrada'}
+                                                        </span>
                                                         <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                                                             + {formatCurrency(inc.amount)}
                                                         </span>
@@ -1317,7 +1707,9 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                             <div className="mt-2 space-y-1">
                                                 {relatedExpenses.slice(0, 3).map(exp => (
                                                     <div key={exp.id} className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                        <span className="flex-1 min-w-0 truncate">{exp.description || 'Saída'}</span>
+                                                        <span className="flex-1 min-w-0 truncate" title={exp.description || 'Saída'}>
+                                                            {exp.description || 'Saída'}
+                                                        </span>
                                                         <span className="font-semibold text-rose-500">
                                                             - {formatCurrency(exp.amount)}
                                                         </span>
@@ -1383,66 +1775,114 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   if (isMobile) {
       const mobileList = (
           <div className="space-y-3">
-              {inlineNewCard}
-              {accounts.length > 0 ? (
-                  visibleAccounts.map(account => {
-                      const isHighlighted = highlightedId === account.id;
-                      const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
-                      const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
-                      const isLocked = Boolean(account.locked || account.decryptError);
-                      const isInlineEditing = inlineEditAccountId === account.id;
-                      const computedBalance = resolveRealBalance(account);
-
-                      return (
-                          <div key={account.id} id={`account-${account.id}`}>
-                              <MobileTransactionCard
-                                  title={account.name}
-                                  amount={formatCurrency(computedBalance)}
-                                  amountClassName={isLocked ? 'text-zinc-400 dark:text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}
-                                  dateLabel={account.type || 'Conta'}
-                                  category={`Inicial ${formatCurrency(account.initialBalance)}`}
-                                  isHighlighted={isHighlighted}
-                                  isLocked={isLocked}
-                                  lockedLabel={lockedLabel}
-                                  onClick={
-                                      isLocked
-                                          ? undefined
-                                          : () => {
-                                                setDrawerAccount(account);
-                                            }
-                                  }
-                              />
-                              {!isLocked && isInlineEditing && renderInlineEditForm(account)}
+              {!inlineNewOpen ? (
+              accounts.length > 0 ? (
+                  <>
+                      <div className="py-2">
+                          <button
+                              type="button"
+                              onClick={toggleSelectAll}
+                              disabled={selectableAccounts.length === 0}
+                              className="w-full flex items-center justify-between text-xs font-semibold text-zinc-400 disabled:opacity-50"
+                          >
+                              <span>{selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                              <span>{selectedIds.length} selecionados</span>
+                          </button>
+                      </div>
+                      <div className="relative">
+                          <div
+                              ref={mobilePagerRef}
+                              className="flex gap-4 overflow-x-auto overflow-y-hidden snap-x snap-mandatory scrollbar-hide no-vertical-scroll"
+                              style={{ touchAction: 'pan-x', overscrollBehaviorY: 'contain' }}
+                              onScroll={(event) => {
+                                  const el = event.currentTarget;
+                                  const index = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
+                                  setMobilePageIndex(index);
+                              }}
+                          >
+                              {mobilePages.map((page, pageIndex) => (
+                                  <div
+                                      key={`page-${pageIndex}`}
+                                      className="min-w-full snap-start space-y-2"
+                                  >
+                                      {page.map((account) => {
+                                          const isLocked = Boolean(account.locked || account.decryptError);
+                                          const isSelected = selectedIds.includes(account.id);
+                                          const computedBalance = resolveRealBalance(account);
+                                          const rowBg = withAlpha(account.color || getAccountColor(account), 0.12);
+                                          return (
+                                              <div
+                                                  key={account.id}
+                                                  id={`account-${account.id}`}
+                                                  className="py-2 rounded-md"
+                                                  style={{ backgroundColor: rowBg }}
+                                              >
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => setDrawerAccount(account)}
+                                                      className="w-full flex items-center justify-between gap-3 text-left"
+                                                      disabled={isLocked}
+                                                  >
+                                                      <div className="flex items-center gap-2 min-w-0">
+                                                          <input
+                                                              type="checkbox"
+                                                              checked={isSelected}
+                                                              onChange={() => toggleSelection(account.id)}
+                                                              onClick={(event) => event.stopPropagation()}
+                                                              disabled={isLocked}
+                                                              className="h-4 w-4 accent-indigo-500"
+                                                              aria-label={`Selecionar conta ${account.name}`}
+                                                          />
+                                                          <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                                                              {account.name}
+                                                          </span>
+                                                      </div>
+                                                      <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                                          {formatCurrency(computedBalance)}
+                                                      </span>
+                                                  </button>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              ))}
                           </div>
-                      );
-                  })
+                          {hasMobilePages && (
+                              <div className="mt-2 flex items-center justify-end gap-2">
+                                  <span className="text-[10px] text-zinc-400">
+                                      {mobilePageIndex + 1}/{mobilePages.length}
+                                  </span>
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          const next = (mobilePageIndex + 1) % mobilePages.length;
+                                          const container = mobilePagerRef.current;
+                                          if (container) {
+                                              container.scrollTo({ left: container.clientWidth * next, behavior: 'smooth' });
+                                          }
+                                      }}
+                                      className="h-8 w-8 rounded-full bg-white/10 text-white flex items-center justify-center"
+                                      aria-label="Próxima página"
+                                  >
+                                      <ChevronDown size={16} className="-rotate-90" />
+                                  </button>
+                              </div>
+                          )}
+                      </div>
+                  </>
               ) : (
                   <MobileEmptyState
                       icon={<Landmark size={18} />}
                       message="Nenhuma conta cadastrada."
                   />
-              )}
-              {shouldCollapseAccounts && accounts.length > 0 && (
-                  <button
-                      type="button"
-                      onClick={() => setIsAccountListExpanded(prev => !prev)}
-                      className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                  >
-                      {isAccountListExpanded
-                          ? 'Toque para recolher'
-                          : `Toque para expandir (+${extraAccountCount})`}
-                      <ChevronDown
-                          size={14}
-                          className={`transition-transform ${isAccountListExpanded ? 'rotate-180' : ''}`}
-                      />
-                  </button>
-              )}
+              )
+              ) : null}
           </div>
       );
 
       return (
           <>
-              <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+              <div className="fixed inset-0 bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
                   <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
                       {headerFill.height > 0 && (
                           <div
@@ -1464,20 +1904,23 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           </div>
                       </div>
                       <div
-                          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+128px)]"
-                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
+                          className={`h-full px-4 ${inlineNewOpen ? 'pb-[calc(env(safe-area-inset-bottom)+16px)]' : 'pb-[calc(env(safe-area-inset-bottom)+88px)]'} overflow-hidden`}
+                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 64 : 64 }}
                       >
                           {mobileList}
                       </div>
                   </div>
               </div>
+              {inlineNewSheet}
+              {inlineNewNotesSheet}
+              {inlineNewTypesSheet}
               {modals}
           </>
       );
   }
 
   return (
-    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter ${desktopScrollPadding} transition-colors duration-300`}>
+    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter ${desktopScrollPadding} transition-colors duration-300 ${accountDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
       {summarySection}
       {listSection}
       {modals}

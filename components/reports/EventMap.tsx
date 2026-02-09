@@ -26,6 +26,25 @@ type EventItem = {
   dateLabel?: string;
 };
 
+type LaneStats = {
+  totalIncomes: number;
+  totalExpenses: number;
+  netTotal: number;
+  volumeTotal: number;
+  incomePercent: number;
+  expensePercent: number;
+  maxIncome: number;
+  maxExpense: number;
+  averageTicket: number;
+  lastEvent?: EventItem;
+  eventCount: number;
+};
+
+type SelectedNode =
+  | { kind: 'event'; lane: EventLane; event: EventItem; stats: LaneStats }
+  | { kind: 'origin'; lane: EventLane; stats: LaneStats }
+  | { kind: 'summary'; lane: EventLane; stats: LaneStats };
+
 interface EventMapProps {
   transactions: ReportTransactions;
   accounts: Account[];
@@ -84,6 +103,52 @@ const buildNeonGradient = (balance?: number) => {
   };
 };
 
+const buildLaneStats = (events: EventItem[]): LaneStats => {
+  const totalIncomes = events.reduce(
+    (sum, event) => sum + (event.type === 'income' ? Math.abs(event.amount ?? 0) : 0),
+    0
+  );
+  const totalExpenses = events.reduce(
+    (sum, event) => sum + (event.type === 'expense' ? Math.abs(event.amount ?? 0) : 0),
+    0
+  );
+  const netTotal = totalIncomes - totalExpenses;
+  const volumeTotal = totalIncomes + totalExpenses;
+  const incomePercent = volumeTotal > 0 ? Math.round((totalIncomes / volumeTotal) * 100) : 0;
+  const expensePercent = volumeTotal > 0 ? Math.round((totalExpenses / volumeTotal) * 100) : 0;
+  const maxIncome = events.reduce(
+    (max, event) =>
+      event.type === 'income' && event.amount !== undefined
+        ? Math.max(max, Math.abs(event.amount))
+        : max,
+    0
+  );
+  const maxExpense = events.reduce(
+    (max, event) =>
+      event.type === 'expense' && event.amount !== undefined
+        ? Math.max(max, Math.abs(event.amount))
+        : max,
+    0
+  );
+  const eventCount = events.length;
+  const averageTicket = eventCount > 0 ? volumeTotal / eventCount : 0;
+  const lastEvent = events.length > 0 ? events[events.length - 1] : undefined;
+
+  return {
+    totalIncomes,
+    totalExpenses,
+    netTotal,
+    volumeTotal,
+    incomePercent,
+    expensePercent,
+    maxIncome,
+    maxExpense,
+    averageTicket,
+    lastEvent,
+    eventCount
+  };
+};
+
 const EventMap: React.FC<EventMapProps> = ({
   transactions,
   accounts,
@@ -93,11 +158,16 @@ const EventMap: React.FC<EventMapProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const normalViewRef = useRef<{ zoom: number; left: number; top: number } | null>(null);
+  const fullscreenViewRef = useRef<{ zoom: number; left: number; top: number } | null>(null);
+  const zoomRef = useRef(1);
+  const prevFullscreenRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [supportsNativeFullscreen, setSupportsNativeFullscreen] = useState(false);
   const [showDesktopOnlyNotice, setShowDesktopOnlyNotice] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
   const accountNameById = useMemo(
     () => new Map(accounts.map(account => [account.id, account.name])),
     [accounts]
@@ -223,6 +293,10 @@ const EventMap: React.FC<EventMapProps> = ({
 
   const totalEvents = lanes.reduce((sum, lane) => sum + lane.events.length, 0);
 
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
   useLayoutEffect(() => {
     if (typeof document === 'undefined') return;
     const element = containerRef.current;
@@ -238,6 +312,45 @@ const EventMap: React.FC<EventMapProps> = ({
     document.addEventListener('fullscreenchange', handleChange);
     return () => document.removeEventListener('fullscreenchange', handleChange);
   }, [supportsNativeFullscreen]);
+
+  useEffect(() => {
+    const prev = prevFullscreenRef.current;
+    if (prev === isFullscreen) return;
+    prevFullscreenRef.current = isFullscreen;
+    const container = scrollRef.current;
+    if (!container) return;
+
+    if (isFullscreen) {
+      normalViewRef.current = {
+        zoom: zoomRef.current,
+        left: container.scrollLeft,
+        top: container.scrollTop
+      };
+      const target = fullscreenViewRef.current;
+      if (!target) return;
+      setZoom(target.zoom);
+      requestAnimationFrame(() => {
+        if (!scrollRef.current) return;
+        scrollRef.current.scrollLeft = target.left;
+        scrollRef.current.scrollTop = target.top;
+      });
+      return;
+    }
+
+    fullscreenViewRef.current = {
+      zoom: zoomRef.current,
+      left: container.scrollLeft,
+      top: container.scrollTop
+    };
+    const target = normalViewRef.current;
+    if (!target) return;
+    setZoom(target.zoom);
+    requestAnimationFrame(() => {
+      if (!scrollRef.current) return;
+      scrollRef.current.scrollLeft = target.left;
+      scrollRef.current.scrollTop = target.top;
+    });
+  }, [isFullscreen]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -308,6 +421,11 @@ const EventMap: React.FC<EventMapProps> = ({
           isMobile ? 'bg-white/5 text-white/60' : 'bg-white/10 hover:bg-white/20'
         }`}
         aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
+        title={
+          isFullscreen
+            ? 'Sair da tela cheia e voltar ao layout normal.'
+            : 'Abrir em tela cheia para visualizar o mapa melhor.'
+        }
       >
         {isFullscreen ? (
           <Minimize2 size={16} className="mx-auto" />
@@ -329,40 +447,11 @@ const EventMap: React.FC<EventMapProps> = ({
     </>
   );
 
-  const fullscreenFooter = !isMobile && isFullscreen ? (
-    <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-slate-950/60 px-4 py-2 shadow-lg backdrop-blur">
-      <button
-        type="button"
-        onClick={handleFullscreenClick}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Sair da tela cheia"
-      >
-        <Minimize2 size={16} className="mx-auto" />
-      </button>
-      <div className="h-5 w-px bg-white/10" />
-      <button
-        type="button"
-        onClick={() => handleZoom('out')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Diminuir zoom"
-      >
-        <Minus size={16} className="mx-auto" />
-      </button>
-      <button
-        type="button"
-        onClick={() => handleZoom('in')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Aumentar zoom"
-      >
-        <Plus size={16} className="mx-auto" />
-      </button>
-    </div>
-  ) : null;
-
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (isMobile) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('button')) return;
+    if (target?.closest('[data-map-node="true"]')) return;
     const container = scrollRef.current;
     if (!container) return;
     container.setPointerCapture(event.pointerId);
@@ -390,6 +479,250 @@ const EventMap: React.FC<EventMapProps> = ({
     setIsPanning(false);
   };
 
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!isFullscreen) return;
+    const container = scrollRef.current;
+    if (!container) return;
+    container.scrollLeft += event.deltaX;
+    container.scrollTop += event.deltaY;
+    event.preventDefault();
+  };
+
+  const selectNode = (next: SelectedNode) => {
+    setSelectedNode(next);
+  };
+
+  const renderInfoItem = (label: string, value: string, hint: string, accent?: string) => (
+    <div className="min-w-[180px] max-w-[240px] text-center">
+      <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">{label}</div>
+      <div className={`text-[15px] font-semibold ${accent || 'text-white'}`}>{value}</div>
+      <div className="text-[11px] text-slate-500">{hint}</div>
+    </div>
+  );
+
+  const footerContent = (() => {
+    if (!selectedNode) {
+      return (
+        <div className="text-sm text-slate-400 text-center">
+          Clique em um node para ver detalhes.
+        </div>
+      );
+    }
+
+    if (selectedNode.kind === 'event') {
+      return (
+        <div className="flex flex-col gap-3 min-w-0 items-center text-center">
+          <div className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
+            Evento selecionado
+          </div>
+          <div className="text-[16px] font-semibold text-white truncate">
+            {selectedNode.event.label}
+          </div>
+          <div className="flex flex-wrap justify-center gap-x-8 gap-y-4">
+            {renderInfoItem(
+              'Tipo',
+              selectedNode.event.type === 'income'
+                ? 'Entrada'
+                : selectedNode.event.type === 'expense'
+                  ? 'Saída'
+                  : 'Movimento',
+              'Indica se entrou ou saiu dinheiro.',
+              selectedNode.event.type === 'income'
+                ? 'text-emerald-300'
+                : selectedNode.event.type === 'expense'
+                  ? 'text-rose-300'
+                  : 'text-slate-200'
+            )}
+            {renderInfoItem('Data', selectedNode.event.dateLabel || '—', 'Dia do lançamento.')}
+            {renderInfoItem(
+              'Valor',
+              formatCompactCurrency(Math.abs(selectedNode.event.amount ?? 0)),
+              'Valor movimentado.',
+              selectedNode.event.type === 'income'
+                ? 'text-emerald-300'
+                : selectedNode.event.type === 'expense'
+                  ? 'text-rose-300'
+                  : 'text-slate-200'
+            )}
+            {renderInfoItem(
+              selectedNode.lane.kind === 'account'
+                ? 'Conta'
+                : selectedNode.lane.kind === 'card'
+                  ? 'Cartão'
+                  : 'Origem',
+              selectedNode.lane.label,
+              'Origem da movimentação.',
+              'text-slate-200'
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedNode.kind === 'origin') {
+      return (
+        <div className="flex flex-col gap-3 min-w-0 items-center text-center">
+          <div className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
+            Origem selecionada
+          </div>
+          <div className="text-[16px] font-semibold text-white truncate">
+            {selectedNode.lane.label}
+          </div>
+          <div className="flex flex-wrap justify-center gap-x-8 gap-y-4">
+            {renderInfoItem(
+              'Entradas',
+              formatCompactCurrency(selectedNode.stats.totalIncomes),
+              'Somatório de entradas.',
+              'text-emerald-300'
+            )}
+            {renderInfoItem(
+              'Saídas',
+              formatCompactCurrency(selectedNode.stats.totalExpenses),
+              'Somatório de saídas.',
+              'text-rose-300'
+            )}
+            {renderInfoItem(
+              'Saldo',
+              formatCompactCurrency(selectedNode.stats.netTotal),
+              'Entradas menos saídas.',
+              selectedNode.stats.netTotal >= 0 ? 'text-emerald-300' : 'text-rose-300'
+            )}
+            {renderInfoItem(
+              'Eventos',
+              String(selectedNode.stats.eventCount),
+              'Quantidade de lançamentos.'
+            )}
+            {renderInfoItem(
+              '% E/S',
+              `${selectedNode.stats.incomePercent}%/${selectedNode.stats.expensePercent}%`,
+              'Participação de entradas/saídas.',
+              'text-slate-200'
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col gap-3 min-w-0 items-center text-center">
+        <div className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
+          Resumo final
+        </div>
+        <div className="flex flex-wrap justify-center gap-x-8 gap-y-4">
+          {renderInfoItem(
+            'Entradas',
+            formatCompactCurrency(selectedNode.stats.totalIncomes),
+            'Somatório de entradas.',
+            'text-emerald-300'
+          )}
+          {renderInfoItem(
+            'Saídas',
+            formatCompactCurrency(selectedNode.stats.totalExpenses),
+            'Somatório de saídas.',
+            'text-rose-300'
+          )}
+          {renderInfoItem(
+            'Saldo',
+            formatCompactCurrency(selectedNode.stats.netTotal),
+            'Entradas menos saídas.',
+            selectedNode.stats.netTotal >= 0 ? 'text-emerald-300' : 'text-rose-300'
+          )}
+          {renderInfoItem(
+            '% E/S',
+            `${selectedNode.stats.incomePercent}%/${selectedNode.stats.expensePercent}%`,
+            'Participação de entradas/saídas.',
+            'text-slate-200'
+          )}
+          {renderInfoItem(
+            'Maior +',
+            formatCompactCurrency(selectedNode.stats.maxIncome),
+            'Maior entrada do período.',
+            'text-emerald-300'
+          )}
+          {renderInfoItem(
+            'Maior -',
+            formatCompactCurrency(selectedNode.stats.maxExpense),
+            'Maior saída do período.',
+            'text-rose-300'
+          )}
+          {renderInfoItem(
+            'Eventos',
+            String(selectedNode.stats.eventCount),
+            'Quantidade de lançamentos.'
+          )}
+          {renderInfoItem(
+            'Ticket',
+            formatCompactCurrency(selectedNode.stats.averageTicket),
+            'Média por evento.'
+          )}
+          {renderInfoItem(
+            'Último',
+            selectedNode.stats.lastEvent
+              ? `${selectedNode.stats.lastEvent.dateLabel || '—'} • ${formatCompactCurrency(
+                  Math.abs(selectedNode.stats.lastEvent.amount ?? 0)
+                )}`
+              : '—',
+            'Última movimentação.',
+            'text-slate-200'
+          )}
+        </div>
+      </div>
+    );
+  })();
+
+  const footerControls = !isMobile ? (
+    <div className="pointer-events-auto absolute right-6 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={handleFullscreenClick}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
+        title={
+          isFullscreen
+            ? 'Sair da tela cheia e voltar ao layout normal.'
+            : 'Abrir em tela cheia para visualizar o mapa melhor.'
+        }
+      >
+        {isFullscreen ? (
+          <Minimize2 size={16} className="mx-auto" />
+        ) : (
+          <Maximize2 size={16} className="mx-auto" />
+        )}
+      </button>
+      <div className="h-px w-8 bg-white/10" />
+      <button
+        type="button"
+        onClick={() => handleZoom('out')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Diminuir zoom"
+        title="Reduz o zoom para ver mais do mapa."
+      >
+        <Minus size={16} className="mx-auto" />
+      </button>
+      <button
+        type="button"
+        onClick={() => handleZoom('in')}
+        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="Aumentar zoom"
+        title="Aumenta o zoom para ver detalhes dos nodes."
+      >
+        <Plus size={16} className="mx-auto" />
+      </button>
+    </div>
+  ) : null;
+
+  const mapFooter = !isMobile && isFullscreen ? (
+    <div className="absolute bottom-0 left-0 right-0 z-20">
+      <div
+        className="relative flex items-center justify-center rounded-t-[26px] border-t border-white/20 bg-white/5 px-10 py-6 shadow-[0_-10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl min-h-[150px]"
+        onPointerDown={event => event.stopPropagation()}
+      >
+        <div className="mx-auto w-full max-w-[1200px]">{footerContent}</div>
+        {footerControls}
+      </div>
+    </div>
+  ) : null;
+
   return (
       <div className="flex flex-col h-full gap-4">
         <div className="flex items-start justify-start">
@@ -416,7 +749,7 @@ const EventMap: React.FC<EventMapProps> = ({
           <div className="flex gap-4 items-stretch h-full min-h-0">
             <div
               ref={containerRef}
-              className={`relative border border-white/10 overflow-hidden flex-1 ${
+              className={`mm-map-surface relative border border-white/10 overflow-hidden flex-1 select-none ${
                 isFullscreen
                   ? 'rounded-none h-full w-full box-border'
                   : 'rounded-3xl h-full min-h-[420px] md:min-h-[520px]'
@@ -427,7 +760,11 @@ const EventMap: React.FC<EventMapProps> = ({
                   {mapControls}
                 </div>
               )}
-              {fullscreenFooter}
+              {!isMobile && isFullscreen && (
+                <div className="pointer-events-none absolute left-5 top-5 z-20 rounded-full border border-white/10 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-white/80 backdrop-blur">
+                  Movimento horizontal: arraste para esquerda/direita
+                </div>
+              )}
               <div
                 className="absolute inset-0"
                 style={{
@@ -435,6 +772,7 @@ const EventMap: React.FC<EventMapProps> = ({
                     'radial-gradient(circle at 10% 20%, rgba(56,189,248,0.12), rgba(15,23,42,0.8) 45%), radial-gradient(circle at 80% 10%, rgba(99,102,241,0.14), rgba(15,23,42,0.7) 60%)'
                 }}
               />
+              {mapFooter}
               <div
                 ref={scrollRef}
                 onPointerDown={handlePointerDown}
@@ -442,6 +780,10 @@ const EventMap: React.FC<EventMapProps> = ({
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerUp}
                 onPointerLeave={handlePointerUp}
+                onWheel={isFullscreen ? handleWheel : undefined}
+                onClick={() => {
+                  setSelectedNode(null);
+                }}
                 className={`relative overflow-auto scrollbar-hide select-none h-full ${
                   isMobile ? '' : isPanning ? 'cursor-grabbing' : 'cursor-grab'
                 }`}
@@ -497,23 +839,24 @@ const EventMap: React.FC<EventMapProps> = ({
                         const gap = baseGap;
                         const laneGap = baseLaneGap;
                         const laneAccent = lane.color || EVENT_COLORS.start;
-                        const laneTotal = lane.events.reduce(
-                          (sum, event) => sum + Math.abs(event.amount ?? 0),
-                          0
-                        );
-                        const laneCount = lane.events.length;
+                        const laneStats = buildLaneStats(lane.events);
                         const lineStyle = buildNeonGradient(
                           lane.kind === 'account' ? lane.balance : undefined
                         );
                         return (
                           <div key={lane.id} className="flex items-start" style={{ gap: laneGap }}>
                             <div
-                              className="shrink-0 rounded-2xl border bg-white/5 px-4 py-3"
+                              data-map-node="true"
+                              className="shrink-0 rounded-2xl border bg-white/5 px-4 py-3 cursor-pointer"
                               style={{
                                 width: accountWidth,
                                 height: cardHeight,
                                 borderColor: withAlpha(laneAccent, 0.6),
                                 backgroundColor: withAlpha(laneAccent, 0.08)
+                              }}
+                              onClick={event => {
+                                event.stopPropagation();
+                                selectNode({ kind: 'origin', lane, stats: laneStats });
                               }}
                             >
                               <div className="flex items-center gap-2">
@@ -539,25 +882,33 @@ const EventMap: React.FC<EventMapProps> = ({
                               )}
                             </div>
                             <div className="relative flex-1">
-                              <div
-                                className="absolute h-[2px]"
-                                style={{
-                                  top: '50%',
-                                  transform: 'translateY(-50%)',
-                                  left: -laneGap,
-                                  right: cardWidth + gap,
-                                  ...lineStyle
-                                }}
-                              />
                               <div className="relative flex items-start" style={{ gap }}>
-                                {lane.events.map(event => {
+                                {lane.events.map((event, index) => {
                                   const eventColor = EVENT_COLORS[event.type];
+                                  const connectorWidth = index === 0 ? laneGap : gap;
                                   return (
                                     <div
                                       key={event.id}
-                                      className="relative shrink-0"
+                                      data-map-node="true"
+                                      className="relative shrink-0 cursor-pointer"
                                       style={{ width: cardWidth }}
+                                      onClick={mouseEvent => {
+                                        mouseEvent.stopPropagation();
+                                        selectNode({ kind: 'event', lane, event, stats: laneStats });
+                                      }}
                                     >
+                                      <div
+                                        className="absolute z-10"
+                                        style={{
+                                          left: -connectorWidth,
+                                          top: '50%',
+                                          width: connectorWidth,
+                                          height: 2,
+                                          transform: 'translateY(-50%)',
+                                          borderRadius: 999,
+                                          ...lineStyle
+                                        }}
+                                      />
                                       <div
                                         className="rounded-xl border bg-slate-900/70 px-3 py-2 overflow-hidden"
                                         style={{
@@ -604,24 +955,44 @@ const EventMap: React.FC<EventMapProps> = ({
                                     </div>
                                   );
                                 })}
-                                <div className="relative shrink-0" style={{ width: cardWidth }}>
+                                <div
+                                  className="relative shrink-0"
+                                  style={{ width: cardWidth }}
+                                  data-map-node="true"
+                                >
                                   <div
-                                    className="rounded-xl border bg-slate-900/75 px-3 py-2"
+                                    className="absolute z-10"
+                                    style={{
+                                      left: -(lane.events.length === 0 ? laneGap : gap),
+                                      top: '50%',
+                                      width: lane.events.length === 0 ? laneGap : gap,
+                                      height: 2,
+                                      transform: 'translateY(-50%)',
+                                      borderRadius: 999,
+                                      ...lineStyle
+                                    }}
+                                  />
+                                  <div
+                                    className="rounded-xl border bg-slate-900/75 px-3 py-2 cursor-pointer"
                                     style={{
                                       height: cardHeight,
                                       borderColor: withAlpha(laneAccent, 0.6),
                                       boxShadow: `0 0 0 1px ${withAlpha(laneAccent, 0.2)} inset`,
                                       backgroundColor: withAlpha(laneAccent, 0.1)
                                     }}
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      selectNode({ kind: 'summary', lane, stats: laneStats });
+                                    }}
                                   >
                                     <div className="text-[9px] uppercase tracking-[0.3em] text-slate-400">
                                       Resumo
                                     </div>
                                     <div className="mt-1 text-sm font-semibold text-white">
-                                      Total {formatCompactCurrency(laneTotal)}
+                                      Total {formatCompactCurrency(laneStats.volumeTotal)}
                                     </div>
-                                    <div className="mt-1 text-[11px] text-slate-400">
-                                      Nodes: {laneCount}
+                                    <div className="mt-1 text-[10px] text-slate-400">
+                                      Clique para detalhes
                                     </div>
                                   </div>
                                 </div>

@@ -5,7 +5,7 @@ import { Income, Account } from '../types';
 import NewIncomeModal from './NewIncomeModal';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import useIsMobile from '../hooks/useIsMobile';
-import MobileTransactionCard from './mobile/MobileTransactionCard';
+import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import MobileEmptyState from './mobile/MobileEmptyState';
 import { buildInstallmentDescription, getIncomeInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
@@ -45,9 +45,17 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   minDate,
   onOpenAudit
 }) => {
+  const chunkItems = <T,>(items: T[], size: number): T[][] => {
+      if (size <= 0) return [items];
+      const result: T[][] = [];
+      for (let i = 0; i < items.length; i += size) {
+          result.push(items.slice(i, i + size));
+      }
+      return result;
+  };
   const [inlineNewOpen, setInlineNewOpen] = useState(false);
   const [inlineEditIncomeId, setInlineEditIncomeId] = useState<string | null>(null);
-  const [isIncomeListExpanded, setIsIncomeListExpanded] = useState(false);
+  
   const [editingIncome, setEditingIncome] = useState<Income | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [incomeToDelete, setIncomeToDelete] = useState<Income | null>(null);
@@ -55,8 +63,12 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const isMobile = useIsMobile();
+  const isCompactHeight = useIsCompactHeight();
+  const submitRef = useRef<null | (() => void)>(null);
   const [mobileScreen, setMobileScreen] = useState<'list' | 'form'>('list');
   const [drawerIncome, setDrawerIncome] = useState<Income | null>(null);
+  const [mobilePageIndex, setMobilePageIndex] = useState(0);
+  const mobilePagerRef = useRef<HTMLDivElement | null>(null);
   const headerLayoutLoggedRef = useRef(false);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
@@ -126,14 +138,33 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
   const totalAmount = filteredIncomes.reduce((acc, curr) => acc + curr.amount, 0);
   const totalReceived = filteredIncomes.filter(i => i.status === 'received').reduce((acc, curr) => acc + curr.amount, 0);
-  const shouldCollapseIncomes = filteredIncomes.length > 2;
-  const visibleIncomes = shouldCollapseIncomes && !isIncomeListExpanded ? filteredIncomes.slice(0, 2) : filteredIncomes;
-  const extraIncomeCount = Math.max(filteredIncomes.length - visibleIncomes.length, 0);
+  const INCOME_COLLAPSE_LIMIT = 10;
+  const visibleIncomes = filteredIncomes;
+  const incomeDesktopNeedsScroll = isCompactHeight || filteredIncomes.length > INCOME_COLLAPSE_LIMIT;
+  const isListViewSafe = isMobile ? mobileScreen === 'list' : true;
+  const allowPageScroll = isMobile ? false : incomeDesktopNeedsScroll;
+  const MOBILE_PAGE_SIZE = 8;
+  const mobilePages = chunkItems(visibleIncomes, MOBILE_PAGE_SIZE);
+  const hasMobilePages = mobilePages.length > 1;
+  useEffect(() => {
+      const shouldLock = !allowPageScroll;
+      document.documentElement.classList.toggle('lock-scroll', shouldLock);
+      document.body.classList.toggle('lock-scroll', shouldLock);
+      return () => {
+          document.documentElement.classList.remove('lock-scroll');
+          document.body.classList.remove('lock-scroll');
+      };
+  }, [allowPageScroll]);
 
   // ... rest of logic/handlers ...
   // --- SELECTION CALCULATIONS ---
   const selectedIncomes = filteredIncomes.filter(i => selectedIds.includes(i.id));
   const selectedTotalAmount = selectedIncomes.reduce((acc, curr) => acc + curr.amount, 0);
+  const selectedReceivedTotal = selectedIncomes.filter(i => i.status === 'received').reduce((acc, curr) => acc + curr.amount, 0);
+  const hasSelection = selectedIds.length > 0;
+  const headerCount = hasSelection ? selectedIncomes.length : filteredIncomes.length;
+  const headerTotal = hasSelection ? selectedTotalAmount : totalAmount;
+  const headerReceived = hasSelection ? selectedReceivedTotal : totalReceived;
 
   // --- HANDLERS ---
 
@@ -630,6 +661,18 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           ? 'Entradas'
           : (editingIncome ? 'Editar Entrada' : 'Nova Entrada');
 
+      useEffect(() => {
+          if (typeof document === 'undefined') return;
+          if (!isListView) {
+              document.body.classList.add('hide-quick-access');
+          } else {
+              document.body.classList.remove('hide-quick-access');
+          }
+          return () => {
+              document.body.classList.remove('hide-quick-access');
+          };
+      }, [isListView]);
+
       const mobileHeader = (
           <div className="space-y-2">
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
@@ -655,18 +698,18 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                       <div className="grid grid-cols-3 gap-2">
                           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
-                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{filteredIncomes.length}</p>
+                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
                           </div>
                           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Previsto</p>
                               <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
-                                  R$ {totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
                           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Recebido</p>
                               <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
-                                  R$ {totalReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  R$ {headerReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
                       </div>
@@ -695,7 +738,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
       return (
           <>
-              <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+              <div className="fixed inset-0 bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
                   <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
                       {headerFill.height > 0 && (
                           <div
@@ -717,39 +760,97 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           </div>
                       </div>
                       <div
-                          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+128px)]"
-                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
+                          className={`h-full px-4 overflow-hidden ${isListView ? 'pb-[calc(env(safe-area-inset-bottom)+88px)]' : 'pb-[calc(env(safe-area-inset-bottom)+16px)]'}`}
+                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 64 : 64 }}
                       >
                           {isListView ? (
                               <div className="space-y-3">
+                                  <div className="py-2">
+                                      <button
+                                          type="button"
+                                          onClick={toggleSelectAll}
+                                          disabled={selectableIncomes.length === 0}
+                                          className="w-full flex items-center justify-between text-xs font-semibold text-zinc-400 disabled:opacity-50"
+                                      >
+                                          <span>{selectedIds.length === selectableIncomes.length && selectableIncomes.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                                          <span>{selectedIds.length} selecionados</span>
+                                      </button>
+                                  </div>
                                   {filteredIncomes.length > 0 ? (
-                                      filteredIncomes.map((income) => {
-                                          const isLocked = Boolean(income.locked);
-                                          const normalizedStatus = normalizeIncomeStatus(income.status);
-                                          const statusLabel = incomeStatusLabel(income.status);
-                                          const statusClass =
-                                              normalizedStatus === 'received'
-                                                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                                                  : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
-                                          const accountName = getAccountById(income.accountId)?.name || 'Conta Deletada';
+                                      <div className="relative">
+                                          <div
+                                              ref={mobilePagerRef}
+                                              className="flex gap-4 overflow-x-auto overflow-y-hidden snap-x snap-mandatory scrollbar-hide no-vertical-scroll"
+                                              style={{ touchAction: 'pan-x', overscrollBehaviorY: 'contain' }}
+                                              onScroll={(event) => {
+                                                  const el = event.currentTarget;
+                                                  const index = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
+                                                  setMobilePageIndex(index);
+                                              }}
+                                          >
+                                              {mobilePages.map((page, pageIndex) => (
+                                                  <div key={`page-${pageIndex}`} className="min-w-full snap-start space-y-2">
+                                                      {page.map((income, index) => {
+                                          const isLocked = Boolean(income.locked || income.lockedReason === 'epoch_mismatch');
+                                          const isSelected = selectedIds.includes(income.id);
+                                          const rowBg = index % 2 === 0 ? 'bg-emerald-500/10' : 'bg-transparent';
                                           return (
-                                              <div key={income.id} id={`income-${income.id}`}>
-                                                  <MobileTransactionCard
-                                                      title={income.description}
-                                                      amount={`+ R$ ${income.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                                                      amountClassName={isLocked ? 'text-zinc-400 dark:text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}
-                                                      dateLabel={new Date(income.date + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                      statusLabel={statusLabel}
-                                                      statusClassName={statusClass}
-                                                      category={income.category}
-                                                      subtitle={accountName}
-                                                      isHighlighted={highlightedId === income.id}
-                                                      isLocked={isLocked || income.lockedReason === 'epoch_mismatch'}
+                                              <div key={income.id} id={`income-${income.id}`} className={`py-2 ${rowBg} rounded-md`}>
+                                                  <button
+                                                      type="button"
                                                       onClick={() => openDrawer(income)}
-                                                  />
+                                                      className="w-full flex items-center justify-between gap-3 text-left"
+                                                      disabled={isLocked}
+                                                  >
+                                                      <div className="flex items-center gap-2 min-w-0">
+                                                          <input
+                                                              type="checkbox"
+                                                              checked={isSelected}
+                                                              onChange={() => toggleSelection(income.id)}
+                                                              onClick={(event) => event.stopPropagation()}
+                                                              disabled={isLocked}
+                                                              className="h-4 w-4 accent-emerald-500"
+                                                              aria-label={`Selecionar entrada ${income.description}`}
+                                                          />
+                                                          <span
+                                                              className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}
+                                                              title={income.description}
+                                                          >
+                                                              {income.description}
+                                                          </span>
+                                                      </div>
+                                                      <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                                          R$ {income.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                      </span>
+                                                  </button>
                                               </div>
                                           );
-                                      })
+                                                      })}
+                                                  </div>
+                                              ))}
+                                          </div>
+                                          {hasMobilePages && (
+                                              <div className="mt-2 flex items-center justify-end gap-2">
+                                                  <span className="text-[10px] text-zinc-400">
+                                                      {mobilePageIndex + 1}/{mobilePages.length}
+                                                  </span>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                          const next = (mobilePageIndex + 1) % mobilePages.length;
+                                                          const container = mobilePagerRef.current;
+                                                          if (container) {
+                                                              container.scrollTo({ left: container.clientWidth * next, behavior: 'smooth' });
+                                                          }
+                                                      }}
+                                                      className="h-8 w-8 rounded-full bg-white/10 text-white flex items-center justify-center"
+                                                      aria-label="Próxima página"
+                                                  >
+                                                      <ChevronDown size={16} className="-rotate-90" />
+                                                  </button>
+                                              </div>
+                                          )}
+                                      </div>
                                   ) : (
                                       <MobileEmptyState
                                           icon={<ArrowUpCircle size={18} />}
@@ -757,29 +858,83 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                       />
                                   )}
                               </div>
-                          ) : (
-                              <div className="space-y-4">
-                                  <NewIncomeModal
-                                      isOpen
-                                      variant="inline"
-                                      onClose={handleMobileFormClose}
-                                      onSave={handleSaveIncome}
-                                      initialData={editingIncome}
-                                      accounts={accounts}
-                                      categories={categories}
-                                      userId={userId}
-                                      categoryType="incomes"
-                                      onAddCategory={onAddCategory}
-                                      onRemoveCategory={onRemoveCategory}
-                                      onResetCategories={onResetCategories}
-                                      defaultDate={viewDate}
-                                      minDate={minDate}
-                                  />
-                              </div>
-                          )}
+                          ) : null}
                       </div>
                   </div>
               </div>
+
+              {!isListView && (
+                  <div className="fixed inset-0 z-[1200]">
+                      <button
+                          type="button"
+                          onClick={handleMobileFormClose}
+                          className="absolute inset-0 bg-black/70"
+                          aria-label="Fechar nova entrada"
+                      />
+                      <div
+                          className="absolute left-0 right-0 bottom-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+                          style={{ top: 0 }}
+                      >
+                          <div className="px-3 pt-2 pb-2 bg-gradient-to-r from-emerald-500/80 via-emerald-500/35 to-black">
+                              <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                          <ArrowUpCircle size={16} className="text-white" />
+                                          <p className="text-sm font-semibold text-white truncate">{headerTitle}</p>
+                                      </div>
+                                      <p className="text-[10px] text-white/70">Preencha os dados da entrada.</p>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={handleMobileFormClose}
+                                      className="h-8 w-8 rounded-full bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                      aria-label="Fechar nova entrada"
+                                  >
+                                      <X size={16} />
+                                  </button>
+                              </div>
+                          </div>
+                          <div className="flex-1 overflow-hidden px-2 pt-1 pb-16">
+                              <NewIncomeModal
+                                  isOpen
+                                  variant="inline"
+                                  hideFooter
+                                  onPrimaryActionRef={(handler) => {
+                                      submitRef.current = handler;
+                                  }}
+                                  onClose={handleMobileFormClose}
+                                  onSave={handleSaveIncome}
+                                  initialData={editingIncome}
+                                  accounts={accounts}
+                                  categories={categories}
+                                  userId={userId}
+                                  categoryType="incomes"
+                                  onAddCategory={onAddCategory}
+                                  onRemoveCategory={onRemoveCategory}
+                                  onResetCategories={onResetCategories}
+                                  defaultDate={viewDate}
+                                  minDate={minDate}
+                              />
+                          </div>
+                          <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+6px)] grid grid-cols-2 gap-2">
+                              <button
+                                  type="button"
+                                  onClick={handleMobileFormClose}
+                                  className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                              >
+                                  Cancelar
+                              </button>
+                              <button
+                                  type="button"
+                                  onClick={() => submitRef.current?.()}
+                                  className="rounded-lg border border-emerald-500/40 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
+                              >
+                                  Salvar
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+              )}
 
               <MobileTransactionDrawer
                   open={Boolean(drawerIncome)}
@@ -890,18 +1045,18 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
-                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{filteredIncomes.length}</p>
+                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
               </div>
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Previsto</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
-                      R$ {totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
               </div>
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Recebido</p>
                   <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
-                      R$ {totalReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      R$ {headerReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
               </div>
           </div>
@@ -929,14 +1084,14 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
   const summarySection = (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
-          <div className="rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
               {desktopHeader}
           </div>
       </div>
   );
 
   return (
-      <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+      <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${incomeDesktopNeedsScroll ? 'pb-20' : 'pb-6'} ${incomeDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
           {summarySection}
 
           {selectedIds.length > 0 && (
@@ -978,12 +1133,12 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               </div>
           )}
 
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 py-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <main className={`max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] animate-in fade-in slide-in-from-bottom-4 duration-500 ${incomeDesktopNeedsScroll ? 'pb-10' : 'pb-6'}`}>
               <div className="space-y-3">
                   {inlineNewOpen && (
                       <NewIncomeModal
                           isOpen
-                          variant="inline"
+                          variant={isMobile ? 'inline' : 'dock'}
                           onClose={closeIncomeModal}
                           onSave={handleSaveIncome}
                           initialData={null}
@@ -1018,7 +1173,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               <span className="text-[11px]">{selectedIds.length} selecionados</span>
                           </div>
 
-                          {visibleIncomes.map(income => {
+                          {visibleIncomes.map((income, index) => {
                               const isSelected = selectedIds.includes(income.id);
                               const isHighlighted = highlightedId === income.id;
                               const lockedReason = income.lockedReason;
@@ -1029,45 +1184,37 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               const isExpanded = drawerIncome?.id === income.id;
                               const isInlineEditing = inlineEditIncomeId === income.id;
                               const details = isExpanded ? buildIncomeDetails(income) : [];
+                              const rowBg = index % 2 === 0 ? 'bg-emerald-500/10' : 'bg-transparent';
 
                               return (
                                   <div key={income.id} id={`income-${income.id}`} className="space-y-3">
-                                      <div className="relative">
-                                          <MobileTransactionCard
-                                              title={income.description}
-                                              amount={`+ R$ ${income.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                                              amountClassName={
-                                                  isLocked
-                                                      ? 'text-zinc-400 dark:text-zinc-500'
-                                                      : 'text-emerald-600 dark:text-emerald-400'
-                                              }
-                                              dateLabel={new Date(income.date + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                              statusLabel={statusLabel}
-                                              statusClassName={statusClassName}
-                                              category={income.category}
-                                              subtitle={accountName}
-                                              isHighlighted={isHighlighted || isSelected}
-                                              isLocked={isLocked}
-                                              lockedLabel={lockedLabel}
-                                              onClick={isLocked ? undefined : () => openDrawer(income)}
-                                          />
+                                      <div className={`py-2 rounded-md ${rowBg}`}>
                                           <button
                                               type="button"
-                                              onClick={(event) => {
-                                                  event.stopPropagation();
-                                                  toggleSelection(income.id);
-                                              }}
+                                              onClick={() => openDrawer(income)}
+                                              className="w-full flex items-center justify-between gap-3 text-left"
                                               disabled={isLocked}
-                                              className="absolute right-3 top-3 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-[#151517]/90 p-1.5 text-zinc-500 hover:text-emerald-600 disabled:opacity-60"
-                                              aria-label={`Selecionar entrada ${income.description}`}
                                           >
-                                              {isLocked ? (
-                                                  <Lock size={14} className="text-amber-500" />
-                                              ) : isSelected ? (
-                                                  <CheckSquare size={14} className="text-emerald-600" />
-                                              ) : (
-                                                  <Square size={14} />
-                                              )}
+                                              <div className="flex items-center gap-2 min-w-0">
+                                                  <input
+                                                      type="checkbox"
+                                                      checked={isSelected}
+                                                      onChange={() => toggleSelection(income.id)}
+                                                      onClick={(event) => event.stopPropagation()}
+                                                      disabled={isLocked}
+                                                      className="h-4 w-4 accent-emerald-500"
+                                                      aria-label={`Selecionar entrada ${income.description}`}
+                                                  />
+                                                  <span
+                                                      className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}
+                                                      title={income.description}
+                                                  >
+                                                      {income.description}
+                                                  </span>
+                                              </div>
+                                              <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                                  R$ {income.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                              </span>
                                           </button>
                                       </div>
 
@@ -1137,21 +1284,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               );
                           })}
 
-                          {shouldCollapseIncomes && (
-                              <button
-                                  type="button"
-                                  onClick={() => setIsIncomeListExpanded(prev => !prev)}
-                                  className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[12px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                              >
-                                  {isIncomeListExpanded
-                                      ? 'Clique para recolher'
-                                      : `Clique para expandir (+${extraIncomeCount})`}
-                                  <ChevronDown
-                                      size={14}
-                                      className={`transition-transform ${isIncomeListExpanded ? 'rotate-180' : ''}`}
-                                  />
-                              </button>
-                          )}
+                          
                       </>
                   ) : (
                       <MobileEmptyState

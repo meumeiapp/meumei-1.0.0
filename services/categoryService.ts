@@ -11,13 +11,13 @@ import { guardUserPath } from '../utils/pathGuard';
 
 export type CategoryType = 'incomes' | 'expenses';
 
-const MAX_CATEGORIES = 50;
+const MAX_CATEGORIES = 20;
 
 const buildCategoryRef = (uid: string, type: CategoryType) =>
   doc(db, 'users', uid, 'categories', type);
 
 const normalizeCategoryName = (name: string): string =>
-  name.trim().replace(/\s+/g, ' ');
+  name.trim().replace(/\s+/g, ' ').toUpperCase();
 
 const normalizeCategoryKey = (name: string): string =>
   normalizeCategoryName(name).toLowerCase();

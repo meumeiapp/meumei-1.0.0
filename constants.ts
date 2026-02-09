@@ -40,9 +40,29 @@ export const DEFAULT_ACCOUNT_TYPES = [
     'Conta Digital Internacional',
     'Rendimentos',
     'Investimento',
-    'Dinheiro (Espécie)'
+    'Dinheiro (Espécie)',
+    'Conta Corrente PJ',
+    'Conta Corrente PF',
+    'Conta Poupança',
+    'Conta Salário',
+    'Caixa (Físico)',
+    'Banco Digital',
+    'Conta Empresarial',
+    'Conta de Investimento',
+    'Conta Reserva',
+    'Conta de Operação',
+    'Conta de Recebimento',
+    'Conta de Pagamento',
+    'Conta Internacional USD',
+    'Conta Internacional EUR'
 ];
 
 export const DEFAULT_EXPENSE_CATEGORIES: string[] = [];
 
 export const DEFAULT_INCOME_CATEGORIES: string[] = [];
+
+export const DEFAULT_EXPENSE_TYPES = [
+    { id: 'fixed', label: 'Fixa', enabled: true, nature: 'PJ', color: '#f59e0b' },
+    { id: 'variable', label: 'Variável', enabled: true, nature: 'PJ', color: '#ef4444' },
+    { id: 'personal', label: 'Pessoal', enabled: true, nature: 'PF', color: '#22d3ee' }
+];

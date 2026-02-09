@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 interface QuickAccessItem {
   id: string;
@@ -7,6 +7,7 @@ interface QuickAccessItem {
   icon: React.ReactNode;
   onClick: () => void;
   showWhen?: boolean;
+  isActive?: boolean;
 }
 
 interface DesktopQuickAccessFooterProps {
@@ -15,19 +16,56 @@ interface DesktopQuickAccessFooterProps {
 }
 
 const DesktopQuickAccessFooter: React.FC<DesktopQuickAccessFooterProps> = ({
-  items,
-  versionLabel = 'versão 1.0.0'
+  items
 }) => {
   const visibleItems = items.filter(item => item.showWhen !== false);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!shellRef.current) return;
+    const node = shellRef.current;
+    const root = document.documentElement;
+
+    const updateDockHeight = () => {
+      const rect = node.getBoundingClientRect();
+      const rawHeight = Math.round(rect.height);
+      const clampedHeight = Math.min(Math.max(rawHeight, 72), 120);
+      root.style.setProperty('--mm-desktop-dock-height', `${clampedHeight}px`);
+      if (barRef.current) {
+        const barRect = barRef.current.getBoundingClientRect();
+        root.style.setProperty('--mm-desktop-dock-width', `${Math.round(barRect.width)}px`);
+        const barOffset = Math.round(window.innerHeight - barRect.top);
+        root.style.setProperty('--mm-desktop-dock-bar-offset', `${barOffset}px`);
+      }
+    };
+
+    updateDockHeight();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateDockHeight) : null;
+    observer?.observe(node);
+    window.addEventListener('resize', updateDockHeight);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateDockHeight);
+    };
+  }, []);
 
   if (visibleItems.length === 0) return null;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[60]">
-      <div className="quick-access-shell relative w-full border-t border-white/10 bg-black/75 shadow-[0_-18px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-7xl flex-col px-8 pb-3 pt-3">
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            {visibleItems.map(item => (
+      <div className="quick-access-shell relative w-full bg-transparent" ref={shellRef}>
+        <div className="mm-dock-inner mx-auto flex w-full max-w-7xl flex-col px-6 pb-2 pt-2">
+          <div
+            ref={barRef}
+            className="flex w-full items-center justify-center gap-3 rounded-[26px] border border-white/20 bg-white/5 px-5 py-2 shadow-[0_10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl dark:border-white/20 dark:bg-white/5"
+          >
+            {visibleItems.map(item => {
+              const activeClass = item.isActive
+                ? 'scale-[1.06] border-white/90 bg-white/15 shadow-[0_0_0_1px_rgba(255,255,255,0.6),0_18px_28px_rgba(0,0,0,0.55)]'
+                : 'border-white/35 bg-transparent shadow-[0_8px_18px_rgba(0,0,0,0.35)]';
+              return (
               <button
                 key={item.id}
                 type="button"
@@ -35,17 +73,19 @@ const DesktopQuickAccessFooter: React.FC<DesktopQuickAccessFooterProps> = ({
                   (event.currentTarget as HTMLButtonElement).blur();
                   item.onClick();
                 }}
-                className="shrink-0 flex h-[88px] w-[88px] flex-col items-center justify-center gap-1.5 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] text-[10px] font-semibold text-zinc-700 dark:text-zinc-200 shadow-sm"
+                className={`group relative shrink-0 flex h-[72px] w-[72px] items-center justify-center rounded-2xl border transition ${activeClass}`}
+                aria-label={item.shortLabel || item.label}
+                title={item.shortLabel || item.label}
               >
-                <div className="h-10 w-10 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+                <div className="h-16 w-16 rounded-xl bg-transparent flex items-center justify-center">
                   {item.icon}
                 </div>
-                <span className="leading-tight text-center">{item.shortLabel || item.label}</span>
+                <span className="pointer-events-none absolute -top-6 whitespace-nowrap rounded-full bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-white opacity-0 shadow-md transition group-hover:opacity-100">
+                  {item.shortLabel || item.label}
+                </span>
               </button>
-            ))}
-          </div>
-          <div className="pt-2 text-center text-[10px] text-zinc-400">
-            {versionLabel}
+              );
+            })}
           </div>
         </div>
       </div>

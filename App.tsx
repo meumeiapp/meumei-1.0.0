@@ -22,6 +22,7 @@ import DesktopQuickAccessFooter from './components/desktop/DesktopQuickAccessFoo
 import Landing from './Pages/Landing';
 import Termos from './Pages/Termos';
 import Privacidade from './Pages/Privacidade';
+import Reembolso from './Pages/Reembolso';
 import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference, ExpenseType, ExpenseTypeOption, AgendaItem } from './types';
 import { COMPANY_DATA, DEFAULT_COMPANY_INFO, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_TYPES, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_EXPENSE_TYPES } from './constants';
 import { dataService } from './services/dataService';
@@ -39,7 +40,6 @@ import { auth, db, firebaseDebugInfo } from './services/firebase';
 import { preferencesService } from './services/preferencesService';
 import {
   ArrowUpCircle,
-  BarChart3,
   CalendarDays,
   Calculator,
   CreditCard as CreditCardIcon,
@@ -51,6 +51,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Repeat,
   ShieldOff,
   ShoppingCart,
   TrendingUp,
@@ -65,6 +66,7 @@ import { getMonthExpenses } from './utils/expenseMonthFilter';
 import { isBalanceDebugEnabled, shouldApplyLegacyBalanceMutation } from './utils/legacyBalanceMutation';
 import { usePwaInstallPrompt } from './hooks/usePwaInstallPrompt';
 import useIsMobile from './hooks/useIsMobile';
+import useIsCompactHeight from './hooks/useIsCompactHeight';
 import useMobileTopOffset from './hooks/useMobileTopOffset';
 import useIsMobileLandscape from './hooks/useIsMobileLandscape';
 import APP_VERSION from './appVersion';
@@ -75,6 +77,20 @@ import { BUILD_ID } from './utils/buildInfo';
 const PURCHASE_URL = 'https://meumeiapp.web.app/';
 const BETA_LANDING_URL = 'https://meumei-d88be.web.app';
 const RESOLVE_TIMEOUT_MS = 12_000;
+
+const ReportsBarsIcon: React.FC<{ size?: number }> = ({ size = 28 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 28 28"
+    role="img"
+    aria-hidden="true"
+  >
+    <rect x="5" y="13" width="4" height="10" rx="1" fill="#22c55e" />
+    <rect x="12" y="7" width="4" height="16" rx="1" fill="#ef4444" />
+    <rect x="19" y="10" width="4" height="13" rx="1" fill="#10b981" />
+  </svg>
+);
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -224,6 +240,8 @@ const AppInner: React.FC = () => {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
+  const [registerAcceptedTerms, setRegisterAcceptedTerms] = useState(false);
+  const [registerTermsError, setRegisterTermsError] = useState('');
   const ACCESS_BLOCKED_MESSAGE =
     'Seu acesso ainda não está liberado. Conclua o pagamento para criar sua conta.';
   const [checkoutStatus, setCheckoutStatus] = useState<{
@@ -270,6 +288,7 @@ const AppInner: React.FC = () => {
   const [pwaInstalledFlag, setPwaInstalledFlag] = useState(false);
   const [deferredPromptEvent, setDeferredPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const isMobile = useIsMobile();
+  const isCompactHeight = useIsCompactHeight();
   const isMobileLandscape = useIsMobileLandscape();
   useMobileTopOffset();
   const [isQuickExpenseOpen, setIsQuickExpenseOpen] = useState(false);
@@ -302,7 +321,12 @@ const AppInner: React.FC = () => {
   const isLoginRoute = currentPath === '/login';
   const isTermsRoute = currentPath === '/termos';
   const isPrivacyRoute = currentPath === '/privacidade';
-  const isPublicRoute = isLandingRoute || isLoginRoute || isOnboardingRoute || isTermsRoute || isPrivacyRoute;
+  const isRefundRoute = currentPath === '/reembolso';
+  const isPublicRoute = isLandingRoute || isLoginRoute || isOnboardingRoute || isTermsRoute || isPrivacyRoute || isRefundRoute;
+  useEffect(() => {
+      if (typeof document === 'undefined') return;
+      document.body.dataset.appShell = isPublicRoute ? 'false' : 'true';
+  }, [isPublicRoute]);
   const [cryptoStatus, setCryptoStatus] = useState<'ready' | 'missing' | 'error'>('ready');
   const cryptoGuardLogged = useRef(false);
   const checkoutTriggeredRef = useRef(false);
@@ -368,6 +392,7 @@ const AppInner: React.FC = () => {
       const handleInput = (event: Event) => {
           const inputEvent = event as InputEvent;
           if (inputEvent.isComposing) return;
+          if (document.body.dataset.uppercase !== 'on') return;
           const target = event.target as HTMLElement | null;
           if (!target) return;
           if (target.hasAttribute('data-no-uppercase') || target.hasAttribute('data-preserve-case')) {
@@ -409,6 +434,20 @@ const AppInner: React.FC = () => {
           document.removeEventListener('input', handleInput, true);
       };
   }, []);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const enableUppercase =
+        Boolean(authUser) &&
+        !isLandingRoute &&
+        !isTermsRoute &&
+        !isPrivacyRoute &&
+        !isRefundRoute;
+      document.body.dataset.uppercase = enableUppercase ? 'on' : 'off';
+      return () => {
+        delete document.body.dataset.uppercase;
+      };
+  }, [authUser, isLandingRoute, isTermsRoute, isPrivacyRoute, isRefundRoute]);
 
   useEffect(() => {
       currentPathRef.current = currentPath;
@@ -1293,6 +1332,7 @@ const AppInner: React.FC = () => {
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [yields, setYields] = useState<YieldRecord[]>([]);
   const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
+  const agendaNotifyPatchedRef = useRef<Set<string>>(new Set());
   const [companySheetOpen, setCompanySheetOpen] = useState(false);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [auditModalState, setAuditModalState] = useState<{
@@ -1461,7 +1501,7 @@ const AppInner: React.FC = () => {
         id: 'reports',
         label: 'Relatórios',
         shortLabel: 'Relatórios',
-        icon: <BarChart3 size={18} className="text-zinc-500 dark:text-zinc-400" />,
+        icon: <ReportsBarsIcon size={18} />,
         onClick: () => setCurrentView(ViewState.REPORTS)
       },
       {
@@ -1506,7 +1546,7 @@ const AppInner: React.FC = () => {
         id: 'fixed_expenses',
         label: 'Despesas Fixas',
         shortLabel: 'Fixas',
-        icon: <Home size={28} style={{ color: resolveExpenseColor('fixed') }} />,
+        icon: <Repeat size={28} style={{ color: resolveExpenseColor('fixed') }} />,
         onClick: () => setCurrentView(ViewState.FIXED_EXPENSES),
         isActive: currentView === ViewState.FIXED_EXPENSES
       },
@@ -1546,7 +1586,7 @@ const AppInner: React.FC = () => {
         id: 'reports',
         label: 'Relatórios',
         shortLabel: 'Relatórios',
-        icon: <BarChart3 size={28} className="text-zinc-500 dark:text-zinc-400" />,
+        icon: <ReportsBarsIcon size={28} />,
         onClick: () => setCurrentView(ViewState.REPORTS),
         isActive: currentView === ViewState.REPORTS
       },
@@ -1679,27 +1719,48 @@ const AppInner: React.FC = () => {
           return;
         }
       }
-      if (!/^[0-9]$/.test(event.key)) return;
-      const shortcuts: Record<string, ViewState> = {
-        '0': ViewState.DASHBOARD,
-        '1': ViewState.ACCOUNTS,
-        '2': ViewState.INCOMES,
-        '3': ViewState.FIXED_EXPENSES,
-        '4': ViewState.VARIABLE_EXPENSES,
-        '5': ViewState.PERSONAL_EXPENSES,
-        '6': ViewState.YIELDS,
-        '7': ViewState.INVOICES,
-        '8': ViewState.REPORTS,
-        '9': ViewState.DAS
-      };
-      const nextView = shortcuts[event.key];
-      if (!nextView) return;
+      if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+      if (currentView === ViewState.LOGIN) return;
+
+      const dockOrder: Array<{ id: string; view?: ViewState; audit?: boolean }> = [
+        { id: 'home', view: ViewState.DASHBOARD },
+        { id: 'accounts', view: ViewState.ACCOUNTS },
+        { id: 'incomes', view: ViewState.INCOMES },
+        { id: 'fixed_expenses', view: ViewState.FIXED_EXPENSES },
+        { id: 'variable_expenses', view: ViewState.VARIABLE_EXPENSES },
+        { id: 'personal_expenses', view: ViewState.PERSONAL_EXPENSES },
+        { id: 'yields', view: ViewState.YIELDS },
+        { id: 'invoices', view: ViewState.INVOICES },
+        { id: 'reports', view: ViewState.REPORTS },
+        { id: 'das', view: ViewState.DAS },
+        { id: 'agenda', view: ViewState.AGENDA },
+        { id: 'audit', audit: true }
+      ];
+
+      const auditIndex = dockOrder.findIndex(item => item.audit);
+      const currentIndex = auditModalState.isOpen
+        ? auditIndex
+        : dockOrder.findIndex(item => currentView === item.view);
+      if (currentIndex === -1) return;
+      const direction = event.key === 'ArrowRight' ? 1 : -1;
+      const nextIndex = (currentIndex + direction + dockOrder.length) % dockOrder.length;
+      const nextItem = dockOrder[nextIndex];
       event.preventDefault();
-      setCurrentView(nextView);
+
+      if (nextItem.audit) {
+        setAuditModalState({ isOpen: true, entityTypes: null });
+        return;
+      }
+      if (auditModalState.isOpen) {
+        setAuditModalState(prev => ({ ...prev, isOpen: false }));
+      }
+      if (nextItem.view) {
+        setCurrentView(nextItem.view);
+      }
     };
     document.addEventListener('keydown', handleShortcut);
     return () => document.removeEventListener('keydown', handleShortcut);
-  }, [setCurrentView]);
+  }, [currentView, setCurrentView, auditModalState.isOpen, setAuditModalState]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2476,9 +2537,7 @@ const AppInner: React.FC = () => {
           setLicenseMeta(licenseRecord || null);
           const companySource = authUser?.uid ? await dataService.getCompany(authUser.uid) : null;
           if (companySource) {
-              const normalizedStartDate = companySource.startDate
-                  ? (companySource.startDate > COMPANY_DATA.monthStartISO ? COMPANY_DATA.monthStartISO : companySource.startDate)
-                  : COMPANY_DATA.monthStartISO;
+              const normalizedStartDate = companySource.startDate || COMPANY_DATA.monthStartISO;
               const companyWithAdjustedStart = { ...companySource, startDate: normalizedStartDate };
               setCompanyInfo(companyWithAdjustedStart);
               if (companyWithAdjustedStart.startDate) {
@@ -2541,6 +2600,7 @@ const AppInner: React.FC = () => {
       const uid = authUser?.uid || null;
       if (!uid) return;
       if (!import.meta.env.DEV) return;
+      if (uid !== 'ZbrLdQuqn4MlOK16MjBOr6GZM3l1') return;
       if (cryptoStatus !== 'ready' || !licenseCryptoEpoch) return;
       if (typeof window === 'undefined') return;
       const year = new Date().getFullYear();
@@ -2819,6 +2879,21 @@ const AppInner: React.FC = () => {
   }, [currentUser?.licenseId, needsAgenda, currentView]);
 
   useEffect(() => {
+      const licenseId = currentUser?.licenseId;
+      if (!licenseId || agendaItems.length === 0) return;
+      const pendingPatch = agendaItems.filter(
+          (item) =>
+              typeof item.notifyAtMs !== 'number' &&
+              !agendaNotifyPatchedRef.current.has(item.id)
+      );
+      if (pendingPatch.length === 0) return;
+      pendingPatch.forEach((item) => {
+          agendaNotifyPatchedRef.current.add(item.id);
+          void dataService.upsertAgendaItem(item, licenseId);
+      });
+  }, [agendaItems, currentUser?.licenseId]);
+
+  useEffect(() => {
       const uid = authUser?.uid;
       if (!uid) {
           console.info('[load] skipped:no-auth', { scope: 'categories' });
@@ -3011,6 +3086,21 @@ const AppInner: React.FC = () => {
       } finally {
           setLogoutInProgress(false);
       }
+  };
+
+  const handleOpenCompanySheet = async () => {
+      const uid = authUser?.uid || null;
+      if (uid) {
+          try {
+              const latest = await dataService.getCompany(uid);
+              if (latest) {
+                  setCompanyInfo(latest);
+              }
+          } catch (error) {
+              console.warn('[company] refresh_failed', error);
+          }
+      }
+      setCompanySheetOpen(true);
   };
 
   // --- DATA MODIFIERS (Optimistic UI + Firebase) ---
@@ -3544,11 +3634,52 @@ const AppInner: React.FC = () => {
       }
   }, [hasEpochLocked]);
 
+  const uppercaseEnabled = !isPublicRoute;
+  const handleUppercaseInputCapture = (event: React.FormEvent<HTMLElement>) => {
+      if (!uppercaseEnabled) return;
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target instanceof HTMLInputElement) {
+          if (target.dataset.uppercase === 'false') return;
+          const type = target.type;
+          if (!['text', 'search', 'tel', 'url', 'email'].includes(type)) return;
+          const value = target.value;
+          if (!value) return;
+          const next = value.toUpperCase();
+          if (next === value) return;
+          const start = target.selectionStart;
+          const end = target.selectionEnd;
+          target.value = next;
+          if (start !== null && end !== null) {
+              target.setSelectionRange(start, end);
+          }
+          return;
+      }
+      if (target instanceof HTMLTextAreaElement) {
+          if (target.dataset.uppercase === 'false') return;
+          const value = target.value;
+          if (!value) return;
+          const next = value.toUpperCase();
+          if (next === value) return;
+          const start = target.selectionStart;
+          const end = target.selectionEnd;
+          target.value = next;
+          if (start !== null && end !== null) {
+              target.setSelectionRange(start, end);
+          }
+      }
+  };
+
 const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: boolean }) => {
     const shouldOffset = isMobile && !options?.skipMobileOffset;
-    const layoutPaddingClass = isMobile ? 'pb-20' : 'pb-28';
+    const compactMode = !isPublicRoute && isCompactHeight;
+    const layoutPaddingClass = isMobile ? 'pb-20' : compactMode ? 'pb-20' : 'pb-28';
     return (
-        <div className={`min-h-screen bg-zinc-100 dark:bg-[#09090b] text-zinc-950 dark:text-white font-inter transition-colors duration-300 ${layoutPaddingClass}`}>
+        <div
+            className={`mm-app-root min-h-screen bg-zinc-100 dark:bg-[#09090b] text-zinc-950 dark:text-white font-inter transition-colors duration-300 ${layoutPaddingClass} ${compactMode ? 'mm-compact' : ''}`}
+            data-compact={compactMode ? 'true' : undefined}
+            onInputCapture={uppercaseEnabled ? handleUppercaseInputCapture : undefined}
+        >
             <GlobalHeader 
                 companyName={companyInfo.name}
                 username={currentUser?.email || ''}
@@ -3562,58 +3693,60 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 onOpenReports={() => setCurrentView(ViewState.REPORTS)}
                 onOpenAgenda={() => setCurrentView(ViewState.AGENDA)}
                 onLogout={handleLogout}
-                onCompanyClick={() => setCompanySheetOpen(true)}
+                onCompanyClick={handleOpenCompanySheet}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
                 onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: null })}
                 canAccessSettings={canAccessSettings}
                 versionLabel={APP_VERSION}
             />
             <div style={shouldOffset ? { paddingTop: 'var(--mm-mobile-top, 92px)' } : undefined}>
-                {cryptoStatus !== 'ready' && (
-                    <div className="mx-auto mt-4 max-w-5xl px-4">
-                        <div className="rounded-2xl border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/80 dark:bg-amber-900/10 px-4 py-3 text-amber-700 dark:text-amber-300 text-sm">
-                            Configuração de segurança pendente: defina <span className="font-semibold">VITE_CRYPTO_SALT</span>. Modo protegido ativo (somente leitura).
+                <div className={`mm-content ${compactMode ? 'mm-content--compact scrollbar-hide' : ''}`}>
+                    {cryptoStatus !== 'ready' && (
+                        <div className="mx-auto mt-4 max-w-5xl px-4">
+                            <div className="rounded-2xl border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/80 dark:bg-amber-900/10 px-4 py-3 text-amber-700 dark:text-amber-300 text-sm">
+                                Configuração de segurança pendente: defina <span className="font-semibold">VITE_CRYPTO_SALT</span>. Modo protegido ativo (somente leitura).
+                            </div>
                         </div>
-                    </div>
-                )}
-                {hasEpochLocked && (
-                    <div className="mx-auto mt-4 max-w-5xl px-4">
-                        <div className="rounded-2xl border border-blue-200/60 dark:border-blue-900/40 bg-blue-50/80 dark:bg-blue-900/10 px-4 py-3 text-blue-700 dark:text-blue-300 text-sm">
-                            Dados anteriores arquivados por atualização de segurança. Itens históricos permanecem visíveis, mas não podem ser editados.
+                    )}
+                    {hasEpochLocked && (
+                        <div className="mx-auto mt-4 max-w-5xl px-4">
+                            <div className="rounded-2xl border border-blue-200/60 dark:border-blue-900/40 bg-blue-50/80 dark:bg-blue-900/10 px-4 py-3 text-blue-700 dark:text-blue-300 text-sm">
+                                Dados anteriores arquivados por atualização de segurança. Itens históricos permanecem visíveis, mas não podem ser editados.
+                            </div>
                         </div>
-                    </div>
-                )}
-                {!agendaNoticeDismissed && agendaTodayItems.length > 0 && (
-                    <div className="mx-auto mt-4 max-w-5xl px-4">
-                        <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/10 px-4 py-3 text-emerald-800 dark:text-emerald-200 text-sm">
-                            <div className="flex items-start justify-between gap-3">
-                                <div>
-                                    <p className="font-semibold">Agenda de hoje</p>
-                                    <p className="text-[12px] text-emerald-700 dark:text-emerald-200/80">
-                                        {agendaTodayItems.length} compromisso(s) marcado(s) para hoje.
-                                    </p>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setCurrentView(ViewState.AGENDA)}
-                                        className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
-                                    >
-                                        Ver agenda
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={dismissAgendaNotice}
-                                        className="rounded-full border border-emerald-300/70 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/60 dark:text-emerald-100 dark:hover:bg-emerald-800/40"
-                                    >
-                                        Dispensar
-                                    </button>
+                    )}
+                    {!agendaNoticeDismissed && agendaTodayItems.length > 0 && (
+                        <div className="mx-auto mt-4 max-w-5xl px-4">
+                            <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/10 px-4 py-3 text-emerald-800 dark:text-emerald-200 text-sm">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className="font-semibold">Agenda de hoje</p>
+                                        <p className="text-[12px] text-emerald-700 dark:text-emerald-200/80">
+                                            {agendaTodayItems.length} compromisso(s) marcado(s) para hoje.
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrentView(ViewState.AGENDA)}
+                                            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
+                                        >
+                                            Ver agenda
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={dismissAgendaNotice}
+                                            className="rounded-full border border-emerald-300/70 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/60 dark:text-emerald-100 dark:hover:bg-emerald-800/40"
+                                        >
+                                            Dispensar
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
-                {content}
+                    )}
+                    {content}
+                </div>
                 {!isMobile && companySheetOpen && (
                     <div
                         className="fixed inset-x-0 z-[120] px-4 sm:px-6"
@@ -3716,6 +3849,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           setLoginError('Informe o e-mail.');
           return;
       }
+      if (!registerAcceptedTerms) {
+          setRegisterTermsError('Você precisa aceitar os Termos de Uso e a Política de Privacidade.');
+          return;
+      }
       if (!loginPassword) {
           setLoginError('Informe uma senha para criar sua conta.');
           return;
@@ -3731,6 +3868,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       setLoginError('');
       setLoginErrorCode('');
       setResetPasswordMessage(null);
+      setRegisterTermsError('');
       setLoginLoading(true);
       const sessionId = checkoutSessionId;
       try {
@@ -3797,6 +3935,8 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           setLoginEmail('');
           setLoginPassword('');
           setRegisterConfirmPassword('');
+          setRegisterAcceptedTerms(false);
+          setRegisterTermsError('');
           setCheckoutStatus(null);
           setCheckoutSessionId('');
           setCheckoutVerifiedEmail('');
@@ -3839,6 +3979,8 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       console.info('[beta-auth] create_account_click', { source });
       setAuthMode('register');
       setRegisterConfirmPassword('');
+      setRegisterAcceptedTerms(false);
+      setRegisterTermsError('');
       updateRoute('/login', '');
   };
 
@@ -3959,6 +4101,37 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                           />
                       </div>
                   )}
+                  {authMode === 'register' && (
+                      <div className="space-y-2 text-left">
+                          <label className="flex items-start gap-3 text-xs text-slate-200/80">
+                              <input
+                                  type="checkbox"
+                                  checked={registerAcceptedTerms}
+                                  onChange={(event) => {
+                                      setRegisterAcceptedTerms(event.target.checked);
+                                      if (event.target.checked) {
+                                          setRegisterTermsError('');
+                                      }
+                                  }}
+                                  className="mt-0.5 h-4 w-4 rounded border-white/30 bg-white/10 text-cyan-300 focus:ring-cyan-300/60"
+                              />
+                              <span>
+                                  Li e concordo com os{' '}
+                                  <a href="/termos" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4 hover:text-white">
+                                      Termos de Uso
+                                  </a>{' '}
+                                  e a{' '}
+                                  <a href="/privacidade" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4 hover:text-white">
+                                      Política de Privacidade
+                                  </a>
+                                  .
+                              </span>
+                          </label>
+                          {registerTermsError && (
+                              <div className="text-xs text-rose-300">{registerTermsError}</div>
+                          )}
+                      </div>
+                  )}
                   {loginError && (
                       loginError === ACCESS_BLOCKED_MESSAGE ? (
                           <button
@@ -4042,6 +4215,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
 
   if (isPrivacyRoute) {
       return <Privacidade />;
+  }
+
+  if (isRefundRoute) {
+      return <Reembolso />;
   }
 
   if (isOnboardingRoute && !authUser) {
@@ -4177,6 +4354,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
             onSave={handleUpsertAgendaItem}
             onDelete={handleDeleteAgendaItem}
             onBack={() => setCurrentView(ViewState.DASHBOARD)}
+            viewDate={viewDate}
           />
       )}
 

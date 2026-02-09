@@ -268,8 +268,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
           onClick={onAddYield}
           className="w-full rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2"
         >
-          <Plus size={16} />
-          Adicionar rendimento
+          Novo Rendimento
         </button>
       </div>
     </div>
@@ -298,47 +297,35 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
           </div>
         </div>
         <div
-          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+128px)]"
+          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
           style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
         >
           <div className="space-y-5">
-            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-4 py-3 shadow-sm">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-400">Ações rápidas</p>
-              <div className="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800">
-                <button
-                  type="button"
-                  onClick={onOpenCalculator}
-                  className="w-full flex items-center justify-between py-3 text-sm font-semibold text-zinc-700 dark:text-zinc-200"
-                >
-                  <span className="flex items-center gap-2">
-                    <Sparkles size={16} className="text-indigo-500" />
-                    Simular crescimento
-                  </span>
-                  <ChevronRight size={16} className="text-zinc-400" />
-                </button>
-                <button
-                  type="button"
-                  onClick={onOpenGoal}
-                  className="w-full flex items-center justify-between py-3 text-sm font-semibold text-zinc-700 dark:text-zinc-200"
-                >
-                  <span className="flex items-center gap-2">
-                    <Target size={16} className="text-emerald-500" />
-                    Definir meta
-                  </span>
-                  <ChevronRight size={16} className="text-zinc-400" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleScrollToHistory}
-                  className="w-full flex items-center justify-between py-3 text-sm font-semibold text-zinc-700 dark:text-zinc-200"
-                >
-                  <span className="flex items-center gap-2">
-                    <History size={16} className="text-amber-500" />
-                    Ver histórico completo
-                  </span>
-                  <ChevronRight size={16} className="text-zinc-400" />
-                </button>
-              </div>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={onOpenCalculator}
+                className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] py-2.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 shadow-sm"
+              >
+                <Sparkles size={16} className="text-indigo-500" />
+                Simular
+              </button>
+              <button
+                type="button"
+                onClick={onOpenGoal}
+                className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] py-2.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 shadow-sm"
+              >
+                <Target size={16} className="text-emerald-500" />
+                Meta
+              </button>
+              <button
+                type="button"
+                onClick={handleScrollToHistory}
+                className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] py-2.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 shadow-sm"
+              >
+                <History size={16} className="text-amber-500" />
+                Histórico
+              </button>
             </div>
 
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4 shadow-sm">

@@ -1,19 +1,23 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { X, Calendar, Plus, Edit2, Trash2, ArrowUpCircle, Briefcase } from 'lucide-react';
+import { X, Plus, Edit2, Trash2, ArrowUpCircle, ChevronDown } from 'lucide-react';
 import { Income, Account } from '../types';
 import { categoryService } from '../services/categoryService';
 import { useAuth } from '../contexts/AuthContext';
 import { getPrimaryActionLabel } from '../utils/formLabels';
 import useIsMobile from '../hooks/useIsMobile';
-import MobileSelect from './mobile/MobileSelect';
+import SelectDropdown from './common/SelectDropdown';
+import WheelDatePicker from './common/WheelDatePicker';
+import { modalInputClass, modalLabelClass, modalTextareaClass } from './ui/PremiumModal';
 
 interface NewIncomeModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (income: any) => void;
   initialData?: Income | null;
-  variant?: 'modal' | 'inline';
+  variant?: 'modal' | 'inline' | 'dock';
+  hideFooter?: boolean;
+  onPrimaryActionRef?: (handler: () => void) => void;
   accounts: Account[];
   categories: string[];
   userId?: string | null;
@@ -31,6 +35,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   onSave, 
   initialData,
   variant = 'modal',
+  hideFooter = false,
+  onPrimaryActionRef,
   accounts,
   categories,
   userId,
@@ -51,16 +57,42 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [status, setStatus] = useState<'pending' | 'received'>('received');
-  const [paymentMethod, setPaymentMethod] = useState('Pix'); // Novo campo com default
+  const [paymentMethod, setPaymentMethod] = useState('');
   const [notes, setNotes] = useState('');
-  const [taxStatus, setTaxStatus] = useState<'PJ' | 'PF'>('PJ');
+  const [taxStatus, setTaxStatus] = useState<'PJ' | 'PF' | ''>('');
+  const [isNotesOpen, setIsNotesOpen] = useState(true);
+  const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
+  const hasInitializedRef = useRef(false);
+  const lastInitialIdRef = useRef<string | null>(null);
+  const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
   const { user: authUser } = useAuth();
   const modalRootRef = useRef<HTMLDivElement | null>(null);
   const availableAccounts = accounts.filter(acc => !acc.locked);
   const isMobile = useIsMobile();
   const isInline = variant === 'inline';
-  const contentPadding = isInline ? 'p-4' : 'px-8 py-8';
-  const footerPadding = isInline ? 'p-4' : 'px-8 py-6';
+  const isDock = variant === 'dock';
+  const isDockDesktop = isDock && !isMobile;
+  const contentPadding = isInline
+    ? 'p-2'
+    : isMobile
+      ? 'px-2.5 py-2'
+      : isDockDesktop
+        ? 'px-4 py-4'
+        : 'px-8 py-8';
+  const footerPadding = isInline
+    ? 'p-2'
+    : isMobile
+      ? 'px-2.5 py-1.5'
+      : isDockDesktop
+        ? 'pt-3'
+        : 'px-8 py-6';
+  const contentSpacing = isInline
+    ? 'space-y-1'
+    : isMobile
+      ? 'space-y-1'
+      : isDockDesktop
+        ? 'space-y-4'
+        : 'space-y-6';
   const isEditing = Boolean(initialData);
   const entityName = 'Entrada';
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
@@ -70,6 +102,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   // Category Management State
   const [isManagingCategories, setIsManagingCategories] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [categoryError, setCategoryError] = useState('');
 
   // Installment (Boleto Parcelado) State
   const [isInstallment, setIsInstallment] = useState(false);
@@ -132,62 +166,70 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) {
-        // Set default category if none selected
-        if (!category && categories.length > 0) {
-            setCategory(categories[0]);
-        }
-
-        if (initialData) {
-            setDescription(initialData.description);
-            setAmount(initialData.amount.toString());
-            setCategory(initialData.category);
-            setDate(clampToMinDate(initialData.date));
-            setCompetenceDate(clampToMinDate(initialData.competenceDate || initialData.date));
-            setSelectedAccountId(initialData.accountId);
-            setStatus(initialData.status);
-            setPaymentMethod(initialData.paymentMethod || 'Pix');
-            setNotes(initialData.notes || '');
-            setTaxStatus(initialData.taxStatus || 'PJ');
-            setIsInstallment(false);
-            setApplyScope('single');
-        } else {
-            // Reset form
-            setDescription('');
-            setAmount('');
-            setCategory(categories.length > 0 ? categories[0] : '');
-            
-            // Logic to set default date similar to Expenses
-            const now = new Date();
-            let initialDateStr = now.toISOString().split('T')[0];
-
-            if (defaultDate) {
-                const isSameMonth = defaultDate.getMonth() === now.getMonth() && defaultDate.getFullYear() === now.getFullYear();
-                if (!isSameMonth) {
-                    const d = new Date(defaultDate);
-                    d.setHours(12);
-                    initialDateStr = d.toISOString().split('T')[0];
-                }
-            }
-
-            const clamped = clampToMinDate(initialDateStr);
-            setDate(clamped);
-            setCompetenceDate(clampToMinDate(initialDateStr));
-            setSelectedAccountId(availableAccounts.length > 0 ? availableAccounts[0].id : '');
-            setStatus('received');
-            setPaymentMethod('Pix'); // Default para novas entradas
-            setNotes('');
-            setTaxStatus('PJ'); // Padrão é PJ
-            setIsInstallment(false);
-            setInstallmentCount(2);
-            setInstallmentValueType('total');
-            setApplyScope('single');
-        }
-    } else {
+    if (!isOpen) {
+        hasInitializedRef.current = false;
+        lastInitialIdRef.current = initialData?.id ?? null;
         setIsManagingCategories(false);
         setNewCategoryName('');
+        return;
     }
-  }, [isOpen, initialData, accounts, categories, defaultDate, minDate]);
+
+    const currentInitialId = initialData?.id ?? null;
+    const shouldInit = !hasInitializedRef.current || lastInitialIdRef.current !== currentInitialId;
+    if (!shouldInit) return;
+
+    hasInitializedRef.current = true;
+    lastInitialIdRef.current = currentInitialId;
+
+    if (initialData) {
+        setDescription(initialData.description);
+        setAmount(initialData.amount.toString());
+        setCategory(initialData.category);
+        setDate(clampToMinDate(initialData.date));
+        setCompetenceDate(clampToMinDate(initialData.competenceDate || initialData.date));
+        setSelectedAccountId(initialData.accountId);
+        setStatus(initialData.status);
+        setPaymentMethod(initialData.paymentMethod || '');
+        setNotes(initialData.notes || '');
+        setTaxStatus(initialData.taxStatus || '');
+        setIsNotesOpen(false);
+        setIsInstallment(false);
+        setApplyScope('single');
+        return;
+    }
+
+    // Reset form
+    setDescription('');
+    setAmount('');
+    setCategory('');
+    
+    // Logic to set default date similar to Expenses
+    const now = new Date();
+    let initialDateStr = now.toISOString().split('T')[0];
+
+    if (defaultDate) {
+        const isSameMonth = defaultDate.getMonth() === now.getMonth() && defaultDate.getFullYear() === now.getFullYear();
+        if (!isSameMonth) {
+            const d = new Date(defaultDate);
+            d.setHours(12);
+            initialDateStr = d.toISOString().split('T')[0];
+        }
+    }
+
+    const clamped = clampToMinDate(initialDateStr);
+    setDate(clamped);
+    setCompetenceDate(clampToMinDate(initialDateStr));
+    setSelectedAccountId('');
+    setStatus('received');
+    setPaymentMethod('');
+    setNotes('');
+    setTaxStatus('');
+    setIsNotesOpen(false);
+    setIsInstallment(false);
+    setInstallmentCount(2);
+    setInstallmentValueType('total');
+    setApplyScope('single');
+  }, [isOpen, initialData, defaultDate, minDate]);
 
   useEffect(() => {
     if (!isInline && isOpen) {
@@ -258,6 +300,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             uid,
             email
         });
+        setCategoryError('Informe um nome para a categoria.');
+        setNewCategoryName('');
         return;
     }
     const exists = categories.some(
@@ -272,15 +316,22 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             uid,
             email
         });
-        alert('Categoria já existe.');
+        setCategoryError('Categoria já existe.');
+        setNewCategoryName('');
+        return;
+    }
+    if (categories.length >= 20) {
+        setCategoryError('Limite de categorias atingido.');
+        setNewCategoryName('');
         return;
     }
     try {
         await onAddCategory(normalizedName);
         setCategory(normalizedName);
         setNewCategoryName('');
+        setCategoryError('');
     } catch (error: any) {
-        alert(error?.message || 'Falha ao salvar categoria.');
+        setCategoryError(error?.message || 'Falha ao salvar categoria.');
     }
   };
 
@@ -329,6 +380,25 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     }
   };
 
+  const toggleCategorySelection = (cat: string) => {
+    setSelectedCategories((prev) =>
+      prev.includes(cat) ? prev.filter((item) => item !== cat) : [...prev, cat]
+    );
+  };
+
+  const handleBulkDeleteCategories = async () => {
+    if (selectedCategories.length === 0) return;
+    try {
+      await Promise.all(selectedCategories.map((cat) => onRemoveCategory(cat)));
+      if (selectedCategories.includes(category)) {
+        setCategory('');
+      }
+      setSelectedCategories([]);
+    } catch (error: any) {
+      alert(error?.message || 'Falha ao remover categorias selecionadas.');
+    }
+  };
+
   const handleResetCategories = async () => {
     if (!onResetCategories) return;
     if (!userId) {
@@ -345,6 +415,14 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (!isManagingCategories) {
+      setSelectedCategories([]);
+      setCategoryError('');
+    }
+  }, [isManagingCategories]);
+
+
   const numericAmount = parseFloat(amount.replace(',', '.')) || 0;
   let installmentValue = 0;
   let finalTotal = 0;
@@ -360,7 +438,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   }
 
   const handleSave = () => {
-    if (!description || !amount || !date || !selectedAccountId) return;
+    const normalizedDescription = description.trim().replace(/\s+/g, ' ');
+    const normalizedCategory = category.trim().replace(/\s+/g, ' ');
+    const normalizedNotes = notes.trim();
+    if (!normalizedDescription || !amount || !date || !selectedAccountId) return;
     if (date < minDate) {
         alert('A data da entrada não pode ser anterior ao mês de abertura da empresa.');
         return;
@@ -369,21 +450,24 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         alert('A data de competência não pode ser anterior ao mês de abertura da empresa.');
         return;
     }
-    if (!category) {
+    if (!normalizedCategory) {
         alert('Selecione ou crie uma categoria antes de salvar.');
         return;
     }
 
+    const descriptionUpper = normalizedDescription.toUpperCase();
+    const categoryUpper = normalizedCategory.toUpperCase();
+    const notesUpper = normalizedNotes ? normalizedNotes.toUpperCase() : '';
     const baseIncome = {
         id: initialData?.id,
-        description,
-        category,
+        description: descriptionUpper,
+        category: categoryUpper,
         date, 
         competenceDate: competenceDate || date,
         accountId: selectedAccountId,
         status, 
         paymentMethod,
-        notes,
+        notes: notesUpper,
         taxStatus // Salvar natureza fiscal
     };
 
@@ -407,7 +491,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 installmentNumber: i + 1,
                 totalInstallments: installmentCount,
                 installmentGroupId: groupId,
-                description: `${description} (${i+1}/${installmentCount})`,
+                description: `${descriptionUpper} (${i+1}/${installmentCount})`,
                 status: 'pending' // Parcelas futuras geralmente iniciam como pendentes
             });
         }
@@ -425,16 +509,35 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     onClose();
   };
 
+  useEffect(() => {
+    if (!onPrimaryActionRef) return;
+    onPrimaryActionRef(handleSave);
+  }, [handleSave, onPrimaryActionRef]);
+
+  const dockFieldClass =
+    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+  const inputBaseClass = isDockDesktop
+    ? `${dockFieldClass} focus:ring-emerald-500/40 pr-8 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`
+    : `${modalInputClass} focus:ring-emerald-500 pr-8 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`;
+  const selectBaseClass = isDockDesktop
+    ? `${dockFieldClass} focus:ring-emerald-500/40 text-left`
+    : `${modalInputClass} focus:ring-emerald-500 text-left`;
+  const textareaBaseClass = isDockDesktop
+    ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light placeholder:text-[10px] min-h-[80px] resize-none`
+    : `${modalTextareaClass} focus:ring-emerald-500 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`;
+  const compactLabelClass = 'text-[10px] uppercase tracking-wide font-bold text-white';
+  const labelClass = isDockDesktop ? modalLabelClass : compactLabelClass;
+
   const formContent = (
     <>
-      {!isInline && (
-        <div className="flex items-center justify-between px-8 py-6 border-b border-white/10">
-          <h2 className="text-2xl font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
-              <ArrowUpCircle className="text-emerald-500" />
+      {!isInline && !isDock && (
+        <div className="flex items-center justify-between px-5 sm:px-8 py-4 sm:py-6 bg-gradient-to-r from-emerald-500/80 via-emerald-500/35 to-black">
+          <h2 className="text-xl sm:text-2xl font-semibold text-white flex items-center gap-2">
+              <ArrowUpCircle className="text-white" />
               {initialData ? 'Editar Entrada' : 'Nova Entrada'}
           </h2>
           <div className="flex items-center gap-3">
-            <span className="text-[11px] text-zinc-400 dark:text-zinc-400">
+            <span className="hidden sm:inline text-[11px] text-zinc-400 dark:text-zinc-400">
               ESC fecha
             </span>
             <button
@@ -448,330 +551,299 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         </div>
       )}
 
-      <div className={`${contentPadding} space-y-6`}>
+      <div className={`${contentPadding} ${contentSpacing}`}>
         
-        <div className="space-y-2">
-          <label htmlFor={fieldId('description')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+        <div className="space-y-1">
+          <label htmlFor={fieldId('description')} className={labelClass}>
             Descrição / Origem
           </label>
           <input 
             id={fieldId('description')}
             name="description"
             type="text" 
-            placeholder="Ex: Pagamento Cliente X, Venda Loja"
+            placeholder="EX: PAGAMENTO CLIENTE X, VENDA LOJA"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+            className={inputBaseClass}
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-                <label htmlFor={fieldId('amount')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+        <div className="grid grid-cols-1 gap-1 sm:gap-4 items-end">
+            <div className="space-y-1">
+                <label htmlFor={fieldId('amount')} className={labelClass}>
                   Valor (R$)
                 </label>
                 <input 
                     id={fieldId('amount')}
                     name="amount"
                     type="number" 
-                    placeholder="0,00"
+                    placeholder="EX: R$0,00"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-emerald-600 dark:text-emerald-400"
+                    className={`${inputBaseClass} font-bold text-emerald-600 dark:text-emerald-400`}
                 />
             </div>
             
             {/* NATUREZA FISCAL - Posicionado logo após Categoria/Valor conforme solicitado */}
-            <div className="space-y-2">
-                <label htmlFor={fieldId('taxStatus')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide flex items-center gap-1">
-                    <Briefcase size={12} /> Natureza Fiscal
+            <div className="space-y-1">
+                <label htmlFor={fieldId('taxStatus')} className={labelClass}>
+                    Natureza Fiscal
                 </label>
-                {isMobile ? (
-                    <MobileSelect
-                        id={fieldId('taxStatus')}
-                        name="taxStatus"
-                        value={taxStatus}
-                        options={taxStatusOptions}
-                        onChange={(value) => setTaxStatus(value as 'PJ' | 'PF')}
-                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
-                    />
-                ) : (
-                    <select 
-                        id={fieldId('taxStatus')}
-                        name="taxStatus"
-                        value={taxStatus}
-                        onChange={(e) => setTaxStatus(e.target.value as 'PJ' | 'PF')}
-                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
+                <SelectDropdown
+                    value={taxStatus}
+                    onChange={(value) => setTaxStatus(value as 'PJ' | 'PF')}
+                    options={[
+                        { value: 'PJ', label: 'PJ (Empresarial/MEI)' },
+                        { value: 'PF', label: 'PF (Pessoal)' }
+                    ]}
+                    placeholder="SELECIONE"
+                    buttonClassName={selectBaseClass}
+                    listClassName="max-h-56"
+                />
+            </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-1 sm:gap-4 items-end">
+            {/* Dynamic Category Section */}
+            <div className="space-y-1 relative">
+                <div className="flex justify-between items-center min-h-[12px] mb-1">
+                    <label htmlFor={fieldId('category')} className={`${labelClass} leading-none`}>
+                      Categoria
+                    </label>
+                    <button 
+                        type="button"
+                        onClick={() => setIsManagingCategories(true)}
+                        className="text-[10px] font-bold flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
                     >
-                        <option value="PJ">PJ (Empresarial/MEI)</option>
-                        <option value="PF">PF (Pessoal)</option>
-                    </select>
+                        <Edit2 size={10} /> Editar
+                    </button>
+                </div>
+                
+                {isManagingCategories ? (
+                        <div className="fixed inset-0 z-[1300]">
+                        <button
+                            type="button"
+                            onClick={() => setIsManagingCategories(false)}
+                            className="absolute inset-0 bg-black/40"
+                            aria-label="Fechar categorias"
+                        />
+                        <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col">
+                        <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold truncate">Categorias</p>
+                            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsManagingCategories(false)}
+                            className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                            aria-label="Fechar categorias"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                        <div className="pt-3 flex-1 overflow-hidden px-0.5">
+                        <div className="flex gap-2 mb-3">
+                            <input 
+                                id={fieldId('category-new')}
+                                name="categoryNew"
+                                autoFocus
+                                type="text" 
+                                placeholder={categoryError || 'NOVA CATEGORIA...'}
+                                value={newCategoryName}
+                                onChange={(e) => {
+                                  setNewCategoryName(e.target.value);
+                                  setCategoryError('');
+                                }}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                                className={`${inputBaseClass} flex-1 w-auto ${categoryError ? 'border-red-500 focus:border-red-500 focus:ring-red-500 placeholder:text-red-500' : ''}`}
+                                aria-label="Nova categoria"
+                            />
+                            <button
+                                type="button"
+                                onClick={handleAddCategory}
+                                aria-label="Adicionar categoria"
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-md"
+                            >
+                                <Plus size={16} />
+                            </button>
+                        </div>
+                        <div className="custom-scrollbar space-y-0.5">
+                            {categories.length === 0 ? (
+                                <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
+                                    Sem categorias, crie uma
+                                </div>
+                            ) : (
+                                categories.map(cat => (
+                                    <div
+                                      key={cat}
+                                      className="flex justify-between items-center px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+                                    >
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedCategories.includes(cat)}
+                                            onChange={() => toggleCategorySelection(cat)}
+                                            className="h-3.5 w-3.5 accent-emerald-500"
+                                            aria-label={`Selecionar categoria ${cat}`}
+                                          />
+                                          <span className="text-sm text-zinc-700 dark:text-zinc-300">{cat}</span>
+                                        </label>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteCategory(cat)}
+                                          aria-label={`Remover categoria ${cat}`}
+                                          className="text-red-500 p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                        <div className={`mt-2 ${selectedCategories.length > 0 ? 'grid grid-cols-2 gap-2' : ''}`}>
+                          {selectedCategories.length > 0 && (
+                              <button
+                                  type="button"
+                                  onClick={handleBulkDeleteCategories}
+                                  className="w-full rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
+                              >
+                                  Excluir selecionadas ({selectedCategories.length})
+                              </button>
+                          )}
+                          {onResetCategories && (
+                              <button
+                                  type="button"
+                                  onClick={handleResetCategories}
+                                  className={`${selectedCategories.length > 0 ? '' : 'w-full'} rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20`}
+                              >
+                                  Zerar categorias
+                              </button>
+                          )}
+                        </div>
+                        </div>
+                        </div>
+                        </div>
+                ) : (
+                    <SelectDropdown
+                        value={category}
+                        onChange={setCategory}
+                        options={[
+                            ...(category && !categories.includes(category) ? [{ value: category, label: category }] : []),
+                            ...categories.map(cat => ({ value: cat, label: cat }))
+                        ]}
+                        placeholder={categories.length === 0 ? 'SEM CATEGORIAS, CRIE UMA' : 'SELECIONE'}
+                        disabled={categories.length === 0}
+                        buttonClassName={selectBaseClass}
+                        listClassName="max-h-56"
+                    />
                 )}
             </div>
-        </div>
 
-        {/* Dynamic Category Section */}
-        <div className="space-y-2 relative">
-            <div className="flex justify-between items-center h-4 mb-2">
-                <label htmlFor={fieldId('category')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
-                  Categoria
+            {/* Data de Competência */}
+            <div className="space-y-1">
+                <label htmlFor={fieldId('competenceDate')} className={`${labelClass} leading-none`}>
+                  DATA DA VENDA / SERVIÇO
                 </label>
-                <button 
-                    type="button"
-                    onClick={() => setIsManagingCategories(!isManagingCategories)}
-                    className="text-[10px] font-bold flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
-                >
-                    {isManagingCategories ? 'Fechar Edição' : <><Edit2 size={10} /> Editar / <Plus size={10} /> Nova</>}
-                </button>
-            </div>
-            
-            {isManagingCategories ? (
-                    <div className="absolute top-8 left-0 right-0 z-[60] bg-zinc-50 dark:bg-[#202020] border border-zinc-200 dark:border-zinc-700 rounded-xl p-3 shadow-lg">
-                    <div className="flex gap-2 mb-3">
-                        <input 
-                            id={fieldId('category-new')}
-                            name="categoryNew"
-                            autoFocus
-                            type="text" 
-                            placeholder="Nova categoria..."
-                            value={newCategoryName}
-                            onChange={(e) => setNewCategoryName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
-                            className="flex-1 bg-white dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                            aria-label="Nova categoria"
-                        />
-                        <button
-                            type="button"
-                            onClick={handleAddCategory}
-                            aria-label="Adicionar categoria"
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-md"
-                        >
-                            <Plus size={16} />
-                        </button>
-                    </div>
-                    <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
-                        {categories.length === 0 ? (
-                            <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
-                                Sem categorias, crie uma
-                            </div>
-                        ) : (
-                            categories.map(cat => (
-                                <div key={cat} className="flex justify-between items-center px-2 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded">
-                                    <span className="text-sm text-zinc-700 dark:text-zinc-300">{cat}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteCategory(cat)}
-                                      aria-label={`Remover categoria ${cat}`}
-                                      className="text-red-500 p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                    >
-                                        <Trash2 size={12} />
-                                    </button>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                    {onResetCategories && (
-                        <button
-                            type="button"
-                            onClick={handleResetCategories}
-                            className="mt-3 w-full rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
-                        >
-                            Zerar categorias
-                        </button>
-                    )}
-                    </div>
-            ) : (
-                isMobile ? (
-                    <MobileSelect
-                        id={fieldId('category')}
-                        name="category"
-                        value={category}
-                        options={categoryOptions}
-                        onChange={setCategory}
-                        disabled={categories.length === 0}
-                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
-                    />
-                ) : (
-                    <select 
-                        id={fieldId('category')}
-                        name="category"
-                        value={category}
-                        onChange={(e) => setCategory(e.target.value)}
-                        disabled={categories.length === 0}
-                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
-                    >
-                        {category && !categories.includes(category) && (
-                            <option value={category}>{category}</option>
-                        )}
-                        {categories.length === 0 && (
-                            <option value="" disabled>Sem categorias, crie uma</option>
-                        )}
-                        {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                    </select>
-                )
-            )}
-        </div>
-
-        {/* Data de Competência */}
-        <div className="space-y-2">
-            <label htmlFor={fieldId('competenceDate')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
-              Data de Competência (Realização do Serviço)
-            </label>
-            <div className="relative">
-                <input 
-                    id={fieldId('competenceDate')}
-                    name="competenceDate"
-                    type="date" 
+                <WheelDatePicker
                     value={competenceDate}
-                    onChange={(e) => setCompetenceDate(e.target.value)}
-                    min={minDate}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all [color-scheme:dark]"
+                    onChange={setCompetenceDate}
+                    minDate={minDate}
+                    defaultDate={defaultDate}
+                    buttonClassName={inputBaseClass}
+                    ariaLabel="Selecionar data da venda ou serviço"
                 />
-                <Calendar className="absolute right-4 top-3 text-zinc-400 pointer-events-none" size={20} />
             </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-4">
              {/* NOVO CAMPO: Forma de Pagamento */}
-            <div className="space-y-2">
-                <label htmlFor={fieldId('payment-method')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+            <div className="space-y-1">
+                <label htmlFor={fieldId('payment-method')} className={labelClass}>
                   Forma de Pagamento
                 </label>
-                {isMobile ? (
-                    <MobileSelect
-                        id={fieldId('payment-method')}
-                        name="paymentMethod"
-                        value={paymentMethod}
-                        options={paymentMethodOptions}
-                        onChange={handlePaymentMethodSelect}
-                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
-                    />
-                ) : (
-                    <select 
-                        id={fieldId('payment-method')}
-                        name="paymentMethod"
-                        value={paymentMethod}
-                        onChange={handlePaymentMethodChange}
-                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
-                    >
-                        <option>Pix</option>
-                        <option>Dinheiro</option>
-                        <option>Transferência</option>
-                        <option>Boleto</option>
-                        <option>Crédito</option>
-                        <option>Débito</option>
-                    </select>
-                )}
-            </div>
-
-            <div className="space-y-2">
-                <label htmlFor={fieldId('account')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
-                  Conta de Destino
-                </label>
-                {isMobile ? (
-                    <MobileSelect
-                        id={fieldId('account')}
-                        name="accountId"
-                        value={selectedAccountId}
-                        options={accountOptions}
-                        onChange={setSelectedAccountId}
-                        disabled={availableAccounts.length === 0}
-                        buttonClassName="bg-gray-50 dark:bg-[#121212] border-zinc-200 dark:border-zinc-700 focus:ring-emerald-500"
-                    />
-                ) : (
-                    <select 
-                        id={fieldId('account')}
-                        name="accountId"
-                        value={selectedAccountId}
-                        onChange={(e) => setSelectedAccountId(e.target.value)}
-                        className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all appearance-none"
-                    >
-                        {availableAccounts.length === 0 && <option value="">Nenhuma conta disponível</option>}
-                        {availableAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-                    </select>
-                )}
+                <SelectDropdown
+                    value={paymentMethod}
+                    onChange={handlePaymentMethodSelect}
+                    options={paymentMethodOptions}
+                    placeholder="SELECIONE"
+                    buttonClassName={selectBaseClass}
+                    listClassName="max-h-56"
+                />
             </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <div className="space-y-2">
-                <label htmlFor={fieldId('date')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+        <div className="space-y-1">
+            <div className="space-y-1">
+                <label htmlFor={fieldId('account')} className={labelClass}>
+                  Conta de Destino
+                </label>
+                <SelectDropdown
+                    value={selectedAccountId}
+                    onChange={setSelectedAccountId}
+                    options={accountOptions}
+                    placeholder={availableAccounts.length === 0 ? 'NENHUMA CONTA DISPONÍVEL' : 'SELECIONE'}
+                    disabled={availableAccounts.length === 0}
+                    buttonClassName={selectBaseClass}
+                    listClassName="max-h-56"
+                />
+            </div>
+            <div className="space-y-1">
+                <label htmlFor={fieldId('date')} className={labelClass}>
                     {isInstallment ? 'Data da 1ª Parcela (Caixa)' : 'Data de Recebimento (Caixa)'}
                 </label>
-            <div className="relative">
-                <input 
-                    id={fieldId('date')}
-                    name="date"
-                    type="date" 
+                <WheelDatePicker
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    min={minDate}
-                    className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all [color-scheme:dark]"
+                    onChange={setDate}
+                    minDate={minDate}
+                    defaultDate={defaultDate}
+                    buttonClassName={inputBaseClass}
+                    ariaLabel="Selecionar data de recebimento"
                 />
-                    <Calendar className="absolute right-4 top-3 text-zinc-400 pointer-events-none" size={20} />
-                </div>
             </div>
 
             {/* Status (Automático mas editável) */}
-            <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Status</label>
-                <div className="flex gap-2">
-                    <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-colors ${status === 'received' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500 dark:border-emerald-500/50' : 'border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}>
-                        <input 
-                            type="radio" 
-                            id={fieldId('status-received')}
-                            name={fieldId('status')} 
-                            value="received" 
-                            checked={status === 'received'}
-                            onChange={() => setStatus('received')}
-                            className="hidden"
-                        />
-                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${status === 'received' ? 'border-emerald-500' : 'border-zinc-400'}`}>
-                            {status === 'received' && <div className="w-2 h-2 rounded-full bg-emerald-500"></div>}
-                        </div>
-                        <span className={`text-sm font-medium ${status === 'received' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500'}`}>Recebido</span>
-                    </label>
-                    <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-colors ${status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-500 dark:border-amber-500/50' : 'border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}>
-                        <input 
-                            type="radio" 
-                            id={fieldId('status-pending')}
-                            name={fieldId('status')} 
-                            value="pending" 
-                            checked={status === 'pending'}
-                            onChange={() => setStatus('pending')}
-                            className="hidden"
-                        />
-                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${status === 'pending' ? 'border-amber-500' : 'border-zinc-400'}`}>
-                            {status === 'pending' && <div className="w-2 h-2 rounded-full bg-amber-500"></div>}
-                        </div>
-                        <span className={`text-sm font-medium ${status === 'pending' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-500'}`}>Pendente</span>
-                    </label>
+            <div className="space-y-1 col-span-2">
+                <label className={labelClass}>Status</label>
+                <div className="grid grid-cols-2 gap-2 w-full justify-items-stretch">
+                    <button
+                        type="button"
+                        onClick={() => setStatus('received')}
+                        className={`${selectBaseClass} flex items-center justify-center gap-2 w-full`}
+                        aria-pressed={status === 'received'}
+                    >
+                        <span className={`h-2.5 w-2.5 rounded-full border ${status === 'received' ? 'bg-emerald-500 border-emerald-500' : 'border-zinc-400'}`} />
+                        <span className={status === 'received' ? 'text-emerald-500' : ''}>Recebido</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setStatus('pending')}
+                        className={`${selectBaseClass} flex items-center justify-center gap-2 w-full`}
+                        aria-pressed={status === 'pending'}
+                    >
+                        <span className={`h-2.5 w-2.5 rounded-full border ${status === 'pending' ? 'bg-amber-500 border-amber-500' : 'border-zinc-400'}`} />
+                        <span className={status === 'pending' ? 'text-amber-500' : ''}>Pendente</span>
+                    </button>
                 </div>
+                {!initialData && (
+                  <button
+                    type="button"
+                    onClick={() => setIsInstallmentModalOpen(true)}
+                    className={`${selectBaseClass} flex items-center justify-between w-full col-span-2`}
+                  >
+                    Entrada Parcelada
+                    <span className="text-[10px]">Adicionar</span>
+                  </button>
+                )}
             </div>
         </div>
 
         {/* Installment / Boleto Section */}
-        {!initialData && (
-            <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/30 rounded-xl p-4 space-y-4">
-                <div className="flex items-center gap-2">
-                    <input 
-                        type="checkbox" 
-                        id={fieldId('installments')}
-                        name="installments"
-                        checked={isInstallment} 
-                        onChange={(e) => setIsInstallment(e.target.checked)}
-                        className="w-4 h-4 rounded border-zinc-600 bg-transparent text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <label htmlFor={fieldId('installments')} className="text-sm font-bold text-zinc-800 dark:text-zinc-200 cursor-pointer">
-                        Entrada Parcelada / Boleto Parcelado
-                    </label>
-                </div>
-
-                {isInstallment && (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                        <div className="space-y-2">
-                            <label htmlFor={fieldId('installment-count')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
-                              Quantidade de parcelas
+        {!initialData && isInstallment && isInstallmentModalOpen === false && (
+            <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-900/10 p-2 space-y-1.5 animate-in fade-in slide-in-from-top-2">
+                <div className="space-y-1.5">
+                            <label htmlFor={fieldId('installment-count')} className={labelClass}>
+                      Quantidade de parcelas
                             </label>
                             <input 
                                 id={fieldId('installment-count')}
@@ -781,13 +853,13 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                                 max="60"
                                 value={installmentCount}
                                 onChange={(e) => setInstallmentCount(parseInt(e.target.value))}
-                                className="w-full bg-white dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                className={inputBaseClass}
                             />
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">O valor informado acima é:</label>
-                            <div className="space-y-2">
+                        <div className="space-y-1.5">
+                            <label className={labelClass}>O valor informado acima é:</label>
+                            <div className="space-y-1.5">
                                 <div className="flex items-center gap-2">
                                     <input 
                                         type="radio" 
@@ -813,12 +885,12 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                             </div>
                         </div>
 
-                        <div className="bg-white dark:bg-[#1a1a1a] rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
-                            <p className="text-xs font-bold text-zinc-500 uppercase mb-1">Resumo do parcelamento:</p>
-                            <p className="text-lg font-bold text-zinc-900 dark:text-white">
+                        <div className="bg-white dark:bg-[#1a1a1a] rounded-lg p-3 border border-zinc-200 dark:border-zinc-800">
+                            <p className="text-[11px] font-bold text-zinc-500 uppercase mb-1">Resumo</p>
+                            <p className="text-base font-bold text-zinc-900 dark:text-white">
                                 {installmentCount}x de R$ {installmentValue.toLocaleString('pt-BR', {minimumFractionDigits: 2})}
                             </p>
-                            <p className="text-sm text-zinc-500 mb-2">
+                            <p className="text-xs text-zinc-500 mb-2">
                                 Valor Total da Venda: R$ {finalTotal.toLocaleString('pt-BR', {minimumFractionDigits: 2})}
                             </p>
                             {date && lastInstallmentDate && (
@@ -827,14 +899,12 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                                 </p>
                             )}
                         </div>
-                    </div>
-                )}
             </div>
         )}
 
         {showApplyScope && (
           <div className="space-y-2">
-            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Aplicar alterações</label>
+            <label className={labelClass}>Aplicar alterações</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${applyScope === 'single' ? 'border-zinc-400 text-zinc-900 dark:text-white' : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'}`}>
                 <input
@@ -868,37 +938,241 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         )}
 
         <div className="space-y-2">
-          <label htmlFor={fieldId('notes')} className="text-xs font-bold text-zinc-500 uppercase tracking-wide">
+          <button
+            type="button"
+            onClick={() => setIsNotesModalOpen(true)}
+            className={`${selectBaseClass} flex items-center justify-between w-full`}
+          >
             Observações
-          </label>
-          <textarea 
-            id={fieldId('notes')}
-            name="notes"
-            rows={3}
-            placeholder="Detalhes adicionais..."
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className="w-full bg-gray-50 dark:bg-[#121212] border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all placeholder:text-zinc-400 resize-none"
-          />
+            <span className="text-[10px]">Adicionar</span>
+          </button>
         </div>
 
+        {isInstallmentModalOpen && (
+          <div className="fixed inset-0 z-[1300]">
+            <button
+              type="button"
+              onClick={() => setIsInstallmentModalOpen(false)}
+              className="absolute inset-0 bg-black/40"
+              aria-label="Fechar parcelamento"
+            />
+            <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-3 max-h-[60dvh] overflow-y-auto">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">Entrada Parcelada</p>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Defina as parcelas da entrada.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsInstallmentModalOpen(false)}
+                  className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                  aria-label="Fechar parcelamento"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="mt-3 space-y-3">
+                  <label htmlFor={fieldId('installment-count')} className={labelClass}>
+                  Quantidade de parcelas
+                </label>
+                <input
+                  id={fieldId('installment-count')}
+                  name="installmentCount"
+                  type="number"
+                  min="2"
+                  max="60"
+                  value={installmentCount}
+                  onChange={(e) => setInstallmentCount(parseInt(e.target.value))}
+                  className={inputBaseClass}
+                />
+                <div className="space-y-2">
+                  <label className={labelClass}>O valor informado acima é:</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                      <input
+                        type="radio"
+                        id={fieldId('value-total')}
+                        name={fieldId('value-type')}
+                        checked={installmentValueType === 'total'}
+                        onChange={() => setInstallmentValueType('total')}
+                        className="text-emerald-600 focus:ring-emerald-500"
+                      />
+                      Valor Total (será dividido)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                      <input
+                        type="radio"
+                        id={fieldId('value-parcel')}
+                        name={fieldId('value-type')}
+                        checked={installmentValueType === 'parcel'}
+                        onChange={() => setInstallmentValueType('parcel')}
+                        className="text-emerald-600 focus:ring-emerald-500"
+                      />
+                      Valor da Parcela
+                    </label>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-white/80 dark:bg-[#1a1a1a] p-3 border border-zinc-200 dark:border-zinc-800">
+                  <p className="text-[11px] font-bold text-zinc-500 uppercase mb-1">Resumo</p>
+                  <p className="text-base font-bold text-zinc-900 dark:text-white">
+                    {installmentCount}x de R$ {installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-xs text-zinc-500 mb-2">
+                    Valor Total: R$ {finalTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                  {date && lastInstallmentDate && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                      Última parcela em: {lastInstallmentDate}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsInstallment(false);
+                    setIsInstallmentModalOpen(false);
+                  }}
+                  className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                >
+                  Desativar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsInstallment(true);
+                    setIsInstallmentModalOpen(false);
+                  }}
+                  className="rounded-xl border border-emerald-500/40 py-2.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
+                >
+                  Salvar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isNotesModalOpen && (
+          <div className="fixed inset-0 z-[1300]">
+            <button
+              type="button"
+              onClick={() => setIsNotesModalOpen(false)}
+              className="absolute inset-0 bg-black/40"
+              aria-label="Fechar observações"
+            />
+            <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">Observações</p>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Anote detalhes adicionais.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsNotesModalOpen(false)}
+                  className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                  aria-label="Fechar observações"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="mt-4">
+                <textarea
+                  id={fieldId('notes')}
+                  name="notes"
+                  rows={4}
+                  placeholder="DETALHES ADICIONAIS..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className={textareaBaseClass}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsNotesModalOpen(false)}
+                  className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsNotesModalOpen(false)}
+                  className="rounded-xl border border-emerald-500/40 py-2.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
+                >
+                  Salvar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
 
-      <div className={`${footerPadding} border-t border-white/10 flex justify-end gap-3 bg-white/70 dark:bg-black/20`}>
-          <button onClick={onClose} className="h-11 px-6 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+      {!hideFooter && (
+        <div className={`${footerPadding} border-t border-white/10 bg-white/70 dark:bg-black/20`}>
+          <div className={isDockDesktop ? 'grid grid-cols-2 gap-3 w-full' : 'flex justify-end gap-3'}>
+            <button
+              onClick={onClose}
+              className={`h-10 sm:h-11 px-5 sm:px-6 rounded-lg sm:rounded-xl border border-zinc-200 dark:border-zinc-700 text-sm sm:text-base text-zinc-600 dark:text-zinc-300 font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ${
+                isDockDesktop ? 'w-full' : ''
+              }`}
+            >
               Cancelar
-          </button>
-          <button onClick={handleSave} className="h-11 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-lg shadow-emerald-900/20 transition-all active:scale-95">
+            </button>
+            <button
+              onClick={handleSave}
+              className={`h-10 sm:h-11 px-5 sm:px-6 rounded-lg sm:rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm sm:text-base text-white font-bold shadow-lg shadow-emerald-900/20 transition-all active:scale-95 ${
+                isDockDesktop ? 'w-full' : ''
+              }`}
+            >
               {primaryLabel}
-          </button>
-      </div>
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 
   if (isInline) {
+    return <div className="w-full bg-transparent">{formContent}</div>;
+  }
+
+  if (isDock) {
+    if (!isOpen) return null;
     return (
-      <div className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] shadow-sm overflow-hidden">
-        {formContent}
+      <div className="fixed inset-0 z-[1200]">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute inset-0 bg-black/60"
+          aria-label="Fechar entrada"
+        />
+        <div
+          className={
+            isMobile
+              ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
+              : 'absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+          }
+        >
+          {isDockDesktop && (
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate">{initialData ? 'Editar Entrada' : 'Nova Entrada'}</p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Preencha os dados da entrada.</p>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                aria-label="Fechar entrada"
+              >
+                <ChevronDown size={16} />
+              </button>
+            </div>
+          )}
+          <div className={isDockDesktop ? 'pt-3 flex-1 overflow-auto' : ''}>{formContent}</div>
+        </div>
       </div>
     );
   }

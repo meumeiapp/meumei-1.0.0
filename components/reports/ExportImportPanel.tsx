@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, UploadCloud, Link2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import type { Account, CreditCard, Expense, Income } from '../../types';
@@ -362,6 +362,7 @@ const ExportImportPanel: React.FC<ExportImportPanelProps> = ({
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const connectButtonRef = useRef<HTMLButtonElement | null>(null);
   const [logs, setLogs] = useState<Array<{ id: string; type: 'info' | 'success' | 'error'; message: string }>>([]);
   const [sheetInput, setSheetInput] = useState('');
   const [primarySheetId, setPrimarySheetId] = useState<string | null>(null);
@@ -526,7 +527,7 @@ const ExportImportPanel: React.FC<ExportImportPanelProps> = ({
     };
   };
 
-  const ensureAccessToken = async () => {
+  const ensureAccessToken = async (anchor?: DOMRect | null) => {
     const cached = driveSessionManager.getToken();
     if (cached?.token) {
       setAccessToken(cached.token);
@@ -541,7 +542,7 @@ const ExportImportPanel: React.FC<ExportImportPanelProps> = ({
     setIsGoogleLinked(linked);
     console.log('[reports][sheets-auth] request_start', { mode });
     try {
-      const result = await requestSheetsAccess(mode);
+    const result = await requestSheetsAccess(mode, anchor);
       if (result.method === 'redirect') {
         pushLog('info', 'Redirecionando para concluir permissao do Google Drive.');
         console.log('[reports][sheets-auth] redirect_start');
@@ -1619,7 +1620,8 @@ const ExportImportPanel: React.FC<ExportImportPanelProps> = ({
             </div>
           )}
           <button
-            onClick={ensureAccessToken}
+            ref={connectButtonRef}
+            onClick={() => ensureAccessToken(null)}
             disabled={authBusy}
             className="inline-flex items-center gap-2 rounded-full bg-emerald-400/90 text-slate-900 px-5 py-2 text-sm font-semibold disabled:opacity-50"
           >

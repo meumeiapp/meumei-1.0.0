@@ -77,13 +77,25 @@ export default function Termos() {
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">Modalidade de contratação</h2>
           <p className="text-zinc-700 dark:text-zinc-300">
-            O meumei é comercializado exclusivamente na modalidade anual.
+            O meumei é comercializado em duas modalidades: plano anual e plano mensal.
           </p>
           <p className="text-zinc-700 dark:text-zinc-300">
             A contratação concede ao usuário o direito de uso da plataforma pelo período de 12
             (doze) meses.
           </p>
-          <p className="text-zinc-700 dark:text-zinc-300">Não há plano mensal ou assinatura recorrente.</p>
+          <p className="text-zinc-700 dark:text-zinc-300">
+            O plano anual é pago em transação única e não possui cobrança mensal recorrente.
+          </p>
+        </section>
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">Plano mensal</h2>
+          <p className="text-zinc-700 dark:text-zinc-300">
+            Também é oferecido um plano mensal com cobrança recorrente de R$ 39,90 por mês.
+          </p>
+          <p className="text-zinc-700 dark:text-zinc-300">
+            O plano mensal pode ser cancelado a qualquer momento e o cancelamento interrompe apenas as
+            cobranças futuras.
+          </p>
         </section>
 
         <section className="space-y-3">
@@ -93,9 +105,10 @@ export default function Termos() {
             O pagamento é realizado em transação única no momento da contratação.
           </p>
           <p className="text-zinc-700 dark:text-zinc-300">
-            O eventual parcelamento em 2x, 3x, 6x, 10x ou 12x é oferecido exclusivamente pela
-            operadora do cartão de crédito, constituindo apenas forma de pagamento, não
-            caracterizando mensalidade, assinatura ou cobrança periódica pelo meumei.
+            O plano mensal tem o valor de R$ 39,90 por mês, com cobrança recorrente até o cancelamento.
+          </p>
+          <p className="text-zinc-700 dark:text-zinc-300">
+            No plano anual, não há cobrança mensal recorrente nem parcelamento direto oferecido pela plataforma.
           </p>
           <p className="text-zinc-700 dark:text-zinc-300">
             Após a confirmação do pagamento, a licença anual é ativada.
@@ -116,10 +129,6 @@ export default function Termos() {
             Após o período de 7 dias, considera-se efetivada a contratação anual, não havendo
             devolução parcial ou proporcional de valores.
           </p>
-          <p className="text-zinc-700 dark:text-zinc-300">
-            O parcelamento eventualmente escolhido é de responsabilidade exclusiva do cliente
-            junto à operadora do cartão.
-          </p>
         </section>
 
         <section className="space-y-3">
@@ -131,6 +140,10 @@ export default function Termos() {
           <p className="text-zinc-700 dark:text-zinc-300">
             O cancelamento não gera reembolso, total ou parcial, do valor do plano anual
             contratado.
+          </p>
+          <p className="text-zinc-700 dark:text-zinc-300">
+            No plano mensal, o cancelamento interrompe apenas as próximas cobranças e não gera
+            devolução de valores já pagos fora do prazo legal.
           </p>
         </section>
 

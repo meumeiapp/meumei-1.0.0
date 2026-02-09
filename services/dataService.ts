@@ -8,6 +8,7 @@ import {
     where, 
     deleteDoc, 
     getDoc,
+    getDocFromServer,
     onSnapshot,
     writeBatch,
     limit,
@@ -15,7 +16,7 @@ import {
     serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { Account, Expense, Income, CreditCard, CompanyInfo, LicenseRecord, LockedReason } from '../types';
+import { Account, Expense, Income, CreditCard, CompanyInfo, LicenseRecord, LockedReason, AgendaItem } from '../types';
 import { normalizeExpenseStatus, normalizeIncomeStatus } from '../utils/statusUtils';
 import { logPermissionDenied } from '../utils/firestoreLogger';
 import { guardUserPath } from '../utils/pathGuard';
@@ -29,7 +30,8 @@ const COLLECTIONS = {
     EXPENSES: 'expenses',
     INCOMES: 'incomes',
     CREDIT_CARDS: 'credit_cards',
-    INVOICES: 'invoices'
+    INVOICES: 'invoices',
+    AGENDA: 'agenda'
 };
 
 type BalanceHistoryEntry = NonNullable<Account['balanceHistory']>[number];
@@ -106,6 +108,44 @@ const encryptNumberSafe = async (licenseId: string, value: number, fieldName: st
     return { ok: true, value: result.value };
 };
 
+const pad2 = (value: number) => String(value).padStart(2, '0');
+
+const formatLocalDateISO = (date: Date) => {
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+};
+
+const normalizeCompanyStartDate = (value: unknown): string => {
+    if (!value) return '';
+    if (value instanceof Date) return formatLocalDateISO(value);
+    if (typeof value === 'object') {
+        const maybeTimestamp = value as { toDate?: () => Date };
+        if (typeof maybeTimestamp.toDate === 'function') {
+            return formatLocalDateISO(maybeTimestamp.toDate());
+        }
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+        const isoParts = trimmed.split('T');
+        if (isoParts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(isoParts[0])) {
+            const parsed = new Date(trimmed);
+            const localIso = formatLocalDateISO(parsed);
+            return localIso || isoParts[0];
+        }
+        const brMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (brMatch) {
+            return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+        }
+        const parsed = new Date(trimmed);
+        if (!Number.isNaN(parsed.getTime())) {
+            return formatLocalDateISO(parsed);
+        }
+        return trimmed;
+    }
+    return '';
+};
+
 export const getLicenseDocRef = (licenseId: string) => doc(db, COLLECTIONS.LICENSES, licenseId);
 export const getUserDocRef = (uid: string) => doc(db, 'users', uid);
 
@@ -117,6 +157,9 @@ export const getExpensesCollectionRef = (licenseId: string) =>
 
 export const getIncomesCollectionRef = (licenseId: string) =>
     collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.INCOMES);
+
+export const getAgendaCollectionRef = (licenseId: string) =>
+    collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.AGENDA);
 
 export const getInvoicesCollectionRef = (licenseId: string) =>
     collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.INVOICES);
@@ -651,10 +694,22 @@ export const dataService = {
             if (!uid) return null;
             const path = `users/${uid}`;
             if (!guardUserPath(uid, path, 'company_get')) return null;
-            const snap = await getDoc(getUserDocRef(uid));
+            const docRef = getUserDocRef(uid);
+            let snap;
+            try {
+                snap = await getDocFromServer(docRef);
+            } catch (serverError) {
+                console.warn('[company] server_fetch_failed, using cache', serverError);
+                snap = await getDoc(docRef);
+            }
             if (!snap.exists()) return null;
             const data = snap.data() as Record<string, any>;
-            return data?.companyInfo ?? null;
+            const companyInfo = data?.companyInfo ?? null;
+            if (!companyInfo) return null;
+            return {
+                ...companyInfo,
+                startDate: normalizeCompanyStartDate(companyInfo.startDate)
+            };
         } catch (error) {
             console.error("Erro ao buscar empresa:", error);
             return null;
@@ -669,7 +724,7 @@ export const dataService = {
             await setDoc(
                 getUserDocRef(uid),
                 sanitizeData({
-                    companyInfo: { ...info },
+                    companyInfo: { ...info, startDate: normalizeCompanyStartDate(info.startDate) },
                     updatedAt: new Date().toISOString()
                 }),
                 { merge: true }
@@ -881,6 +936,98 @@ export const dataService = {
         return () => {
             unsubscribe();
         };
+    },
+
+    subscribeAgenda(
+        licenseId: string,
+        onData: (items: AgendaItem[]) => void,
+        onError?: (error: unknown) => void
+    ) {
+        let hasLoggedSupport = false;
+        const path = `users/${licenseId}/${COLLECTIONS.AGENDA}`;
+        if (!guardUserPath(licenseId, path, 'agenda_subscribe')) {
+            onData([]);
+            return () => {};
+        }
+        logUsingPath(path, 'primary');
+        const q = query(getAgendaCollectionRef(licenseId));
+        const unsubscribe = onSnapshot(
+            q,
+            (snapshot) => {
+                try {
+                    const items = snapshot.docs.map(docSnap => ({
+                        id: docSnap.id,
+                        ...(docSnap.data() as Omit<AgendaItem, 'id'>)
+                    }));
+                    onData(items);
+                    if (!hasLoggedSupport) {
+                        hasLoggedSupport = true;
+                        void supportAccessService.logSupportRead(licenseId, {
+                            collection: COLLECTIONS.AGENDA,
+                            count: items.length
+                        });
+                    }
+                } catch (error) {
+                    onError?.(error);
+                }
+            },
+            (error) => {
+                logPermissionDenied({
+                    step: 'agenda_subscribe',
+                    path,
+                    operation: 'query',
+                    error,
+                    licenseId
+                });
+                logReadFailed(COLLECTIONS.AGENDA, (error as any)?.message || 'Erro ao assinar agenda');
+                onError?.(error);
+            }
+        );
+        return () => {
+            unsubscribe();
+        };
+    },
+
+    async upsertAgendaItem(item: AgendaItem, licenseId: string) {
+        const path = `users/${licenseId}/${COLLECTIONS.AGENDA}`;
+        if (!guardUserPath(licenseId, path, 'agenda_upsert')) return null;
+        const docRef = doc(getAgendaCollectionRef(licenseId), item.id || doc(getAgendaCollectionRef(licenseId)).id);
+        const resolveNotifyAtMs = (dateValue?: string, timeValue?: string) => {
+            if (!dateValue) return undefined;
+            const safeTimeRaw = typeof timeValue === 'string' && timeValue.trim()
+                ? timeValue.trim()
+                : '08:00';
+            const [rawHours, rawMinutes] = safeTimeRaw.split(':');
+            const hours = String(rawHours || '00').padStart(2, '0');
+            const minutes = String(rawMinutes || '00').padStart(2, '0');
+            const iso = `${dateValue}T${hours}:${minutes}`;
+            const parsed = new Date(iso);
+            if (Number.isNaN(parsed.getTime())) return undefined;
+            return parsed.getTime();
+        };
+        const nextNotifyAtMs = resolveNotifyAtMs(item.date, item.time);
+        const sameNotifyAt =
+            typeof item.notifyAtMs === 'number' &&
+            typeof nextNotifyAtMs === 'number' &&
+            item.notifyAtMs === nextNotifyAtMs;
+        const nextNotifyStatus = sameNotifyAt ? item.notifyStatus || 'pending' : 'pending';
+        const payload = sanitizeData({
+            ...item,
+            id: docRef.id,
+            createdAt: item.createdAt || serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            notifyAtMs: nextNotifyAtMs,
+            notifyStatus: nextNotifyStatus
+        });
+        await setDoc(docRef, payload, { merge: true });
+        return docRef.id;
+    },
+
+    async deleteAgendaItem(id: string, licenseId: string) {
+        const path = `users/${licenseId}/${COLLECTIONS.AGENDA}`;
+        if (!guardUserPath(licenseId, path, 'agenda_delete')) return;
+        const docRef = doc(getAgendaCollectionRef(licenseId), id);
+        await deleteDoc(docRef);
     },
 
     // --- ACCOUNTS ---

@@ -1,6 +1,8 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import { VertexAI } from '@google-cloud/vertexai';
+import nodemailer from 'nodemailer';
+import Stripe from 'stripe';
 
 admin.initializeApp();
 
@@ -21,6 +23,109 @@ const VERTEX_MODEL = (process.env.VERTEX_MODEL || process.env.GEMINI_MODEL || 'g
   .trim();
 const vertexAI = PROJECT_ID ? new VertexAI({ project: PROJECT_ID, location: VERTEX_LOCATION }) : null;
 const DAILY_TIP_TIMEZONE = 'America/Sao_Paulo';
+
+const runtimeConfig = (() => {
+  try {
+    return typeof functions.config === 'function' ? functions.config() : {};
+  } catch {
+    return {};
+  }
+})();
+
+const refundConfig = runtimeConfig.refund || {};
+const stripeConfig = runtimeConfig.stripe || {};
+const emailConfig = runtimeConfig.email || {};
+
+const resolveConfigValue = (envKey: string, configKey: string, fallback = '') => {
+  const direct = (process.env[envKey] || '').trim();
+  if (direct) return direct;
+  return typeof refundConfig[configKey] === 'string' ? refundConfig[configKey] : fallback;
+};
+
+const SMTP_HOST = resolveConfigValue('REFUND_SMTP_HOST', 'smtp_host', '');
+const SMTP_PORT = Number(resolveConfigValue('REFUND_SMTP_PORT', 'smtp_port', '587'));
+const SMTP_USER = resolveConfigValue('REFUND_SMTP_USER', 'smtp_user', '');
+const SMTP_PASS = resolveConfigValue('REFUND_SMTP_PASS', 'smtp_pass', '');
+const DEFAULT_FROM_EMAIL =
+  (process.env.EMAIL_FROM || (emailConfig.from as string) || '').trim();
+const REFUND_FROM_EMAIL = resolveConfigValue(
+  'REFUND_SMTP_FROM',
+  'smtp_from',
+  DEFAULT_FROM_EMAIL || SMTP_USER
+);
+const REFUND_TO_EMAIL = resolveConfigValue('REFUND_SMTP_TO', 'smtp_to', 'meumeiaplicativo@gmail.com');
+const SMTP_SECURE =
+  resolveConfigValue('REFUND_SMTP_SECURE', 'smtp_secure', '').toLowerCase() === 'true' ||
+  SMTP_PORT === 465;
+
+const STRIPE_SECRET_KEY = (process.env.STRIPE_SECRET_KEY || (stripeConfig.secret_key as string) || '').trim();
+
+const getStripeClient = () => {
+  if (!STRIPE_SECRET_KEY) return null;
+  return new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
+};
+
+const getRefundTransport = () => {
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null;
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS
+    }
+  });
+};
+
+const sendRefundEmail = async (
+  payload: { name: string; email: string },
+  subject: string,
+  text: string,
+  userSubject?: string,
+  userText?: string
+) => {
+  const transport = getRefundTransport();
+  if (!transport || !REFUND_FROM_EMAIL) return false;
+
+  const userSubjectResolved = userSubject || 'Recebemos sua solicitação de reembolso';
+  const userTextResolved =
+    userText ||
+    'Recebemos sua solicitação de reembolso. Nossa equipe irá analisar e responder em breve.\n\nSe precisar complementar alguma informação, responda este e-mail.';
+
+  try {
+    await transport.sendMail({
+      from: REFUND_FROM_EMAIL,
+      to: REFUND_TO_EMAIL,
+      replyTo: payload.email,
+      subject,
+      text
+    });
+    await transport.sendMail({
+      from: REFUND_FROM_EMAIL,
+      to: payload.email,
+      subject: userSubjectResolved,
+      text: userTextResolved
+    });
+    return true;
+  } catch (error) {
+    console.error('[refund] email_error', error);
+    return false;
+  }
+};
+
+const applyCors = (req: functions.https.Request, res: functions.Response<any>) => {
+  const origin = (req.headers.origin as string) || '*';
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return true;
+  }
+  return false;
+};
 
 const SYSTEM_PROMPT = `
 Você é o Ajudante do meumei.
@@ -552,3 +657,500 @@ export const sendDailyTipNotifications = functions.pubsub
 
     return null;
   });
+
+export const sendAgendaNotifications = functions.pubsub
+  .schedule('every 5 minutes')
+  .timeZone(DAILY_TIP_TIMEZONE)
+  .onRun(async () => {
+    const nowMs = Date.now();
+    const windowMs = 60 * 60 * 1000; // 1h de tolerância para evitar envio tardio demais
+
+    const pendingSnap = await admin
+      .firestore()
+      .collectionGroup('agenda')
+      .where('notifyStatus', '==', 'pending')
+      .where('notifyAtMs', '<=', nowMs)
+      .where('notifyAtMs', '>=', nowMs - windowMs)
+      .limit(200)
+      .get();
+
+    if (pendingSnap.empty) {
+      console.log('[agenda-push] nothing_due');
+      return null;
+    }
+
+    const grouped = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+    pendingSnap.docs.forEach((doc) => {
+      const uid = doc.ref.parent.parent?.id;
+      if (!uid) return;
+      const list = grouped.get(uid) || [];
+      list.push(doc);
+      grouped.set(uid, list);
+    });
+
+    for (const [uid, docs] of grouped.entries()) {
+      const settingsRef = admin
+        .firestore()
+        .collection('users')
+        .doc(uid)
+        .collection('settings')
+        .doc('notifications');
+      const settingsSnap = await settingsRef.get();
+      const enabled = settingsSnap.exists ? settingsSnap.get('enabled') !== false : true;
+
+      const sorted = [...docs].sort(
+        (a, b) => (a.get('notifyAtMs') || 0) - (b.get('notifyAtMs') || 0)
+      );
+      const primary = sorted[0];
+      const primaryTitle = typeof primary.get('title') === 'string' ? primary.get('title') : 'Agendamento';
+      const primaryTime = typeof primary.get('time') === 'string' ? primary.get('time') : '';
+      const body =
+        sorted.length === 1
+          ? `${primaryTime ? `${primaryTime} · ` : ''}${primaryTitle}`
+          : `${sorted.length} agendamentos agora. Próximo: ${primaryTime ? `${primaryTime} · ` : ''}${primaryTitle}`;
+
+      let result = { ok: false };
+      if (enabled) {
+        result = await sendPushToUser(uid, {
+          title: 'Lembrete da agenda',
+          body,
+          url: '/app'
+        });
+      }
+
+      const nextStatus = enabled ? (result.ok ? 'sent' : 'failed') : 'skipped';
+      const batch = admin.firestore().batch();
+      docs.forEach((doc) => {
+        batch.set(
+          doc.ref,
+          {
+            notifyStatus: nextStatus,
+            notifiedAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      });
+      await batch.commit();
+    }
+
+    return null;
+  });
+
+export const requestRefund = functions.https.onRequest(async (req, res) => {
+  if (applyCors(req, res)) return;
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'method_not_allowed' });
+    return;
+  }
+
+  const body = (req.body && (req.body.data || req.body)) || {};
+  const name = String(body.name || '').trim();
+  const email = String(body.email || '').trim();
+  const purchaseDate = String(body.purchaseDate || '').trim();
+  const orderId = String(body.orderId || '').trim();
+  const reason = String(body.reason || '').trim();
+  const details = String(body.details || '').trim();
+
+  if (!name || !email || !purchaseDate) {
+    res.status(400).json({ error: 'missing_fields', message: 'Informe nome, e-mail e data da compra.' });
+    return;
+  }
+
+  const payload = {
+    name,
+    email,
+    purchaseDate,
+    orderId: orderId || null,
+    reason: reason || null,
+    details: details || null,
+    status: 'pending',
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const refundRef = admin.firestore().collection('refundRequests').doc();
+
+  try {
+    await refundRef.set({
+      ...payload,
+      requestId: refundRef.id,
+      normalizedEmail
+    });
+  } catch (error) {
+    console.error('[refund] firestore_error', error);
+  }
+
+  const subject = `Solicitação de reembolso - ${name}`;
+  const text = [
+    `Nome: ${name}`,
+    `E-mail: ${email}`,
+    `Data da compra: ${purchaseDate}`,
+    orderId ? `Pedido: ${orderId}` : '',
+    reason ? `Motivo: ${reason}` : '',
+    details ? `Detalhes: ${details}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const stripe = getStripeClient();
+  if (!stripe) {
+    const delivered = await sendRefundEmail({ name, email }, subject, text);
+    res.status(200).json({
+      ok: true,
+      pendingEmail: !delivered,
+      message:
+        'Solicitação registrada. Nossa equipe entrará em contato em breve.'
+    });
+    return;
+  }
+
+  let entitlementData: FirebaseFirestore.DocumentData | null = null;
+  try {
+    const entitlementSnap = await admin.firestore().collection('entitlements').doc(normalizedEmail).get();
+    entitlementData = entitlementSnap.exists ? entitlementSnap.data() || null : null;
+  } catch (error) {
+    console.error('[refund] entitlement_lookup_error', error);
+  }
+
+  if (!entitlementData) {
+    await refundRef.set(
+      { status: 'not_found', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    res.status(404).json({
+      ok: false,
+      message: 'Não encontramos a compra com este e-mail. Verifique e tente novamente.'
+    });
+    return;
+  }
+
+  if (entitlementData.status && entitlementData.status !== 'active') {
+    await refundRef.set(
+      {
+        status: 'already_processed',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+    res.status(200).json({
+      ok: true,
+      status: 'already_processed',
+      message: 'Esta compra já foi processada anteriormente.'
+    });
+    return;
+  }
+
+  const stripeSubscriptionId =
+    typeof entitlementData.stripeSubscriptionId === 'string'
+      ? entitlementData.stripeSubscriptionId
+      : '';
+  const planType =
+    (typeof entitlementData.planType === 'string' && entitlementData.planType) ||
+    (stripeSubscriptionId ? 'monthly' : 'annual');
+
+  await refundRef.set(
+    {
+      planType,
+      stripeSubscriptionId: stripeSubscriptionId || null,
+      stripeCustomerId: entitlementData.stripeCustomerId || null
+    },
+    { merge: true }
+  );
+
+  if (planType === 'monthly' && stripeSubscriptionId) {
+    try {
+      const subscription = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+        expand: ['latest_invoice.payment_intent']
+      });
+      const latestInvoice: any = subscription.latest_invoice;
+      const paymentIntent =
+        latestInvoice && latestInvoice.payment_intent
+          ? latestInvoice.payment_intent
+          : null;
+      const invoiceCreated =
+        latestInvoice && typeof latestInvoice.created === 'number'
+          ? latestInvoice.created * 1000
+          : 0;
+      const intentCreated =
+        paymentIntent && typeof paymentIntent.created === 'number'
+          ? paymentIntent.created * 1000
+          : 0;
+      const purchaseMs = invoiceCreated || intentCreated || 0;
+      const paymentIntentId =
+        paymentIntent && typeof paymentIntent.id === 'string'
+          ? paymentIntent.id
+          : '';
+
+      const now = Date.now();
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+      await stripe.subscriptions.cancel(stripeSubscriptionId);
+
+      if (purchaseMs && now - purchaseMs <= sevenDaysMs && paymentIntentId) {
+        const refund = await stripe.refunds.create(
+          {
+            payment_intent: paymentIntentId,
+            reason: 'requested_by_customer'
+          },
+          { idempotencyKey: `refund_${paymentIntentId}_${refundRef.id}` }
+        );
+
+        await refundRef.set(
+          {
+            status: 'refunded',
+            stripeRefundId: refund.id,
+            refundedAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+
+        await admin.firestore().collection('entitlements').doc(normalizedEmail).set(
+          {
+            status: 'refunded',
+            planType: 'monthly',
+            refundStatus: 'refunded',
+            refundId: refund.id,
+            refundRequestId: refundRef.id,
+            refundedAt: admin.firestore.FieldValue.serverTimestamp(),
+            subscriptionStatus: 'canceled'
+          },
+          { merge: true }
+        );
+
+        await sendRefundEmail(
+          { name, email },
+          `Reembolso aprovado - ${name}`,
+          'Reembolso aprovado e solicitado ao meio de pagamento.',
+          'Reembolso aprovado',
+          'Seu reembolso foi aprovado e já foi solicitado ao meio de pagamento. O prazo para aparecer na fatura pode variar conforme a operadora do cartão.'
+        );
+
+        res.status(200).json({
+          ok: true,
+          status: 'refunded',
+          message: 'Reembolso aprovado automaticamente. Você receberá confirmação por e-mail.'
+        });
+        return;
+      }
+
+      await refundRef.set(
+        {
+          status: 'canceled_no_refund',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+
+      await admin.firestore().collection('entitlements').doc(normalizedEmail).set(
+        {
+          status: 'canceled',
+          planType: 'monthly',
+          refundStatus: 'rejected_outside_window',
+          refundRequestId: refundRef.id,
+          refundRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+          subscriptionStatus: 'canceled'
+        },
+        { merge: true }
+      );
+
+      await sendRefundEmail(
+        { name, email },
+        `Assinatura cancelada - ${name}`,
+        'Assinatura mensal cancelada sem reembolso (prazo de 7 dias expirado).',
+        'Assinatura cancelada',
+        'Sua assinatura mensal foi cancelada. Como o prazo de 7 dias corridos já expirou, não há reembolso do período já pago.'
+      );
+
+      res.status(200).json({
+        ok: true,
+        status: 'canceled',
+        message: 'Assinatura cancelada. Prazo de reembolso expirado.'
+      });
+      return;
+    } catch (error) {
+      console.error('[refund] monthly_refund_error', error);
+      await refundRef.set(
+        { status: 'refund_failed', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+      res.status(500).json({
+        ok: false,
+        message: 'Não foi possível processar o cancelamento. Tente novamente.'
+      });
+      return;
+    }
+  }
+
+  let paymentIntentId =
+    typeof entitlementData.stripePaymentIntentId === 'string'
+      ? entitlementData.stripePaymentIntentId
+      : '';
+  const createdRaw = entitlementData.stripeCheckoutSessionCreated;
+  let purchaseMs = 0;
+  if (typeof createdRaw === 'number') {
+    purchaseMs = createdRaw * 1000;
+  } else if (createdRaw && typeof createdRaw.toMillis === 'function') {
+    purchaseMs = createdRaw.toMillis();
+  }
+
+  const stripeCustomerId =
+    typeof entitlementData.stripeCustomerId === 'string'
+      ? entitlementData.stripeCustomerId
+      : '';
+
+  if (!paymentIntentId && stripeCustomerId) {
+    try {
+      const intents = await stripe.paymentIntents.list({
+        customer: stripeCustomerId,
+        limit: 5
+      });
+      const candidate =
+        intents.data.find((intent) => intent.status === 'succeeded') ||
+        intents.data[0];
+      if (candidate) {
+        paymentIntentId = candidate.id;
+        if (!purchaseMs && typeof candidate.created === 'number') {
+          purchaseMs = candidate.created * 1000;
+        }
+        await admin.firestore().collection('entitlements').doc(normalizedEmail).set(
+          {
+            stripePaymentIntentId: paymentIntentId,
+            stripePaymentIntentCreated: candidate.created,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      }
+    } catch (error) {
+      console.error('[refund] payment_intent_lookup_failed', error);
+    }
+  }
+
+  if (!paymentIntentId) {
+    await refundRef.set(
+      { status: 'missing_payment', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    res.status(404).json({
+      ok: false,
+      message: 'Não foi possível localizar o pagamento. Verifique o e-mail usado na compra.'
+    });
+    return;
+  }
+
+  if (!purchaseMs) {
+    try {
+      const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      if (intent && typeof intent.created === 'number') {
+        purchaseMs = intent.created * 1000;
+        await admin.firestore().collection('entitlements').doc(normalizedEmail).set(
+          {
+            stripePaymentIntentCreated: intent.created,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      }
+    } catch (error) {
+      console.error('[refund] payment_intent_retrieve_failed', error);
+    }
+  }
+
+  if (!purchaseMs) {
+    await refundRef.set(
+      { status: 'missing_purchase_date', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    res.status(400).json({
+      ok: false,
+      message: 'Não foi possível confirmar a data da compra. Entre em contato com o suporte.'
+    });
+    return;
+  }
+
+  const now = Date.now();
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  if (now - purchaseMs > sevenDaysMs) {
+    await refundRef.set(
+      { status: 'rejected_outside_window', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    await admin.firestore().collection('entitlements').doc(normalizedEmail).set(
+      {
+        refundStatus: 'rejected_outside_window',
+        refundRequestId: refundRef.id,
+        refundRequestedAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+    await sendRefundEmail(
+      { name, email },
+      `Reembolso não aprovado - ${name}`,
+      'Pedido recebido fora do prazo de 7 dias. Reembolso não aplicável.',
+      'Reembolso não aprovado',
+      'Seu pedido foi recebido, porém o prazo de 7 dias corridos já expirou. Conforme nossa política, não há reembolso após esse período.'
+    );
+    res.status(200).json({
+      ok: true,
+      status: 'rejected',
+      message: 'Prazo de 7 dias expirado. Não há reembolso disponível.'
+    });
+    return;
+  }
+
+  try {
+    const refund = await stripe.refunds.create(
+      {
+        payment_intent: paymentIntentId,
+        reason: 'requested_by_customer'
+      },
+      { idempotencyKey: `refund_${paymentIntentId}_${refundRef.id}` }
+    );
+
+    await refundRef.set(
+      {
+        status: 'refunded',
+        stripeRefundId: refund.id,
+        refundedAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+
+    await admin.firestore().collection('entitlements').doc(normalizedEmail).set(
+      {
+        status: 'refunded',
+        refundStatus: 'refunded',
+        refundId: refund.id,
+        refundRequestId: refundRef.id,
+        refundedAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+
+    await sendRefundEmail(
+      { name, email },
+      `Reembolso aprovado - ${name}`,
+      'Reembolso aprovado e solicitado ao meio de pagamento.',
+      'Reembolso aprovado',
+      'Seu reembolso foi aprovado e já foi solicitado ao meio de pagamento. O prazo para aparecer na fatura pode variar conforme a operadora do cartão.'
+    );
+
+    res.status(200).json({
+      ok: true,
+      status: 'refunded',
+      message: 'Reembolso aprovado automaticamente. Você receberá confirmação por e-mail.'
+    });
+    return;
+  } catch (error: any) {
+    console.error('[refund] stripe_refund_error', error);
+    await refundRef.set(
+      { status: 'refund_failed', updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    res.status(500).json({
+      ok: false,
+      message: 'Não foi possível processar o reembolso. Tente novamente mais tarde.'
+    });
+    return;
+  }
+});

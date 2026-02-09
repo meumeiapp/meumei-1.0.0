@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, X, Calculator, DollarSign, Percent, RefreshCw } from 'lucide-react';
+import { ArrowLeft, X, Calculator, DollarSign, Percent, RefreshCw, ChevronDown } from 'lucide-react';
 import useIsMobile from '../hooks/useIsMobile';
 import MobileModalShell from './mobile/MobileModalShell';
-import MobileSelect from './mobile/MobileSelect';
+import SelectDropdown from './common/SelectDropdown';
 
 export type RatePeriod = 'month' | 'year';
 export type DurationUnit = 'months' | 'years';
@@ -29,6 +29,7 @@ interface CompoundInterestCalculatorModalProps {
   onClose: () => void;
   defaults: CompoundCalculatorDefaults;
   onResult?: (result: CompoundCalculatorResult) => void;
+  variant?: 'default' | 'dock';
 }
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
@@ -97,9 +98,11 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
   isOpen,
   onClose,
   defaults,
-  onResult
+  onResult,
+  variant = 'default'
 }) => {
   const isMobile = useIsMobile();
+  const isDockDesktop = variant === 'dock' && !isMobile;
   const offsetLoggedRef = useRef(false);
   const [initialInput, setInitialInput] = useState('');
   const [monthlyInput, setMonthlyInput] = useState('');
@@ -312,7 +315,9 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
 
   const contentWrapperClassName = isMobile
     ? 'space-y-6'
-    : 'p-6 space-y-6 max-h-[80vh] overflow-y-auto';
+    : isDockDesktop
+        ? 'space-y-6'
+        : 'p-6 space-y-6 max-h-[80vh] overflow-y-auto';
 
   const modalBody = (
     <div className={contentWrapperClassName}>
@@ -375,30 +380,14 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
               className="flex-1 bg-transparent outline-none text-zinc-900 dark:text-white font-semibold"
               placeholder="0,0"
             />
-            {isMobile ? (
-              <MobileSelect
-                id={fieldId('rate-period')}
-                name="ratePeriod"
-                value={ratePeriod}
-                options={ratePeriodOptions}
-                onChange={(value) => setRatePeriod(value as RatePeriod)}
-                size="compact"
-                buttonClassName="w-auto bg-transparent border-0 shadow-none text-xs uppercase tracking-wide text-zinc-500 focus:ring-0 px-2 py-1"
-                menuClassName="min-w-[110px]"
-              />
-            ) : (
-              <select
-                id={fieldId('rate-period')}
-                name="ratePeriod"
-                value={ratePeriod}
-                onChange={(e) => setRatePeriod(e.target.value as RatePeriod)}
-                className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
-                aria-label="Período da taxa"
-              >
-                <option value="year">a.a.</option>
-                <option value="month">a.m.</option>
-              </select>
-            )}
+            <SelectDropdown
+              value={ratePeriod}
+              onChange={(value) => setRatePeriod(value as RatePeriod)}
+              options={ratePeriodOptions}
+              placeholder="Selecione"
+              buttonClassName="w-auto bg-transparent border-0 shadow-none text-xs uppercase tracking-wide text-zinc-500 focus:ring-0 px-2 py-1"
+              listClassName="min-w-[110px] max-h-40"
+            />
           </div>
         </div>
 
@@ -419,30 +408,14 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
               className="flex-1 bg-transparent outline-none text-zinc-900 dark:text-white font-semibold"
               placeholder="1"
             />
-            {isMobile ? (
-              <MobileSelect
-                id={fieldId('duration-unit')}
-                name="durationUnit"
-                value={durationUnit}
-                options={durationUnitOptions}
-                onChange={(value) => setDurationUnit(value as DurationUnit)}
-                size="compact"
-                buttonClassName="w-auto bg-transparent border-0 shadow-none text-xs uppercase tracking-wide text-zinc-500 focus:ring-0 px-2 py-1"
-                menuClassName="min-w-[120px]"
-              />
-            ) : (
-              <select
-                id={fieldId('duration-unit')}
-                name="durationUnit"
-                value={durationUnit}
-                onChange={(e) => setDurationUnit(e.target.value as DurationUnit)}
-                className="bg-transparent text-xs uppercase tracking-wide text-zinc-500"
-                aria-label="Unidade do período"
-              >
-                <option value="years">anos</option>
-                <option value="months">meses</option>
-              </select>
-            )}
+            <SelectDropdown
+              value={durationUnit}
+              onChange={(value) => setDurationUnit(value as DurationUnit)}
+              options={durationUnitOptions}
+              placeholder="Selecione"
+              buttonClassName="w-auto bg-transparent border-0 shadow-none text-xs uppercase tracking-wide text-zinc-500 focus:ring-0 px-2 py-1"
+              listClassName="min-w-[120px] max-h-40"
+            />
           </div>
         </div>
       </div>
@@ -529,6 +502,36 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
           {modalBody}
         </div>
       </MobileModalShell>
+    );
+  }
+
+  if (isDockDesktop) {
+    return (
+      <div className="fixed inset-0 z-[1200]">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute inset-0 bg-black/60"
+          aria-label="Fechar simulador"
+        />
+        <div className="absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]">
+          <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold truncate">Calculadora de Juros Compostos</p>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Simule o crescimento do seu patrimônio.</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+              aria-label="Fechar simulador"
+            >
+              <ChevronDown size={16} />
+            </button>
+          </div>
+          <div className="pt-3 flex-1 overflow-auto">{modalBody}</div>
+        </div>
+      </div>
     );
   }
 
