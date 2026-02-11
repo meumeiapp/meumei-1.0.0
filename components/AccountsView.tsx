@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   Landmark,
   Wallet,
@@ -13,7 +13,6 @@ import {
   AlertTriangle,
   History,
   Info,
-  Home,
   ChevronDown
 } from 'lucide-react';
 import NewAccountModal from './NewAccountModal';
@@ -28,6 +27,7 @@ import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import SelectDropdown from './common/SelectDropdown';
 import MobileEmptyState from './mobile/MobileEmptyState';
+import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import type { BalanceTrailEntry, RealBalanceDebug } from '../services/realBalanceEngine';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 
@@ -126,23 +126,60 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const isInlineAllowed = isMobile;
   const useDockModal = !isInlineAllowed;
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
+  const firstSectionRef = useRef<HTMLDivElement | null>(null);
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
+  const [topAdjust, setTopAdjust] = useState(0);
 
   useEffect(() => {
       if (typeof document === 'undefined') return;
       if (useDockModal && inlineNewOpen) {
           setInlineNewOpen(false);
       }
-      if (isInlineAllowed && inlineNewOpen) {
-          document.body.classList.add('hide-quick-access');
-      } else {
-          document.body.classList.remove('hide-quick-access');
-      }
+      document.body.classList.remove('hide-quick-access');
       return () => {
           document.body.classList.remove('hide-quick-access');
       };
   }, [inlineNewOpen, isMobile, useDockModal]);
+
+  useLayoutEffect(() => {
+      const headerNode = subHeaderRef.current;
+      const sectionNode = firstSectionRef.current;
+      if (!headerNode || !sectionNode) return;
+
+      const measureGap = () => {
+          const headerBottom = headerNode.getBoundingClientRect().bottom;
+          const sectionTop = sectionNode.getBoundingClientRect().top;
+          const gap = Math.round(sectionTop - headerBottom);
+          const desired = 5;
+          setTopAdjust((prev) => {
+              const nextAdjust = Math.max(0, gap - desired + prev);
+              return prev === nextAdjust ? prev : nextAdjust;
+          });
+      };
+
+      measureGap();
+      window.addEventListener('resize', measureGap);
+      return () => window.removeEventListener('resize', measureGap);
+  }, [subHeaderHeight, topAdjust]);
+
+  useEffect(() => {
+      if (!isMobile || typeof window === 'undefined') return;
+      const handleDockClick = () => {
+          setDrawerAccount(null);
+          setInlineNewOpen(false);
+          setInlineEditAccountId(null);
+          setInlineNewEditId(null);
+          setInlineNewNotesOpen(false);
+          setInlineNewTypesOpen(false);
+          setEditingAccount(null);
+          setAccountToDelete(null);
+          setAuditAccountId(null);
+          setIsModalOpen(false);
+      };
+      window.addEventListener('mm:mobile-dock-click', handleDockClick);
+      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+  }, [isMobile]);
 
   useEffect(() => {
       console.info('[ui][accounts] mount', { count: accounts.length });
@@ -710,17 +747,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
     ? 'space-y-4'
     : 'max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] pb-10 animate-in fade-in slide-in-from-bottom-4 duration-500';
 
+  const headerCardRadius = isMobile ? 'rounded-none' : 'rounded-xl';
+  const headerSecondaryRadius = isMobile ? 'rounded-none' : 'rounded-xl';
+  const headerPrimaryRadius = isMobile ? 'rounded-none' : 'rounded-2xl';
+
   const accountsHeader = (
       <div className="space-y-2">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-              <button
-                  type="button"
-                  onClick={onBack}
-                  className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-                  aria-label="Voltar para o início"
-              >
-                  <Home size={16} />
-              </button>
+              <div className="h-8 w-8" aria-hidden="true" />
               <div className="min-w-0 text-center">
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Contas Bancárias</p>
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{listSubtitle}</p>
@@ -729,17 +763,17 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+              <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Contas</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{displayCount}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+              <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo total</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
                       {formatCurrency(headerTotalBalance)}
                   </p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+              <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo atual</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
                       {formatCurrency(displayBalance)}
@@ -751,7 +785,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               {onOpenAudit && (
                   <button
                       onClick={onOpenAudit}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+                      className={`flex items-center justify-center gap-2 ${headerSecondaryRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition`}
                       title="Auditoria do dia"
                   >
                       <History size={14} />
@@ -760,7 +794,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               )}
               <button
                   onClick={handleOpenNew}
-                  className="w-full rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-blue-900/20 transition active:scale-[0.98]"
+                  className={`w-full ${headerPrimaryRadius} bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-blue-900/20 transition active:scale-[0.98]`}
               >
                   Nova Conta
               </button>
@@ -781,11 +815,11 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           ? { minHeight: `calc(var(--app-height, 100vh) - ${subHeaderHeight + 28}px)` }
           : undefined;
   const inlineNewActions = isInlineAllowed && inlineNewOpen ? (
-      <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+6px)] grid grid-cols-2 gap-2">
+      <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-0 grid grid-cols-2 gap-2">
           <button
               type="button"
               onClick={() => setInlineNewOpen(false)}
-              className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+              className="rounded-none border border-blue-400/50 bg-blue-950/30 py-3 text-sm font-semibold text-blue-200 hover:bg-blue-900/40 transition"
           >
               Cancelar
           </button>
@@ -793,7 +827,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               type="button"
               disabled={!inlineNewDraft.name.trim() || !inlineNewDraft.type || !inlineNewDraft.nature}
               onClick={handleInlineCreate}
-              className={`rounded-lg border border-indigo-500/40 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition ${
+              className={`rounded-none border border-blue-500/40 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition ${
                   !inlineNewDraft.name.trim() || !inlineNewDraft.type || !inlineNewDraft.nature
                       ? 'opacity-80 cursor-not-allowed'
                       : ''
@@ -865,28 +899,28 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const inlineNewCard = isInlineAllowed && inlineNewOpen ? (
       <div className="rounded-none border-0 bg-transparent p-0 flex flex-col" style={inlineNewCardStyle}>
-          <div className="px-3 pt-2 pb-2 bg-gradient-to-r from-indigo-500/80 via-indigo-500/35 to-black">
+          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
                       <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                   <Wallet size={16} className="text-white" />
-                          <p className="text-sm font-semibold text-white truncate">{inlineNewEditId ? 'Editar Conta' : 'Nova Conta'}</p>
-                              </div>
-                              <p className="text-[10px] text-white/70">Preencha os dados da conta.</p>
+                          <p className="text-[13px] font-semibold text-white truncate">{inlineNewEditId ? 'Editar Conta' : 'Nova Conta'}</p>
+                      </div>
+                              <p className="text-[9px] text-white/70">Preencha os dados da conta.</p>
                           </div>
                   <button
                       type="button"
                       onClick={() => setInlineNewOpen(false)}
-                      className="h-8 w-8 rounded-full bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                      className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                       aria-label="Fechar nova conta"
                   >
                       <X size={16} />
                   </button>
               </div>
           </div>
-          <div className="mt-3 px-3 grid grid-cols-1 gap-2">
+          <div className="mt-2 px-3 grid grid-cols-1 gap-1.5">
               <div>
-                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
                       Nome da conta
                   </label>
                   <input
@@ -896,25 +930,25 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           setInlineNewDraft(prev => ({ ...prev, name: event.target.value }))
                       }
                       placeholder="EX: CONTA CORRENTE PJ, CARTEIRA DIGITAL"
-                      className="mt-0.5 w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[10px]"
+                      className="mt-0.5 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[9px]"
                   />
               </div>
 
               <div>
                   <div className="flex items-center justify-between">
-                      <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                      <label className="text-[9px] uppercase tracking-wide font-bold text-white">
                           Tipo
                       </label>
-                      <button
-                          type="button"
-                          onClick={() => {
-                              setInlineNewTypesOpen(true);
-                              setInlineNewTypeError('');
-                          }}
-                          className="text-[10px] font-bold flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
-                      >
-                          <Edit2 size={10} /> Editar
-                      </button>
+                  <button
+                      type="button"
+                      onClick={() => {
+                          setInlineNewTypesOpen(true);
+                          setInlineNewTypeError('');
+                      }}
+                      className="text-[9px] font-bold flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                      <Edit2 size={10} /> Editar
+                  </button>
                   </div>
                   <SelectDropdown
                       value={inlineNewDraft.type}
@@ -926,14 +960,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       }
                       placeholder="SELECIONE"
                       options={normalizedAccountTypes.map(type => ({ value: type, label: type }))}
-                      buttonClassName="mt-0.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                      placeholderClassName="text-[10px] font-light uppercase"
+                      buttonClassName="mt-0.5 rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      placeholderClassName="text-[9px] font-light uppercase"
                       listClassName="max-h-48"
                   />
               </div>
 
               <div>
-                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
                       Natureza Fiscal
                   </label>
                   <SelectDropdown
@@ -949,14 +983,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           { value: 'PJ', label: 'Pessoa Jurídica' },
                           { value: 'PF', label: 'Pessoa Física' }
                       ]}
-                      buttonClassName="mt-0.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                      placeholderClassName="text-[10px] font-light uppercase"
+                      buttonClassName="mt-0.5 rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      placeholderClassName="text-[9px] font-light uppercase"
                       listClassName="max-h-48"
                   />
               </div>
 
               <div>
-                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
                       Saldo inicial
                   </label>
                   <input
@@ -969,12 +1003,12 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           }))
                       }
                       placeholder="EX: R$0,00"
-                      className="mt-0.5 w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[10px]"
+                      className="mt-0.5 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[9px]"
                   />
               </div>
 
               <div>
-                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
                       Saldo atual
                   </label>
                   <input
@@ -987,20 +1021,20 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           }))
                       }
                       placeholder="EX: R$0,00"
-                      className="mt-0.5 w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[10px]"
+                      className="mt-0.5 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[9px]"
                   />
               </div>
               <div>
-                  <label className="text-[10px] uppercase tracking-wide font-bold text-white">
+                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
                       Cor da tag
                   </label>
-                  <div className="mt-1.5 grid [grid-template-columns:repeat(15,minmax(0,1fr))] gap-1.5">
+                  <div className="mt-1 grid [grid-template-columns:repeat(15,minmax(0,1fr))] gap-1">
                       {inlineNewTagColors.slice(0, inlineNewTagMid).map(color => (
                           <button
                               key={color}
                               type="button"
                               onClick={() => setInlineNewDraft(prev => ({ ...prev, color }))}
-                              className={`h-6 w-6 rounded-full border ${
+                              className={`h-6 w-6 rounded-none border ${
                                   inlineNewDraft.color === color
                                       ? 'ring-2 ring-indigo-500 border-white'
                                       : 'border-white/40'
@@ -1010,13 +1044,13 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           />
                       ))}
                   </div>
-                  <div className="mt-1.5 grid [grid-template-columns:repeat(15,minmax(0,1fr))] gap-1.5">
+                  <div className="mt-1 grid [grid-template-columns:repeat(15,minmax(0,1fr))] gap-1">
                       {inlineNewTagColors.slice(inlineNewTagMid).map(color => (
                           <button
                               key={`${color}-row2`}
                               type="button"
                               onClick={() => setInlineNewDraft(prev => ({ ...prev, color }))}
-                              className={`h-6 w-6 rounded-full border ${
+                              className={`h-6 w-6 rounded-none border ${
                                   inlineNewDraft.color === color
                                       ? 'ring-2 ring-indigo-500 border-white'
                                       : 'border-white/40'
@@ -1032,29 +1066,31 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                   <button
                       type="button"
                       onClick={() => setInlineNewNotesOpen(true)}
-                      className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-2 text-[13px] text-left text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 flex items-center justify-between"
+                      className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-left text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 flex items-center justify-between"
                   >
                       Observações
-                      <span className="text-[10px] font-light text-zinc-400 uppercase">Adicionar</span>
+                      <span className="text-[9px] font-light text-zinc-400 uppercase">Adicionar</span>
                   </button>
               </div>
           </div>
       </div>
   ) : null;
 
+  const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
   const inlineNewSheet = isInlineAllowed && inlineNewOpen ? (
       <div className="fixed inset-0 z-[1200]">
           <button
               type="button"
               onClick={() => setInlineNewOpen(false)}
-              className="absolute inset-0 bg-black/70"
+              className="absolute left-0 right-0 top-0 bg-black/60"
+              style={{ bottom: dockOffset }}
               aria-label="Fechar nova conta"
           />
           <div
-              className="absolute left-0 right-0 bottom-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
-              style={{ top: 0 }}
+              className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+              style={{ top: 0, bottom: dockOffset }}
           >
-              <div className="flex-1 overflow-hidden px-0 pt-0 pb-16">
+              <div className="flex-1 overflow-hidden px-3 pt-0 pb-16">
                   {inlineNewCard}
               </div>
               {inlineNewActions}
@@ -1096,21 +1132,21 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       }
                       rows={4}
                       placeholder="DETALHES ADICIONAIS..."
-                      className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
+                      className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
                   />
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3">
                   <button
                       type="button"
                       onClick={() => setInlineNewNotesOpen(false)}
-                      className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                      className="rounded-none border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
                   >
                       Cancelar
                   </button>
                   <button
                       type="button"
                       onClick={() => setInlineNewNotesOpen(false)}
-                      className="rounded-xl border border-indigo-500/40 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
+                      className="rounded-none border border-indigo-500/40 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
                   >
                       Salvar
                   </button>
@@ -1121,29 +1157,37 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const inlineNewTypesSheet = isMobile && inlineNewTypesOpen ? (
       <div className="fixed inset-0 z-[1300]">
-          <button
-              type="button"
-              onClick={() => setInlineNewTypesOpen(false)}
-              className="absolute inset-0 bg-black/40"
-              aria-label="Fechar categorias"
-          />
-          <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col">
-              <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+          {(() => {
+              const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
+              return (
+          <>
+              <button
+                  type="button"
+                  onClick={() => setInlineNewTypesOpen(false)}
+                  className="absolute left-0 right-0 top-0 bg-black/40"
+                  style={{ bottom: dockOffset }}
+                  aria-label="Fechar categorias"
+              />
+              <div
+                  className="absolute left-0 right-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-none border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 flex flex-col"
+                  style={{ bottom: dockOffset, maxHeight: 'calc(100dvh - 24px - var(--mm-mobile-dock-height, 68px))' }}
+              >
+              <div className="flex items-start justify-between gap-2 pb-2 border-b border-zinc-200/60 dark:border-zinc-800/60">
                   <div className="min-w-0">
-                      <p className="text-sm font-semibold truncate">Categorias</p>
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
+                      <p className="text-xs font-semibold truncate">Categorias</p>
+                      <p className="text-[10px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
                   </div>
                   <button
                       type="button"
                       onClick={() => setInlineNewTypesOpen(false)}
-                      className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                      className="h-7 w-7 rounded-none bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
                       aria-label="Fechar categorias"
                   >
-                      <X size={16} />
+                      <X size={14} />
                   </button>
               </div>
-              <div className="pt-3 flex-1 overflow-hidden px-0.5">
-                  <div className="flex gap-2 mb-3">
+              <div className="pt-2 flex-1 overflow-hidden px-0.5 pb-2">
+                  <div className="flex gap-2 mb-2">
                       <input
                           type="text"
                           autoFocus
@@ -1154,7 +1198,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           }}
                           onKeyDown={(event) => event.key === 'Enter' && handleAddInlineType()}
                           placeholder={inlineNewTypeError || 'NOVA CATEGORIA...'}
-                          className={`w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm text-zinc-900 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-zinc-400 placeholder:uppercase placeholder:font-light placeholder:text-[10px] flex-1 w-auto ${
+                          className={`w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-xs text-zinc-900 dark:text-white rounded-none px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-zinc-400 placeholder:uppercase placeholder:font-light placeholder:text-[9px] flex-1 w-auto ${
                               inlineNewTypeError ? 'border-red-500 focus:border-red-500 focus:ring-red-500 placeholder:text-red-500' : ''
                           }`}
                       />
@@ -1162,47 +1206,47 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           type="button"
                           onClick={handleAddInlineType}
                           aria-label="Adicionar categoria"
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md"
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 rounded-none"
                       >
-                          <Plus size={16} />
+                          <Plus size={14} />
                       </button>
                   </div>
-                  <div className="space-y-0.5">
+                  <div className="space-y-0">
                       {normalizedAccountTypes.slice(0, 20).map((type) => (
                           <div
                               key={type}
-                              className="flex items-center justify-between px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+                              className="flex items-center justify-between px-2 py-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-none"
                           >
                               <label className="flex items-center gap-2 cursor-pointer">
                                   <input
                                       type="checkbox"
                                       checked={selectedTypes.includes(type)}
                                       onChange={() => toggleTypeSelection(type)}
-                                      className="h-3.5 w-3.5 accent-indigo-500"
+                                      className="h-3 w-3 accent-indigo-500"
                                       aria-label={`Selecionar categoria ${type}`}
                                   />
-                                  <span className="text-sm text-zinc-700 dark:text-zinc-300">{type}</span>
+                                  <span className="text-xs text-zinc-700 dark:text-zinc-300">{type}</span>
                               </label>
                               <button
                                   type="button"
                                   onClick={() => handleRemoveInlineType(type)}
                                   disabled={normalizedAccountTypes.length <= 1}
-                                  className={`text-red-500 p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded ${
+                                  className={`text-red-500 p-0.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-none ${
                                       normalizedAccountTypes.length <= 1 ? 'opacity-40 cursor-not-allowed' : ''
                                   }`}
                                   aria-label={`Remover categoria ${type}`}
                               >
-                                  <Trash2 size={12} />
+                                  <Trash2 size={10} />
                               </button>
                           </div>
                       ))}
                   </div>
-                  <div className={`mt-2 ${selectedTypes.length > 0 ? 'grid grid-cols-2 gap-2' : ''}`}>
+                  <div className={`mt-1.5 ${selectedTypes.length > 0 ? 'grid grid-cols-2 gap-2' : ''}`}>
                       {selectedTypes.length > 0 && (
                           <button
                               type="button"
                               onClick={handleBulkDeleteTypes}
-                              className="w-full rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
+                              className="w-full rounded-none border border-red-200 text-red-600 text-[11px] font-semibold py-1.5 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
                           >
                               Excluir selecionados ({selectedTypes.length})
                           </button>
@@ -1210,13 +1254,16 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       <button
                           type="button"
                           onClick={handleResetTypes}
-                          className={`${selectedTypes.length > 0 ? '' : 'w-full'} rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20`}
+                          className={`${selectedTypes.length > 0 ? '' : 'w-full'} rounded-none border border-red-200 text-red-600 text-[11px] font-semibold py-1.5 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20`}
                       >
                           Zerar categorias
                       </button>
                   </div>
               </div>
-          </div>
+              </div>
+          </>
+              );
+          })()}
       </div>
   ) : null;
 
@@ -1778,7 +1825,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               {!inlineNewOpen ? (
               accounts.length > 0 ? (
                   <>
-                      <div className="py-2">
+                      <div className="px-4 py-2">
                           <button
                               type="button"
                               onClick={toggleSelectAll}
@@ -1814,7 +1861,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                               <div
                                                   key={account.id}
                                                   id={`account-${account.id}`}
-                                                  className="py-2 rounded-md"
+                                                  className="px-4 py-2 rounded-none"
                                                   style={{ backgroundColor: rowBg }}
                                               >
                                                   <button
@@ -1848,7 +1895,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               ))}
                           </div>
                           {hasMobilePages && (
-                              <div className="mt-2 flex items-center justify-end gap-2">
+                              <div className="mt-2 px-4 flex items-center justify-end gap-2">
                                   <span className="text-[10px] text-zinc-400">
                                       {mobilePageIndex + 1}/{mobilePages.length}
                                   </span>
@@ -1882,11 +1929,11 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
       return (
           <>
-              <div className="fixed inset-0 bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+              <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
                   <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
                       {headerFill.height > 0 && (
                           <div
-                              className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+                              className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
                               style={{ top: headerFill.top, height: headerFill.height }}
                           />
                       )}
@@ -1896,18 +1943,26 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       >
                           <div
                               ref={subHeaderRef}
-                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
-                              <div className="px-4 pb-3 pt-2">
+                              <div className="px-3 pb-3 pt-2">
                                   {accountsHeader}
                               </div>
                           </div>
                       </div>
                       <div
                           className={`h-full px-4 ${inlineNewOpen ? 'pb-[calc(env(safe-area-inset-bottom)+16px)]' : 'pb-[calc(env(safe-area-inset-bottom)+88px)]'} overflow-hidden`}
-                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 64 : 64 }}
+                          style={{
+                              paddingTop: subHeaderHeight
+                                  ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px - ${topAdjust}px)`
+                                  : 'calc(var(--mm-mobile-top, 0px) + 2px)'
+                          }}
                       >
-                          {mobileList}
+                      <div ref={firstSectionRef}>
+                        <MobileFullWidthSection contentClassName="px-3 py-3">
+                            {mobileList}
+                        </MobileFullWidthSection>
+                      </div>
                       </div>
                   </div>
               </div>
@@ -1920,7 +1975,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   }
 
   return (
-    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter ${desktopScrollPadding} transition-colors duration-300 ${accountDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
+    <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter ${desktopScrollPadding} transition-colors duration-300 ${accountDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
       {summarySection}
       {listSection}
       {modals}

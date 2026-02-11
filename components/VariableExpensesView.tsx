@@ -7,6 +7,7 @@ import CardTag from './CardTag';
 import { getAccountColor } from '../services/cardColorUtils';
 import useIsMobile from '../hooks/useIsMobile';
 import MobilePageShell from './mobile/MobilePageShell';
+import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import MobileEmptyState from './mobile/MobileEmptyState';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 
@@ -263,16 +264,22 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
                   title="Despesas Variáveis"
                   subtitle={`${filteredExpenses.length} despesas`}
                   onBack={onBack}
-                  contentClassName="space-y-4"
+                  contentClassName="space-y-0"
               >
-                  {headerSection}
+                  <MobileFullWidthSection contentClassName="px-4 py-3">
+                      {headerSection}
+                  </MobileFullWidthSection>
                   {filteredExpenses.length === 0 ? (
-                      <MobileEmptyState
-                          icon={<Wallet size={18} />}
-                          message="Nenhuma despesa encontrada para este mês."
-                      />
+                      <MobileFullWidthSection contentClassName="px-4 py-3" withDivider={false}>
+                          <MobileEmptyState
+                              icon={<Wallet size={18} />}
+                              message="Nenhuma despesa encontrada para este mês."
+                          />
+                      </MobileFullWidthSection>
                   ) : (
-                      tableSection
+                      <MobileFullWidthSection contentClassName="px-4 py-3" withDivider={false}>
+                          {tableSection}
+                      </MobileFullWidthSection>
                   )}
               </MobilePageShell>
               {modals}
@@ -281,7 +288,7 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
         {headerSection}
         {tableSection}
         {modals}

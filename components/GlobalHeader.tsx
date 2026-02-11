@@ -70,6 +70,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   const capitalizedMonthLabel = safeMonthLabel
     ? `${getInitial(safeMonthLabel)}${safeMonthLabel.slice(1)}`
     : '?';
+  const mobileMonthLabel = capitalizedMonthLabel.replace(' de ', ' ');
   const isDark = theme === 'dark';
 
   useEffect(() => {
@@ -78,7 +79,11 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
     const root = document.documentElement;
     const updateHeaderHeight = () => {
       const rect = node.getBoundingClientRect();
-      root.style.setProperty('--mm-header-height', `${Math.round(rect.height)}px`);
+      const height = Math.round(rect.height);
+      root.style.setProperty('--mm-header-height', `${height}px`);
+      if (isMobile) {
+        root.style.setProperty('--mm-mobile-top', `${height}px`);
+      }
     };
     updateHeaderHeight();
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateHeaderHeight) : null;
@@ -92,6 +97,60 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
 
   const headerMarginClass = isCompactHeight ? 'mb-2 md:mb-3' : 'mb-3 md:mb-4';
   const headerPaddingClass = isCompactHeight ? 'pt-1 pb-2 md:pt-1.5 md:pb-3' : 'pt-1.5 pb-3 md:pt-2 md:pb-4';
+
+  const monthSelector = (
+    <div id="month-selector-bar" className="w-full px-4 pb-[5px]">
+      <div className="mx-auto w-full max-w-[240px] flex items-center justify-between bg-[#1a1a1a]/90 border border-white/10 p-0.5 rounded-full shadow-lg shadow-black/40">
+        <button
+          onClick={() => onMonthChange(-1)}
+          disabled={!canGoBack}
+          className={`w-7 h-7 flex items-center justify-center rounded-full transition-all ${!canGoBack ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:bg-zinc-800 active:scale-95'}`}
+        >
+          <ChevronLeft size={16} />
+        </button>
+
+        <div className="flex flex-col items-center justify-center px-2">
+          <span className="text-[11px] font-semibold text-white capitalize leading-none">
+            {mobileMonthLabel}
+          </span>
+        </div>
+
+        <button
+          onClick={() => onMonthChange(1)}
+          className="w-7 h-7 flex items-center justify-center rounded-full text-white hover:bg-zinc-800 active:scale-95 transition-all"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+
+  if (isMobile) {
+    return (
+      <div
+        ref={headerRef}
+        className="pwa-safe-top w-full bg-black/25 backdrop-blur-md border-b border-white/10 sticky top-0 z-[999]"
+      >
+        <div className="px-4 pt-2 pb-1">
+          <MobileHeader
+            companyName={companyName}
+            username={username}
+            theme={theme}
+            onThemeChange={onThemeChange}
+            onOpenSettings={onOpenSettings}
+            onOpenReports={onOpenReports}
+            onOpenAudit={onOpenAudit}
+            onOpenCalculator={onOpenCalculator}
+            onLogout={onLogout}
+            onCompanyClick={onCompanyClick}
+            canAccessSettings={canAccessSettings}
+            versionLabel={versionLabel}
+          />
+        </div>
+        {monthSelector}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -110,7 +169,6 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                      onThemeChange={onThemeChange}
                      onOpenSettings={onOpenSettings}
                      onOpenReports={onOpenReports}
-                     onOpenAgenda={onOpenAgenda}
                      onOpenAudit={onOpenAudit}
                      onOpenCalculator={onOpenCalculator}
                      onLogout={onLogout}
@@ -184,28 +242,30 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
          </div>
 
          {/* BOTTOM EDGE: Month Selector (Overlapping) */}
-         <div id="month-selector-bar" className="absolute bottom-0 left-0 right-0 translate-y-1/2 z-20 w-full px-4">
-            <div className="mx-auto w-full max-w-[300px] md:max-w-[280px] flex items-center justify-between bg-[#1a1a1a] dark:bg-black border border-white/10 dark:border-zinc-800 p-0.5 md:p-1 rounded-full shadow-2xl shadow-black/40">
+         <div id="month-selector-bar" className="absolute bottom-0 left-0 right-0 translate-y-[60%] md:translate-y-1/2 z-20 w-full px-4">
+            <div className="mx-auto w-full max-w-[260px] md:max-w-[280px] flex items-center justify-between bg-[#1a1a1a] dark:bg-black border border-white/10 dark:border-zinc-800 p-0.5 md:p-1 rounded-full shadow-2xl shadow-black/40">
                 <button 
                     onClick={() => onMonthChange(-1)}
                     disabled={!canGoBack}
-                    className={`w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-full transition-all ${!canGoBack ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:bg-zinc-800 active:scale-95'}`}
+                    className={`w-7 h-7 md:w-9 md:h-9 flex items-center justify-center rounded-full transition-all ${!canGoBack ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:bg-zinc-800 active:scale-95'}`}
                 >
-                    <ChevronLeft size={18} />
+                    <ChevronLeft size={16} />
                 </button>
                 
                 <div className="flex flex-col items-center justify-center px-2 md:px-3">
-                    <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-widest leading-none mb-0.5">Mês Atual</span>
-                    <span className="text-[11px] md:text-xs font-bold text-white capitalize leading-none">
-                        {capitalizedMonthLabel}
-                    </span>
+                    <>
+                        <span className="text-[9px] font-medium text-zinc-400 uppercase tracking-widest leading-none mb-0.5">Mês Atual</span>
+                        <span className="text-[10px] md:text-xs font-bold text-white capitalize leading-none">
+                            {capitalizedMonthLabel}
+                        </span>
+                    </>
                 </div>
 
                 <button 
                     onClick={() => onMonthChange(1)}
-                    className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-full text-white hover:bg-zinc-800 active:scale-95 transition-all"
+                    className="w-7 h-7 md:w-9 md:h-9 flex items-center justify-center rounded-full text-white hover:bg-zinc-800 active:scale-95 transition-all"
                 >
-                    <ChevronRight size={18} />
+                    <ChevronRight size={16} />
                 </button>
             </div>
          </div>

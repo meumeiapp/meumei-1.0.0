@@ -18,7 +18,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Tag,
-  PieChart,
   Smile,
   Target,
   Flame,
@@ -37,7 +36,6 @@ import { CreditCard as CreditCardType, Expense, Income, Account } from '../types
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
-import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 import SearchHelperBar from './SearchHelperBar';
@@ -59,7 +57,6 @@ interface ExpenseBreakdown {
     personal: number;
 }
 
-const CATEGORY_TREND_COLORS = ['#a855f7', '#38bdf8', '#f97316', '#22c55e', '#ec4899', '#facc15', '#0ea5e9', '#f472b6', '#94a3b8', '#fb923c'];
 
 const MONTH_ALIASES: Record<string, string> = {
   jan: '01',
@@ -534,8 +531,6 @@ const DashboardMobile: React.FC<DashboardProps> = ({
       ]
   );
   
-  const [refreshNonce, setRefreshNonce] = useState(0);
-  const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -751,105 +746,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
       }, {});
   }, [creditCards]);
 
-  const categoryTotals = useMemo(
-      () =>
-          computeCategoryTotals(expenses, {
-              viewDate,
-              statusRule: 'paid+pending',
-              dateField: 'date',
-              topN: 8,
-              includeOthers: true,
-              source: 'dashboard',
-              variant: 'mobile',
-              expensesRevision,
-              refreshNonce,
-              expandedCategory: expandedCategoryKey
-          }),
-      [expenses, viewDate, expensesRevision, refreshNonce, expandedCategoryKey]
-  );
-
-  const maxCategoryTotal = useMemo(
-      () => Math.max(...categoryTotals.items.map(item => item.total), 0),
-      [categoryTotals.items]
-  );
-
-  const spendInsights = useMemo(() => {
-      if (!categoryTotals.items.length || categoryTotals.totalSum <= 0) return [];
-      const topCategory = categoryTotals.items[0];
-      const top3Total = categoryTotals.items
-          .slice(0, 3)
-          .reduce((sum, item) => sum + item.total, 0);
-      const top3Percent = categoryTotals.totalSum > 0 ? (top3Total / categoryTotals.totalSum) * 100 : 0;
-      return [
-          {
-              label: 'Categoria líder',
-              value: topCategory.category,
-              sub: formatCurrency(topCategory.total)
-          },
-          {
-              label: 'Top 3',
-              value: `${top3Percent.toFixed(1)}% do total`
-          }
-      ];
-  }, [categoryTotals]);
-
-  useEffect(() => {
-      if (!expandedCategoryKey) return;
-      if (!categoryTotals.categoryItems[expandedCategoryKey]) {
-          console.info('[category-totals] expanded_reset', {
-              variant: 'mobile',
-              key: expandedCategoryKey
-          });
-          setExpandedCategoryKey(null);
-      }
-  }, [categoryTotals.categoryItems, expandedCategoryKey]);
-
-  const handleManualRecalc = () => {
-      setRefreshNonce(prev => prev + 1);
-      if (onRefreshExpenses) {
-          onRefreshExpenses();
-      }
-      console.info('[category-totals] manual-recalc', {
-          monthLabel: categoryTotals.monthLabel,
-          variant: 'mobile'
-      });
-  };
-
-  useEffect(() => {
-      const totalSaidasMes = financialData.expenses;
-      const totalRank = categoryTotals.totalSum;
-      const diff = Number((totalSaidasMes - totalRank).toFixed(2));
-      console.info('[category-totals] compare', {
-          variant: 'mobile',
-          totalSaidasMes,
-          totalRank,
-          diff
-      });
-
-      if (Math.abs(diff) > 0.01) {
-          const monthList = categoryTotals.monthExpensesAll;
-          const groupedList = Object.values(categoryTotals.categoryItems).flat();
-          const monthMap = new Map(monthList.map(item => [item.id, item]));
-          const groupedMap = new Map(groupedList.map(item => [item.id, item]));
-          const onlyInMonth = monthList.filter(item => !groupedMap.has(item.id));
-          const onlyInGrouped = groupedList.filter(item => !monthMap.has(item.id));
-          const pickTop = (list: Expense[]) =>
-              [...list]
-                  .sort((a, b) => b.amount - a.amount)
-                  .slice(0, 5)
-                  .map(item => ({
-                      id: item.id,
-                      amount: item.amount,
-                      category: item.category,
-                      date: item.date
-                  }));
-          console.info('[category-totals] diff_items', {
-              variant: 'mobile',
-              onlyInMonth: pickTop(onlyInMonth),
-              onlyInGrouped: pickTop(onlyInGrouped)
-          });
-      }
-  }, [financialData.expenses, categoryTotals.totalSum, categoryTotals.monthExpensesAll, categoryTotals.categoryItems]);
+  
 
   // --- MEI Logic ---
   const meiRevenue = financialData.annualMeiRevenue || 0;
@@ -890,8 +787,8 @@ const DashboardMobile: React.FC<DashboardProps> = ({
       mei_limit: canViewMeiLimit,
       financial_xray: true,
       credit_cards: canViewInvoices,
-      expense_breakdown: canManageExpenses
-  }), [canViewMeiLimit, canViewInvoices, canManageExpenses]);
+      expense_breakdown: false
+  }), [canViewMeiLimit, canViewInvoices]);
 
   const visibleOrder = useMemo(
       () => layout.order.filter((id) => availableBlocks[id]),
@@ -1292,160 +1189,7 @@ const DashboardMobile: React.FC<DashboardProps> = ({
             </SortableBlock>
         )}
 
-        {/* Categorized Expense Breakdown - BAR RANKING */}
-        {canManageExpenses && (
-            <SortableBlock
-                id="expense_breakdown"
-                label={blockLabels.expense_breakdown}
-                disabled={layoutLoading}
-                style={{ order: orderMap.expense_breakdown }}
-            >
-            <section className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
-                <div className="flex items-start justify-between gap-3 mb-4">
-                    <div>
-                        <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                            <PieChart size={18} className="text-indigo-500" />
-                            Onde foi parar seu dinheiro?
-                        </h2>
-                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                            Ranking das despesas do mês ({categoryTotals.monthLabel}).
-                        </p>
-                    </div>
-                    <div className="text-right text-[11px] text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
-                        <span className="uppercase tracking-wide font-semibold">Total</span>
-                        <div className="text-xs font-semibold text-zinc-900 dark:text-white">
-                            {formatCurrency(categoryTotals.totalSum)}
-                        </div>
-                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                            Pagas: {formatCurrency(categoryTotals.totalPaid)}
-                        </span>
-                    </div>
-                </div>
-                {categoryTotals.displayItems.length > 0 && categoryTotals.totalSum > 0 ? (
-                    <div className="space-y-3">
-                        <ul className="space-y-2.5">
-                            {categoryTotals.items.map((item, index) => {
-                                const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
-                                const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
-                                const barColor =
-                                    item.category === 'Outros'
-                                        ? '#94a3b8'
-                                        : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
-                                const isExpanded = expandedCategoryKey === item.key;
-                                const categoryExpenses = categoryTotals.categoryItems[item.key] || [];
-                                const itemsToShow = categoryExpenses.slice(0, CATEGORY_ITEMS_PREVIEW_LIMIT);
-                                const extraCount = Math.max(categoryExpenses.length - itemsToShow.length, 0);
-                                return (
-                                    <li key={item.key} className="space-y-1">
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setExpandedCategoryKey(prev => (prev === item.key ? null : item.key))
-                                            }
-                                            aria-expanded={isExpanded}
-                                            className="w-full text-left"
-                                        >
-                                            <div className="flex items-center justify-between gap-2 text-xs">
-                                                <div className="flex items-center gap-2 min-w-0">
-                                                    <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
-                                                        {item.category}
-                                                    </span>
-                                                    <ChevronDown
-                                                        size={12}
-                                                        className={`text-zinc-400 transition-transform ${
-                                                            isExpanded ? 'rotate-180' : ''
-                                                        }`}
-                                                    />
-                                                </div>
-                                                <span className="text-[11px] text-zinc-500 dark:text-zinc-400 shrink-0">
-                                                    {formatCurrency(item.total)} • {pct.toFixed(1)}%
-                                                </span>
-                                            </div>
-                                            <div className="mt-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                                                <div
-                                                    className="h-full rounded-full"
-                                                    style={{ width: `${barWidth}%`, backgroundColor: barColor }}
-                                                ></div>
-                                            </div>
-                                        </button>
-                                        {isExpanded && (
-                                            <div className="mt-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-2">
-                                                <ul className="space-y-2">
-                                                    {itemsToShow.map(expense => {
-                                                        const meta =
-                                                            (expense.accountId && accountNameById[expense.accountId]) ||
-                                                            (expense.cardId && cardNameById[expense.cardId]) ||
-                                                            expense.paymentMethod ||
-                                                            null;
-                                                        return (
-                                                            <li
-                                                                key={expense.id}
-                                                                className="flex items-start justify-between gap-3 text-[11px]"
-                                                            >
-                                                                <div className="min-w-0">
-                                                                    <p className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
-                                                                        {expense.description || 'Sem descrição'}
-                                                                    </p>
-                                                                    <div className="flex items-center gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-                                                                        <span>
-                                                                            {new Date(
-                                                                                `${expense.date}T12:00:00`
-                                                                            ).toLocaleDateString('pt-BR', {
-                                                                                day: '2-digit',
-                                                                                month: '2-digit'
-                                                                            })}
-                                                                        </span>
-                                                                        {meta && <span className="truncate">{meta}</span>}
-                                                                    </div>
-                                                                </div>
-                                                                <span className="text-[11px] font-semibold text-zinc-900 dark:text-white shrink-0">
-                                                                    {formatCurrency(expense.amount)}
-                                                                </span>
-                                                            </li>
-                                                        );
-                                                    })}
-                                                </ul>
-                                                {extraCount > 0 && (
-                                                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                                                        + {extraCount} itens
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                        {spendInsights.length > 0 && (
-                            <div className="grid gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-                                {spendInsights.map(insight => (
-                                    <div
-                                        key={insight.label}
-                                        className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1"
-                                    >
-                                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                            {insight.label}
-                                        </span>
-                                        <span className="font-semibold text-zinc-900 dark:text-white">
-                                            {insight.value}
-                                        </span>
-                                        {insight.sub && (
-                                            <span className="text-[10px] text-zinc-400">{insight.sub}</span>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                ) : (
-                    <MobileEmptyState
-                        icon={<PieChart size={18} />}
-                        message="Nenhuma despesa paga encontrada no mês."
-                    />
-                )}
-            </section>
-            </SortableBlock>
-        )}
+        {/* Expense breakdown removido da Home (mobile). */}
 
                 </div>
             </SortableContext>

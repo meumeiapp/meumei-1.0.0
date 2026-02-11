@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  html.is-mobile,
+  html.is-mobile body {
+    font-size: 11px;
+  }
+}
+
 /* Compacta automaticamente telas baixas (baseline 1366x768). */
 @media (max-height: 820px) {
   .yield-density {
@@ -345,6 +352,61 @@ body,
   }
 }
 
+html:not(.is-mobile) .text-xs {
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+html:not(.is-mobile) .text-sm {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+html:not(.is-mobile) .text-base {
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+
+html:not(.is-mobile) .text-lg {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+
+html:not(.is-mobile) .text-xl {
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+}
+
+html:not(.is-mobile) .text-2xl {
+  font-size: 1.5rem;
+  line-height: 2rem;
+}
+
+html:not(.is-mobile) .text-3xl {
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+}
+
+html:not(.is-mobile) .text-4xl {
+  font-size: 2.25rem;
+  line-height: 2.5rem;
+}
+
+html:not(.is-mobile) .text-5xl {
+  font-size: 3rem;
+  line-height: 1;
+}
+
+html:not(.is-mobile) .text-6xl {
+  font-size: 3.75rem;
+  line-height: 1;
+}
+
+html:not(.is-mobile) .text-7xl {
+  font-size: 4.5rem;
+  line-height: 1;
+}
+
 #root {
   min-height: 100%;
 }
@@ -428,6 +490,24 @@ html.is-mobile body {
   -webkit-text-size-adjust: 100%;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+}
+
+html.is-mobile .mm-mobile-shell {
+  background-color: #0b0c12;
+  background-image:
+    radial-gradient(120% 120% at 0% 0%, rgba(86, 144, 255, 0.18) 0%, rgba(11, 12, 18, 0) 58%),
+    radial-gradient(120% 120% at 100% 0%, rgba(236, 72, 153, 0.16) 0%, rgba(11, 12, 18, 0) 58%),
+    radial-gradient(120% 120% at 50% 120%, rgba(255, 255, 255, 0.06) 0%, rgba(11, 12, 18, 0) 45%),
+    repeating-linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.025) 0,
+      rgba(255, 255, 255, 0.025) 1px,
+      rgba(0, 0, 0, 0) 1px,
+      rgba(0, 0, 0, 0) 5px
+    );
+  background-size: cover, cover, cover, 240px 240px;
+  background-repeat: no-repeat, no-repeat, no-repeat, repeat;
+  background-attachment: fixed;
 }
 
 html.is-mobile body::-webkit-scrollbar {

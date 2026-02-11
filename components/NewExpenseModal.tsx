@@ -85,10 +85,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const isInline = variant === 'inline';
   const isDock = variant === 'dock';
   const isDockDesktop = isDock && !isMobile;
+  const isMobileInline = isMobile && isInline;
   const contentPadding = isInline
-    ? 'p-2'
+    ? 'px-3 py-1.5'
     : isMobile
-      ? 'px-3 py-3'
+      ? 'px-2 py-1.5'
       : isDockDesktop
         ? 'px-4 py-4'
         : 'px-8 py-8';
@@ -100,9 +101,9 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         ? 'pt-3'
         : 'px-8 py-6';
   const contentSpacing = isInline
-    ? 'space-y-1'
+    ? 'space-y-0.5'
     : isMobile
-      ? 'space-y-1'
+      ? 'space-y-0.5'
       : isDockDesktop
         ? 'space-y-4'
         : 'space-y-6';
@@ -182,20 +183,26 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   
   const config = getModalConfig();
   const isCompact = isInline || isMobile;
-  const compactLabelClass = 'text-[10px] uppercase tracking-wide font-bold text-white';
-  const labelClass = isDockDesktop ? modalLabelClass : isCompact ? compactLabelClass : modalLabelClass;
+  const compactLabelClass = 'text-sm uppercase tracking-wide font-light text-white/70';
+  const labelClass = isDockDesktop ? modalLabelClass : compactLabelClass;
   const dockFieldClass =
-    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+  const mobileInlineInputClass =
+    'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400';
+  const mobileModalInputClass = isMobile
+    ? (isMobileInline ? mobileInlineInputClass : 'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400')
+    : modalInputClass;
+  const mobileModalTextareaClass = isMobile ? `${mobileModalInputClass} resize-none` : modalTextareaClass;
   const inputBaseClass = isDockDesktop
-    ? `${dockFieldClass} focus:ring-emerald-500/40 pr-8 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`
-    : `${modalInputClass} ${config.colorClass} pr-8 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`;
+    ? `${dockFieldClass} focus:ring-emerald-500/40 pr-8 placeholder:uppercase placeholder:font-light`
+    : `${mobileModalInputClass} ${config.colorClass} pr-8 placeholder:uppercase placeholder:font-light`;
   const selectBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 text-left`
-    : `${modalInputClass} ${config.colorClass} text-left`;
-  const compactSelectClass = `${selectBaseClass} text-[11px]`;
+    : `${mobileModalInputClass} ${config.colorClass} text-left`;
+  const compactSelectClass = `${selectBaseClass} text-sm`;
   const textareaBaseClass = isDockDesktop
-    ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light placeholder:text-[10px] min-h-[80px] resize-none`
-    : `${modalTextareaClass} ${config.colorClass} placeholder:uppercase placeholder:font-light placeholder:text-[10px]`;
+    ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light min-h-[64px] resize-none`
+    : `${mobileModalTextareaClass} ${config.colorClass} placeholder:uppercase placeholder:font-light`;
   const entityName = config.title.replace(/^Nova\s+/i, '').trim();
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
   const fieldIdPrefix = initialData?.id ? `expense-${initialData.id}` : 'expense-new';
@@ -812,7 +819,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
       <div className={`${contentPadding} ${contentSpacing}`}>
 
         {allowTypeSelection && (
-        <div className="space-y-1 mt-1">
+        <div className="space-y-0.5 mt-0.5">
             <div className="flex items-center justify-between">
               <label className={labelClass}>
                 Tipo de despesa
@@ -821,7 +828,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsManagingTypes(true)}
-                  className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
+                  className={`text-[9px] font-bold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
                 >
                   <Edit2 size={10} /> Editar
                 </button>
@@ -839,7 +846,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
               placeholder="SELECIONE"
               buttonClassName={selectBaseClass}
               listClassName="max-h-56"
-              placeholderClassName="text-[10px] font-light uppercase"
+              placeholderClassName="text-[9px] font-light uppercase"
             />
             {isTypeMissing && (
               <p className="text-[11px] text-rose-500">
@@ -849,7 +856,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
           </div>
         )}
         
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           <label htmlFor={fieldId('description')} className={labelClass}>
             Descrição / Origem
           </label>
@@ -859,12 +866,13 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             type="text" 
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            data-preserve-case="true"
             placeholder="EX: ALUGUEL, SUPERMERCADO, NETFLIX..."
             className={inputBaseClass}
           />
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-0.5">
             <label htmlFor={fieldId('amount')} className={labelClass}>
               Valor (R$)
             </label>
@@ -879,15 +887,15 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             />
         </div>
 
-        <div className="space-y-1 relative">
-            <div className="flex justify-between items-center min-h-[12px] mb-1">
+        <div className="space-y-0.5 relative">
+            <div className="flex justify-between items-center min-h-[10px] mb-0.5">
                 <label htmlFor={fieldId('category')} className={labelClass}>
                   Categoria
                 </label>
                 <button 
                     type="button"
                     onClick={() => setIsManagingCategories(true)}
-                    className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
+                    className={`text-[9px] font-bold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
                 >
                     <Edit2 size={10} /> Editar
                 </button>
@@ -1007,12 +1015,12 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                     disabled={categories.length === 0}
                     buttonClassName={selectBaseClass}
                     listClassName="max-h-56"
-                    placeholderClassName="text-[10px] font-light uppercase"
+                    placeholderClassName="text-[9px] font-light uppercase"
                 />
             )}
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-0.5">
             <label htmlFor={fieldId('date')} className={labelClass}>
               Data de lançamento
             </label>
@@ -1026,7 +1034,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             />
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-0.5">
             <label htmlFor={fieldId('payment-method')} className={labelClass}>
               Forma de Pagamento
             </label>
@@ -1040,7 +1048,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             />
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-0.5">
             <label htmlFor={fieldId('payment-account')} className={labelClass}>
               Conta de Pagamento
             </label>
@@ -1061,18 +1069,18 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 listClassName="max-h-56"
             />
             {isCredit && selectedCardId && (
-                <div className="mt-2">
+                <div className="mt-1">
                     <CardTag card={creditCards.find(c => c.id === selectedCardId)} />
                 </div>
             )}
             {!isCredit && selectedAccount && (
-                <div className="mt-2">
+                <div className="mt-1">
                     <CardTag label={selectedAccount.name} color={getAccountColor(selectedAccount)} />
                 </div>
             )}
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-0.5">
             <label htmlFor={fieldId('dueDate')} className={labelClass}>
               Data de Vencimento
             </label>
@@ -1087,9 +1095,9 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             />
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           <label className={labelClass}>Status</label>
-          <div className={`grid grid-cols-2 gap-2 w-full ${isStatusDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
+          <div className={`grid grid-cols-2 gap-1.5 w-full ${isStatusDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
             <button
               type="button"
               onClick={() => setStatus('paid')}
@@ -1116,7 +1124,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
               className={`${selectBaseClass} flex items-center justify-between w-full`}
             >
               Despesa Parcelada
-              <span className="text-[10px]">Adicionar</span>
+              <span className="text-[9px]">Adicionar</span>
             </button>
           )}
         </div>
@@ -1168,7 +1176,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             className={`${selectBaseClass} flex items-center justify-between w-full`}
           >
             Observações
-            <span className="text-[10px]">Adicionar</span>
+            <span className="text-[9px]">Adicionar</span>
           </button>
         </div>
 
@@ -1419,6 +1427,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                   placeholder="DETALHES ADICIONAIS..."
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
+                  data-preserve-case="true"
                   className={textareaBaseClass}
                 />
               </div>

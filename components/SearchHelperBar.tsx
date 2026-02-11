@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bot, ChevronDown, ChevronUp, Search, Sparkles, Send } from 'lucide-react';
 import type { HelperSignals } from '../helpers/meumeiHelperEngine';
-import { getHelperTips, trackHelperEvent } from '../helpers/meumeiHelperEngine';
+import { pickHelperTip, trackHelperEvent } from '../helpers/meumeiHelperEngine';
 import { askMeumeiAssistant } from '../services/assistantService';
 
 type HelperActionMap = Record<string, (() => void) | undefined>;
@@ -50,7 +50,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   const [assistantError, setAssistantError] = useState('');
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestions, setAssistantSuggestions] = useState<string[]>([]);
-  const [tipIndex, setTipIndex] = useState(0);
+  const [currentTip, setCurrentTip] = useState(() => pickHelperTip(signals));
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [assistantCollapsed, setAssistantCollapsed] = useState(false);
 
@@ -93,29 +93,20 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
     ? 'rounded-xl px-2.5 py-1.5 text-[10px]'
     : 'rounded-2xl px-4 py-2 text-[11px]';
 
-  const tips = useMemo(() => {
-    const eligible = getHelperTips(signals);
-    if (eligible.length) return eligible;
-    return [
-      {
-        id: 'helper_default',
-        title: 'Ajudante do meumei',
-        body: 'Você pode perguntar qualquer dúvida sobre o app por aqui.',
-        trackId: 'helper_default'
-      }
-    ];
-  }, [signals]);
-
-  const currentTip = tips[tipIndex % tips.length];
+  const tipLabel = currentTip.type === 'tip' ? 'Dica' : 'Curiosidade';
   const showTips = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
 
   useEffect(() => {
-    if (!showTips || tips.length <= 1) return;
+    setCurrentTip(pickHelperTip(signals));
+  }, [signals]);
+
+  useEffect(() => {
+    if (!showTips) return;
     const timer = window.setInterval(() => {
-      setTipIndex((prev) => (prev + 1) % tips.length);
+      setCurrentTip(pickHelperTip(signals));
     }, TIP_ROTATE_MS);
     return () => window.clearInterval(timer);
-  }, [showTips, tips.length]);
+  }, [showTips, signals]);
 
   useEffect(() => {
     if (!isFloatingAssistant) return;
@@ -147,6 +138,9 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
     }
     setSearchQuery(value);
     setActiveSearchIndex(0);
+    if (variant === 'desktop') {
+      setIsSearchActive(value.trim().length > 0);
+    }
   };
 
   const submitAssistantQuestion = async () => {
@@ -219,6 +213,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={inputPlaceholder}
             aria-label="Pesquisar ou perguntar ao Ajudante do meumei"
+            data-preserve-case="true"
             className={`flex-1 bg-transparent ${inputTextSize} text-zinc-900 dark:text-white/90 placeholder:text-zinc-400 dark:placeholder:text-white/40 outline-none ${isDesktop ? '' : 'min-w-0'}`}
           />
           <div className={`flex items-center ${actionsGap}`}>
@@ -293,7 +288,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3 text-xs text-zinc-600 dark:text-white/70">
           <div className="flex items-start gap-3">
             <span className="mt-1 inline-flex rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
-              Curiosidade
+              {tipLabel}
             </span>
             <div>
               <p className="text-sm font-semibold text-zinc-900 dark:text-white/90">{currentTip.title}</p>
@@ -373,7 +368,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-3 py-2 text-xs text-zinc-600 dark:text-white/70">
                         <div className="flex items-start gap-3">
                           <span className="mt-1 inline-flex rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
-                            Curiosidade
+                            {tipLabel}
                           </span>
                           <div>
                             <p className="text-sm font-semibold text-zinc-900 dark:text-white/90">{currentTip.title}</p>

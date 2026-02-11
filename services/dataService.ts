@@ -992,8 +992,13 @@ export const dataService = {
         const path = `users/${licenseId}/${COLLECTIONS.AGENDA}`;
         if (!guardUserPath(licenseId, path, 'agenda_upsert')) return null;
         const docRef = doc(getAgendaCollectionRef(licenseId), item.id || doc(getAgendaCollectionRef(licenseId)).id);
-        const resolveNotifyAtMs = (dateValue?: string, timeValue?: string) => {
+        const resolveNotifyAtMs = (
+            dateValue?: string,
+            timeValue?: string,
+            notifyBeforeMinutes?: number | null
+        ) => {
             if (!dateValue) return undefined;
+            if (notifyBeforeMinutes === null) return undefined;
             const safeTimeRaw = typeof timeValue === 'string' && timeValue.trim()
                 ? timeValue.trim()
                 : '08:00';
@@ -1003,14 +1008,18 @@ export const dataService = {
             const iso = `${dateValue}T${hours}:${minutes}`;
             const parsed = new Date(iso);
             if (Number.isNaN(parsed.getTime())) return undefined;
-            return parsed.getTime();
+            const offset = typeof notifyBeforeMinutes === 'number' ? notifyBeforeMinutes : 0;
+            return parsed.getTime() - offset * 60 * 1000;
         };
-        const nextNotifyAtMs = resolveNotifyAtMs(item.date, item.time);
+        const nextNotifyAtMs = resolveNotifyAtMs(item.date, item.time, item.notifyBeforeMinutes);
+        const shouldNotify = typeof nextNotifyAtMs === 'number';
         const sameNotifyAt =
+            shouldNotify &&
             typeof item.notifyAtMs === 'number' &&
-            typeof nextNotifyAtMs === 'number' &&
             item.notifyAtMs === nextNotifyAtMs;
-        const nextNotifyStatus = sameNotifyAt ? item.notifyStatus || 'pending' : 'pending';
+        const nextNotifyStatus = shouldNotify
+            ? (sameNotifyAt ? item.notifyStatus || 'pending' : 'pending')
+            : 'skipped';
         const payload = sanitizeData({
             ...item,
             id: docRef.id,

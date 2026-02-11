@@ -74,6 +74,7 @@ export interface AgendaItem {
   date: string; // YYYY-MM-DD
   time?: string; // HH:mm
   notes?: string;
+  notifyBeforeMinutes?: number | null;
   notifyAtMs?: number;
   notifyStatus?: 'pending' | 'sent' | 'failed' | 'skipped';
   createdAt?: string;
@@ -92,6 +93,7 @@ export enum ViewState {
   FIXED_EXPENSES = 'FIXED_EXPENSES',
   PERSONAL_EXPENSES = 'PERSONAL_EXPENSES',
   INCOMES = 'INCOMES',
+  LAUNCHES = 'LAUNCHES',
   YIELDS = 'YIELDS',
   INVOICES = 'INVOICES',
   REPORTS = 'REPORTS'

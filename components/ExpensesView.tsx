@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { ShoppingCart, Trash2, X, AlertTriangle, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown } from 'lucide-react';
 import { withAlpha } from '../services/cardColorUtils';
 import { Expense, Account, CreditCard, ExpenseType, ExpenseTypeOption } from '../types';
@@ -10,6 +11,7 @@ import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import MobileEmptyState from './mobile/MobileEmptyState';
 import MobilePageShell from './mobile/MobilePageShell';
+import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import { buildInstallmentDescription, getExpenseInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
@@ -20,6 +22,10 @@ import { PREMIUM_COLOR_PRESETS } from './ui/colorPresets';
 interface ExpensesViewProps {
   onBack: () => void;
   expenses: Expense[];
+  autoOpenNew?: boolean;
+  onAutoOpenHandled?: () => void;
+  autoOpenEditId?: string | null;
+  onAutoOpenEditHandled?: () => void;
   onUpdateExpenses: (expenses: Expense[]) => void;
   onDeleteExpense: (id: string) => void;
   onOpenAudit?: () => void;
@@ -44,8 +50,12 @@ interface ExpensesViewProps {
 
 const ExpensesView: React.FC<ExpensesViewProps> = ({ 
   onBack, 
-  expenses, 
-  onUpdateExpenses, 
+  expenses,
+  autoOpenNew,
+  onAutoOpenHandled,
+  autoOpenEditId,
+  onAutoOpenEditHandled,
+  onUpdateExpenses,
   onDeleteExpense,
   onOpenAudit,
   accounts,
@@ -130,6 +140,21 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       console.info('[layout][mobile-subheader] expenses in-flow', { type: expenseType });
       headerLayoutLoggedRef.current = true;
   }, [isMobile, expenseType]);
+
+  useEffect(() => {
+      if (!isMobile || typeof window === 'undefined') return;
+      const handleDockClick = () => {
+          setDrawerExpense(null);
+          setExpenseToDelete(null);
+          setIsBulkDeleteModalOpen(false);
+          setInlineNewOpen(false);
+          setInlineEditExpenseId(null);
+          setEditingExpense(null);
+          setMobileScreen('list');
+      };
+      window.addEventListener('mm:mobile-dock-click', handleDockClick);
+      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+  }, [isMobile]);
 
   useEffect(() => {
       if (!expenseTypeOptions || expenseTypeOptions.length === 0) return;
@@ -510,6 +535,30 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       setEditingExpense(null);
   };
 
+  useEffect(() => {
+      if (!isMobile || !autoOpenNew) return;
+      setEditingExpense(null);
+      if (effectiveMobileScope === 'all') {
+          setMobileExpenseType(null);
+      }
+      setMobileScreen('form');
+      onAutoOpenHandled?.();
+  }, [autoOpenNew, effectiveMobileScope, isMobile, onAutoOpenHandled]);
+
+  useEffect(() => {
+      if (!isMobile || !autoOpenEditId) return;
+      const target = expenses.find(expense => expense.id === autoOpenEditId) || null;
+      if (target) {
+          setEditingExpense(target);
+          if (effectiveMobileScope === 'all') {
+              setMobileExpenseType(target.type);
+          }
+          setMobileScreen('form');
+          console.info('[mobile-ui] expenses', { screen: 'form', action: 'edit', id: target.id });
+      }
+      onAutoOpenEditHandled?.();
+  }, [autoOpenEditId, expenses, effectiveMobileScope, isMobile, onAutoOpenEditHandled]);
+
   const getSourceInfo = (expense: Expense) => {
       if (expense.creditCardId) {
           const card = creditCards.find(c => c.id === expense.creditCardId);
@@ -619,6 +668,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           setMobileScreen('list');
           setEditingExpense(null);
           console.info('[mobile-ui] expenses', { screen: 'list', action: 'close', type: expenseType });
+          onBack();
       };
       const drawerStatus = drawerExpense ? normalizeExpenseStatus(drawerExpense.status) : 'pending';
       const drawerStatusLabel = drawerExpense ? expenseStatusLabel(drawerExpense.status) : '';
@@ -667,7 +717,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           ? (effectiveMobileScope === 'all' ? 'Despesas' : title)
           : (editingExpense ? 'Editar Despesa' : 'Nova Despesa');
 
-      const mobileHeader = (
+  const mobileHeader = (
           <div className="space-y-2">
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
                   <button
@@ -734,11 +784,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       return (
           <>
-              <div className="fixed inset-0 bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+              <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
                   <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
                       {headerFill.height > 0 && (
                           <div
-                              className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+                              className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
                               style={{ top: headerFill.top, height: headerFill.height }}
                           />
                       )}
@@ -748,7 +798,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                       >
                           <div
                               ref={subHeaderRef}
-                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
                               <div className="px-4 pb-3 pt-2">
                                   {mobileHeader}
@@ -757,9 +807,14 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                       </div>
                       <div
                           className="h-full px-4 pb-[calc(env(safe-area-inset-bottom)+88px)] overflow-hidden"
-                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 64 : 64 }}
+                          style={{
+                              paddingTop: subHeaderHeight
+                                  ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px)`
+                                  : 'calc(var(--mm-mobile-top, 0px) + 2px)'
+                          }}
                       >
                           {isListView ? (
+                              <MobileFullWidthSection contentClassName="px-4 py-3">
                               <div className="space-y-3">
                                   <div className="py-2">
                                       <button
@@ -860,93 +915,103 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                       />
                                   )}
                               </div>
+                              </MobileFullWidthSection>
                           ) : (
-                              <div className="fixed inset-0 z-[1200]">
-                                  <button
-                                      type="button"
-                                      onClick={handleMobileFormClose}
-                                      className="absolute inset-0 bg-black/70"
-                                      aria-label="Fechar nova despesa"
-                                  />
-                                  <div
-                                      className="absolute left-0 right-0 bottom-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
-                                      style={{ top: 0 }}
-                                  >
-                                      <div className={`px-3 pt-2 pb-2 bg-gradient-to-r ${themeGradient}`}>
-                                          <div className="flex items-start justify-between gap-3">
-                                              <div className="min-w-0">
-                                                  <div className="flex items-center gap-2">
-                                                      <ShoppingCart size={16} style={{ color: expenseAccentColor }} />
-                                                      <p className="text-sm font-semibold text-white truncate">{headerTitle}</p>
-                                                  </div>
-                                                  <p className="text-[10px] text-white/70">Preencha os dados da despesa.</p>
-                                              </div>
-                                              <button
-                                                  type="button"
-                                                  onClick={handleMobileFormClose}
-                                                  className="h-8 w-8 rounded-full bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
-                                                  aria-label="Fechar nova despesa"
-                                              >
-                                                  <X size={16} />
-                                              </button>
-                                          </div>
-                                      </div>
-                                      <div className="flex-1 overflow-hidden px-2 pt-1 pb-16">
-                                          <NewExpenseModal
-                                              isOpen
-                                              variant="inline"
-                                              hideFooter
-                                              onPrimaryActionRef={(handler) => {
-                                                  submitRef.current = handler;
-                                              }}
-                                              onClose={handleMobileFormClose}
-                                              onSave={handleSaveExpense}
-                                              initialData={editingExpense}
-                                              accounts={accounts}
-                                              creditCards={creditCards}
-                                              categories={categories}
-                                              userId={userId}
-                                              categoryType="expenses"
-                                              onAddCategory={onAddCategory}
-                                              onRemoveCategory={onRemoveCategory}
-                                              onResetCategories={onResetCategories}
-                                              expenseType={effectiveMobileScope === 'all' ? mobileExpenseType : expenseType}
-                                              allowTypeSelection={effectiveMobileScope === 'all'}
-                                              requireTypeSelection={effectiveMobileScope === 'all'}
-                                              onExpenseTypeChange={setMobileExpenseType}
-                                              expenseTypeOptions={expenseTypeOptions}
-                                              onUpdateExpenseTypes={onUpdateExpenseTypes}
-                                              themeColor={
-                                                  effectiveMobileScope === 'all'
-                                                      ? mobileExpenseType === 'fixed'
-                                                          ? 'amber'
-                                                          : mobileExpenseType === 'personal'
-                                                            ? 'cyan'
-                                                            : 'pink'
-                                                      : themeColor
-                                              }
-                                              defaultDate={viewDate}
-                                              minDate={minDate}
-                                          />
-                                      </div>
-                                      <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+6px)] grid grid-cols-2 gap-2">
+                              (() => {
+                                  const portalTarget = typeof document !== 'undefined' ? document.body : null;
+                                  if (!portalTarget) return null;
+                                  const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
+                                  return createPortal(
+                                      <div className="fixed inset-0 z-[1400]">
                                           <button
                                               type="button"
                                               onClick={handleMobileFormClose}
-                                              className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                                              className="absolute left-0 right-0 top-0 bg-black/70"
+                                              style={{ bottom: dockOffset }}
+                                              aria-label="Fechar nova despesa"
+                                          />
+                                          <div
+                                              className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+                                              style={{ top: 0, bottom: dockOffset }}
                                           >
-                                              Cancelar
-                                          </button>
-                                          <button
-                                              type="button"
-                                              onClick={() => submitRef.current?.()}
-                                              className={`rounded-lg py-2 text-xs font-semibold text-white transition ${theme.btn}`}
-                                          >
-                                              Salvar
-                                          </button>
-                                      </div>
-                                  </div>
-                              </div>
+                                          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+                                              <div className="flex items-start justify-between gap-3">
+                                                  <div className="min-w-0">
+                                                      <div className="flex items-center gap-2">
+                                                          <ShoppingCart size={16} style={{ color: expenseAccentColor }} />
+                                                          <p className="text-[13px] font-semibold text-white truncate">{headerTitle}</p>
+                                                      </div>
+                                                      <p className="text-[9px] text-white/70">Preencha os dados da despesa.</p>
+                                                  </div>
+                                                  <button
+                                                      type="button"
+                                                      onClick={handleMobileFormClose}
+                                                      className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                                      aria-label="Fechar nova despesa"
+                                                  >
+                                                      <X size={16} />
+                                                  </button>
+                                              </div>
+                                          </div>
+                                              <div className="flex-1 overflow-hidden px-3 pt-1 pb-16">
+                                                  <NewExpenseModal
+                                                      isOpen
+                                                      variant="inline"
+                                                      hideFooter
+                                                      onPrimaryActionRef={(handler) => {
+                                                          submitRef.current = handler;
+                                                      }}
+                                                      onClose={handleMobileFormClose}
+                                                      onSave={handleSaveExpense}
+                                                      initialData={editingExpense}
+                                                      accounts={accounts}
+                                                      creditCards={creditCards}
+                                                      categories={categories}
+                                                      userId={userId}
+                                                      categoryType="expenses"
+                                                      onAddCategory={onAddCategory}
+                                                      onRemoveCategory={onRemoveCategory}
+                                                      onResetCategories={onResetCategories}
+                                                      expenseType={effectiveMobileScope === 'all' ? mobileExpenseType : expenseType}
+                                                      allowTypeSelection={effectiveMobileScope === 'all'}
+                                                      requireTypeSelection={effectiveMobileScope === 'all'}
+                                                      onExpenseTypeChange={setMobileExpenseType}
+                                                      expenseTypeOptions={expenseTypeOptions}
+                                                      onUpdateExpenseTypes={onUpdateExpenseTypes}
+                                                      themeColor={
+                                                          effectiveMobileScope === 'all'
+                                                              ? mobileExpenseType === 'fixed'
+                                                                  ? 'amber'
+                                                                  : mobileExpenseType === 'personal'
+                                                                    ? 'cyan'
+                                                                    : 'pink'
+                                                              : themeColor
+                                                      }
+                                                      defaultDate={viewDate}
+                                                      minDate={minDate}
+                                                  />
+                                              </div>
+                                              <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-0 grid grid-cols-2 gap-2">
+                                                  <button
+                                                      type="button"
+                                                      onClick={handleMobileFormClose}
+                                                      className="rounded-none border border-rose-400/50 bg-rose-950/30 py-3 text-sm font-semibold text-rose-200 hover:bg-rose-900/40 transition"
+                                                  >
+                                                      Cancelar
+                                                  </button>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => submitRef.current?.()}
+                                                      className="rounded-none border border-rose-500/40 py-3 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition"
+                                                  >
+                                                      Salvar
+                                                  </button>
+                                              </div>
+                                          </div>
+                                      </div>,
+                                      portalTarget
+                                  );
+                              })()
                           )}
                       </div>
                   </div>
@@ -1277,7 +1342,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   ) : null;
 
   return (
-      <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${expenseDesktopNeedsScroll ? 'pb-20' : 'pb-6'} ${expenseDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
+      <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${expenseDesktopNeedsScroll ? 'pb-20' : 'pb-6'} ${expenseDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
           {summarySection}
           {typeManagerModal}
 

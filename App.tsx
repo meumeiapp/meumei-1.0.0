@@ -4,6 +4,7 @@ import Settings from './components/Settings';
 import AccountsView from './components/AccountsView';
 import ExpensesView from './components/ExpensesView';
 import IncomesView from './components/IncomesView';
+import LaunchesView from './components/LaunchesView';
 import YieldsView from './components/YieldsView'; 
 import InvoicesView from './components/InvoicesView'; 
 import ReportsView from './components/ReportsView';
@@ -40,6 +41,7 @@ import { auth, db, firebaseDebugInfo } from './services/firebase';
 import { preferencesService } from './services/preferencesService';
 import {
   ArrowUpCircle,
+  ArrowDownUp,
   CalendarDays,
   Calculator,
   CreditCard as CreditCardIcon,
@@ -231,6 +233,7 @@ const AppInner: React.FC = () => {
   } = useAuth();
   const [currentUser, setCurrentUser] = useState<CurrentUserState | null>(null);
   const [preferencesLoading, setPreferencesLoading] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [resolvedLicenseId, setResolvedLicenseId] = useState<string | null>(null);
   const [licenseReason, setLicenseReason] = useState<LicenseAccessReason | null>(null);
   const [licenseRetryToken, setLicenseRetryToken] = useState(0);
@@ -293,6 +296,10 @@ const AppInner: React.FC = () => {
   useMobileTopOffset();
   const [isQuickExpenseOpen, setIsQuickExpenseOpen] = useState(false);
   const [quickExpenseType, setQuickExpenseType] = useState<ExpenseType>('variable');
+  const [autoOpenIncome, setAutoOpenIncome] = useState(false);
+  const [autoOpenIncomeEditId, setAutoOpenIncomeEditId] = useState<string | null>(null);
+  const [autoOpenExpenseEditId, setAutoOpenExpenseEditId] = useState<string | null>(null);
+  const [autoOpenExpense, setAutoOpenExpense] = useState(false);
   const [mobileExpensesScope, setMobileExpensesScope] = useState<ExpenseType | 'all'>('all');
   const isBetaHost = useMemo(() => {
       if (typeof window === 'undefined') return false;
@@ -385,54 +392,6 @@ const AppInner: React.FC = () => {
       };
       window.addEventListener('popstate', handleRouteChange);
       return () => window.removeEventListener('popstate', handleRouteChange);
-  }, []);
-
-  useEffect(() => {
-      if (typeof window === 'undefined') return;
-      const handleInput = (event: Event) => {
-          const inputEvent = event as InputEvent;
-          if (inputEvent.isComposing) return;
-          if (document.body.dataset.uppercase !== 'on') return;
-          const target = event.target as HTMLElement | null;
-          if (!target) return;
-          if (target.hasAttribute('data-no-uppercase') || target.hasAttribute('data-preserve-case')) {
-              return;
-          }
-          if (target instanceof HTMLInputElement) {
-              const type = (target.getAttribute('type') || target.type || 'text').toLowerCase();
-              if (type === 'password' || type === 'email' || type === 'url') return;
-              if (target.readOnly || target.disabled) return;
-              const nextValue = target.value.toUpperCase();
-              if (nextValue === target.value) return;
-              const selectionStart = target.selectionStart;
-              const selectionEnd = target.selectionEnd;
-              target.value = nextValue;
-              if (selectionStart !== null && selectionEnd !== null) {
-                  try {
-                      target.setSelectionRange(selectionStart, selectionEnd);
-                  } catch {}
-              }
-              return;
-          }
-          if (target instanceof HTMLTextAreaElement) {
-              if (target.readOnly || target.disabled) return;
-              const nextValue = target.value.toUpperCase();
-              if (nextValue === target.value) return;
-              const selectionStart = target.selectionStart;
-              const selectionEnd = target.selectionEnd;
-              target.value = nextValue;
-              if (selectionStart !== null && selectionEnd !== null) {
-                  try {
-                      target.setSelectionRange(selectionStart, selectionEnd);
-                  } catch {}
-              }
-          }
-      };
-
-      document.addEventListener('input', handleInput, true);
-      return () => {
-          document.removeEventListener('input', handleInput, true);
-      };
   }, []);
 
   useEffect(() => {
@@ -1364,27 +1323,34 @@ const AppInner: React.FC = () => {
 
   const [expenseCategories, setExpenseCategories] = useState<string[]>(DEFAULT_EXPENSE_CATEGORIES);
   const [incomeCategories, setIncomeCategories] = useState<string[]>(DEFAULT_INCOME_CATEGORIES);
-  const [expenseTypeOptions, setExpenseTypeOptions] = useState<ExpenseTypeOption[]>(() => {
+  const normalizeExpenseTypeOptions = (raw?: unknown): ExpenseTypeOption[] => {
     try {
-      const saved = localStorage.getItem('meumei_expense_types');
-      const parsed = saved ? JSON.parse(saved) : [];
       const byId = new Map<ExpenseTypeOption['id'], ExpenseTypeOption>();
       DEFAULT_EXPENSE_TYPES.forEach((option) => {
         byId.set(option.id, { ...option });
       });
-      if (Array.isArray(parsed)) {
-        parsed.forEach((item) => {
+      if (Array.isArray(raw)) {
+        raw.forEach((item) => {
           if (!item || typeof item !== 'object') return;
-          const id = item.id as ExpenseTypeOption['id'];
+          const id = (item as ExpenseTypeOption).id as ExpenseTypeOption['id'];
           if (!byId.has(id)) return;
           const current = byId.get(id);
           if (!current) return;
           byId.set(id, {
             ...current,
-            label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : current.label,
-            enabled: typeof item.enabled === 'boolean' ? item.enabled : current.enabled,
-            nature: item.nature === 'PF' || item.nature === 'PJ' ? item.nature : current.nature,
-            color: typeof item.color === 'string' && item.color.trim() ? item.color.trim() : current.color
+            label:
+              typeof (item as ExpenseTypeOption).label === 'string' && (item as ExpenseTypeOption).label.trim()
+                ? (item as ExpenseTypeOption).label.trim()
+                : current.label,
+            enabled: typeof (item as ExpenseTypeOption).enabled === 'boolean' ? (item as ExpenseTypeOption).enabled : current.enabled,
+            nature:
+              (item as ExpenseTypeOption).nature === 'PF' || (item as ExpenseTypeOption).nature === 'PJ'
+                ? (item as ExpenseTypeOption).nature
+                : current.nature,
+            color:
+              typeof (item as ExpenseTypeOption).color === 'string' && (item as ExpenseTypeOption).color.trim()
+                ? (item as ExpenseTypeOption).color.trim()
+                : current.color
           });
         });
       }
@@ -1402,6 +1368,15 @@ const AppInner: React.FC = () => {
     } catch {
       return DEFAULT_EXPENSE_TYPES;
     }
+  };
+  const [expenseTypeOptions, setExpenseTypeOptions] = useState<ExpenseTypeOption[]>(() => {
+    try {
+      const saved = localStorage.getItem('meumei_expense_types');
+      const parsed = saved ? JSON.parse(saved) : undefined;
+      return normalizeExpenseTypeOptions(parsed);
+    } catch {
+      return DEFAULT_EXPENSE_TYPES;
+    }
   });
 
   const expenseTypeColorById = useMemo(() => {
@@ -1411,7 +1386,18 @@ const AppInner: React.FC = () => {
     });
     return map;
   }, [expenseTypeOptions]);
+  const expenseTypeLabelById = useMemo(() => {
+    const map = new Map<ExpenseType, string>();
+    expenseTypeOptions.forEach(option => {
+      if (option?.id && option?.label) map.set(option.id, option.label);
+    });
+    return map;
+  }, [expenseTypeOptions]);
   const resolveExpenseColor = (type: ExpenseType) => expenseTypeColorById.get(type) || '#ef4444';
+  const resolveExpenseLabel = (type: ExpenseType, fallback: string) => expenseTypeLabelById.get(type) || fallback;
+  const fixedExpenseLabel = resolveExpenseLabel('fixed', 'Fixas');
+  const variableExpenseLabel = resolveExpenseLabel('variable', 'Variáveis');
+  const personalExpenseLabel = resolveExpenseLabel('personal', 'Pessoais');
 
   const viewAccent = useMemo(() => {
     switch (currentView) {
@@ -1421,6 +1407,8 @@ const AppInner: React.FC = () => {
         return '#3b82f6';
       case ViewState.INCOMES:
         return '#10b981';
+      case ViewState.LAUNCHES:
+        return '#06b6d4';
       case ViewState.FIXED_EXPENSES:
         return resolveExpenseColor('fixed');
       case ViewState.VARIABLE_EXPENSES:
@@ -1449,39 +1437,29 @@ const AppInner: React.FC = () => {
     root.style.setProperty('--mm-view-accent-strong', viewAccent);
   }, [viewAccent]);
 
-  const mobileExpenseIconColor = useMemo(
-    () =>
-      mobileExpensesScope === 'all'
-        ? resolveExpenseColor('variable')
-        : resolveExpenseColor(mobileExpensesScope),
-    [mobileExpensesScope, resolveExpenseColor]
-  );
-
+  const canAccessSettings = Boolean(currentUser);
   const mobileQuickAccessItems = useMemo(
     () => [
+      {
+        id: 'home',
+        label: 'Início',
+        shortLabel: 'Início',
+        icon: <Home size={18} className="text-indigo-500 dark:text-indigo-400" />,
+        onClick: () => setCurrentView(ViewState.DASHBOARD)
+      },
+      {
+        id: 'launches',
+        label: 'Lançamentos',
+        shortLabel: 'Lanç.',
+        icon: <ArrowDownUp size={18} className="text-cyan-500 dark:text-cyan-400" />,
+        onClick: () => setCurrentView(ViewState.LAUNCHES)
+      },
       {
         id: 'accounts',
         label: 'Contas Bancárias',
         shortLabel: 'Contas',
         icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
         onClick: () => setCurrentView(ViewState.ACCOUNTS)
-      },
-      {
-        id: 'incomes',
-        label: 'Entradas',
-        shortLabel: 'Entradas',
-        icon: <ArrowUpCircle size={18} className="text-emerald-500 dark:text-emerald-400" />,
-        onClick: () => setCurrentView(ViewState.INCOMES)
-      },
-      {
-        id: 'expenses',
-        label: 'Despesas',
-        shortLabel: 'Despesas',
-        icon: <ShoppingCart size={18} style={{ color: mobileExpenseIconColor }} />,
-        onClick: () => {
-          setMobileExpensesScope('all');
-          setCurrentView(ViewState.VARIABLE_EXPENSES);
-        }
       },
       {
         id: 'yields',
@@ -1505,14 +1483,14 @@ const AppInner: React.FC = () => {
         onClick: () => setCurrentView(ViewState.REPORTS)
       },
       {
-        id: 'das',
-        label: 'Emissão DAS',
-        shortLabel: 'DAS',
-        icon: <FileText size={18} className="text-teal-500 dark:text-teal-400" />,
-        onClick: () => setCurrentView(ViewState.DAS)
+        id: 'agenda',
+        label: 'Agenda',
+        shortLabel: 'Agenda',
+        icon: <CalendarDays size={18} className="text-sky-500 dark:text-sky-400" />,
+        onClick: () => setCurrentView(ViewState.AGENDA)
       }
     ],
-    [currentView, setCurrentView, mobileExpenseIconColor]
+    [currentView, setCurrentView, resolveExpenseColor, fixedExpenseLabel, variableExpenseLabel, personalExpenseLabel]
   );
 
   const desktopQuickAccessItems = useMemo(
@@ -1544,24 +1522,24 @@ const AppInner: React.FC = () => {
       },
       {
         id: 'fixed_expenses',
-        label: 'Despesas Fixas',
-        shortLabel: 'Fixas',
+        label: `Despesas ${fixedExpenseLabel}`,
+        shortLabel: fixedExpenseLabel,
         icon: <Repeat size={28} style={{ color: resolveExpenseColor('fixed') }} />,
         onClick: () => setCurrentView(ViewState.FIXED_EXPENSES),
         isActive: currentView === ViewState.FIXED_EXPENSES
       },
       {
         id: 'variable_expenses',
-        label: 'Despesas Variáveis',
-        shortLabel: 'Variáveis',
+        label: `Despesas ${variableExpenseLabel}`,
+        shortLabel: variableExpenseLabel,
         icon: <ShoppingCart size={28} style={{ color: resolveExpenseColor('variable') }} />,
         onClick: () => setCurrentView(ViewState.VARIABLE_EXPENSES),
         isActive: currentView === ViewState.VARIABLE_EXPENSES
       },
       {
         id: 'personal_expenses',
-        label: 'Despesas Pessoais',
-        shortLabel: 'Pessoais',
+        label: `Despesas ${personalExpenseLabel}`,
+        shortLabel: personalExpenseLabel,
         icon: <User size={28} style={{ color: resolveExpenseColor('personal') }} />,
         onClick: () => setCurrentView(ViewState.PERSONAL_EXPENSES),
         isActive: currentView === ViewState.PERSONAL_EXPENSES
@@ -1640,7 +1618,6 @@ const AppInner: React.FC = () => {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => resolveInitialTheme());
   const [tipsEnabled, setTipsEnabled] = useState(true);
   const { registerHandlers, setHighlightTarget } = useGlobalActions();
-  const canAccessSettings = Boolean(currentUser);
   const onboardingCompleted = onboardingSettings?.onboardingCompleted === true;
   const viewHistoryRef = useRef<ViewState[]>([]);
   const prevViewRef = useRef<ViewState | null>(null);
@@ -1722,7 +1699,7 @@ const AppInner: React.FC = () => {
       if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
       if (currentView === ViewState.LOGIN) return;
 
-      const dockOrder: Array<{ id: string; view?: ViewState; audit?: boolean }> = [
+      const baseDockOrder: Array<{ id: string; view?: ViewState; audit?: boolean }> = [
         { id: 'home', view: ViewState.DASHBOARD },
         { id: 'accounts', view: ViewState.ACCOUNTS },
         { id: 'incomes', view: ViewState.INCOMES },
@@ -1736,6 +1713,16 @@ const AppInner: React.FC = () => {
         { id: 'agenda', view: ViewState.AGENDA },
         { id: 'audit', audit: true }
       ];
+      const mobileDockOrder: Array<{ id: string; view?: ViewState }> = [
+        { id: 'home', view: ViewState.DASHBOARD },
+        { id: 'accounts', view: ViewState.ACCOUNTS },
+        { id: 'launches', view: ViewState.LAUNCHES },
+        { id: 'yields', view: ViewState.YIELDS },
+        { id: 'invoices', view: ViewState.INVOICES },
+        { id: 'reports', view: ViewState.REPORTS },
+        { id: 'agenda', view: ViewState.AGENDA }
+      ];
+      const dockOrder = isMobile ? mobileDockOrder : baseDockOrder;
 
       const auditIndex = dockOrder.findIndex(item => item.audit);
       const currentIndex = auditModalState.isOpen
@@ -1760,7 +1747,7 @@ const AppInner: React.FC = () => {
     };
     document.addEventListener('keydown', handleShortcut);
     return () => document.removeEventListener('keydown', handleShortcut);
-  }, [currentView, setCurrentView, auditModalState.isOpen, setAuditModalState]);
+  }, [currentView, setCurrentView, auditModalState.isOpen, setAuditModalState, isMobile]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2091,9 +2078,11 @@ const AppInner: React.FC = () => {
   const loadPreferencesFor = async (uid: string | null) => {
       if (!uid) {
           console.info('[load] skipped:no-auth', { scope: 'preferences' });
+          setPreferencesReady(false);
           return;
       }
       setPreferencesLoading(true);
+      setPreferencesReady(false);
       try {
           const pref = await preferencesService.getPreferences(uid);
           if (pref.theme) {
@@ -2108,10 +2097,14 @@ const AppInner: React.FC = () => {
           if (typeof pref.tipsEnabled === 'boolean') {
               setTipsEnabled(pref.tipsEnabled);
           }
+          if (pref.expenseTypeOptions && pref.expenseTypeOptions.length > 0) {
+              setExpenseTypeOptions(normalizeExpenseTypeOptions(pref.expenseTypeOptions));
+          }
       } catch (error) {
           console.error('[prefs] error', { step: 'load-apply', message: (error as any)?.message });
       } finally {
           setPreferencesLoading(false);
+          setPreferencesReady(true);
       }
   };
 
@@ -2132,6 +2125,7 @@ const AppInner: React.FC = () => {
           setResolvedLicenseId(null);
           setLicenseReason(null);
           setLicenseBlockedDetail('');
+          setPreferencesReady(false);
           console.info('[load] skipped:no-auth', { scope: 'auth_gate' });
           return;
       }
@@ -2676,6 +2670,7 @@ const AppInner: React.FC = () => {
       currentView === ViewState.DASHBOARD ||
       currentView === ViewState.ACCOUNTS ||
       currentView === ViewState.INCOMES ||
+      currentView === ViewState.LAUNCHES ||
       currentView === ViewState.INVOICES ||
       currentView === ViewState.YIELDS ||
       isExpenseView;
@@ -2683,11 +2678,13 @@ const AppInner: React.FC = () => {
       currentView === ViewState.DASHBOARD ||
       currentView === ViewState.INVOICES ||
       currentView === ViewState.REPORTS ||
+      currentView === ViewState.LAUNCHES ||
       isExpenseView;
   const needsIncomes =
       currentView === ViewState.DASHBOARD ||
       currentView === ViewState.INCOMES ||
-      currentView === ViewState.REPORTS;
+      currentView === ViewState.REPORTS ||
+      currentView === ViewState.LAUNCHES;
   const needsCreditCards =
       currentView === ViewState.DASHBOARD ||
       currentView === ViewState.INVOICES ||
@@ -2884,6 +2881,7 @@ const AppInner: React.FC = () => {
       const pendingPatch = agendaItems.filter(
           (item) =>
               typeof item.notifyAtMs !== 'number' &&
+              item.notifyBeforeMinutes !== null &&
               !agendaNotifyPatchedRef.current.has(item.id)
       );
       if (pendingPatch.length === 0) return;
@@ -2933,6 +2931,18 @@ const AppInner: React.FC = () => {
           }
       }
   }, [expenseTypeOptions, isStandalone]);
+
+  useEffect(() => {
+      const uid = authUser?.uid || null;
+      if (!uid || !preferencesReady) return;
+      preferencesService
+          .setExpenseTypeOptions(uid, expenseTypeOptions)
+          .catch((error) => {
+              console.error('[prefs] expense_types_save_error', {
+                  message: (error as any)?.message || error
+              });
+          });
+  }, [authUser?.uid, expenseTypeOptions, preferencesReady]);
 
   useEffect(() => {
     try {
@@ -3634,51 +3644,17 @@ const AppInner: React.FC = () => {
       }
   }, [hasEpochLocked]);
 
-  const uppercaseEnabled = !isPublicRoute;
-  const handleUppercaseInputCapture = (event: React.FormEvent<HTMLElement>) => {
-      if (!uppercaseEnabled) return;
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (target instanceof HTMLInputElement) {
-          if (target.dataset.uppercase === 'false') return;
-          const type = target.type;
-          if (!['text', 'search', 'tel', 'url', 'email'].includes(type)) return;
-          const value = target.value;
-          if (!value) return;
-          const next = value.toUpperCase();
-          if (next === value) return;
-          const start = target.selectionStart;
-          const end = target.selectionEnd;
-          target.value = next;
-          if (start !== null && end !== null) {
-              target.setSelectionRange(start, end);
-          }
-          return;
-      }
-      if (target instanceof HTMLTextAreaElement) {
-          if (target.dataset.uppercase === 'false') return;
-          const value = target.value;
-          if (!value) return;
-          const next = value.toUpperCase();
-          if (next === value) return;
-          const start = target.selectionStart;
-          const end = target.selectionEnd;
-          target.value = next;
-          if (start !== null && end !== null) {
-              target.setSelectionRange(start, end);
-          }
-      }
-  };
+  // Uppercase input transformation removed to avoid truncating user input.
 
 const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: boolean }) => {
     const shouldOffset = isMobile && !options?.skipMobileOffset;
     const compactMode = !isPublicRoute && isCompactHeight;
     const layoutPaddingClass = isMobile ? 'pb-20' : compactMode ? 'pb-20' : 'pb-28';
+    const mobileShellClass = isMobile ? 'mm-mobile-shell' : '';
     return (
         <div
-            className={`mm-app-root min-h-screen bg-zinc-100 dark:bg-[#09090b] text-zinc-950 dark:text-white font-inter transition-colors duration-300 ${layoutPaddingClass} ${compactMode ? 'mm-compact' : ''}`}
+            className={`mm-app-root ${mobileShellClass} min-h-screen bg-zinc-100 dark:bg-[#09090b] text-zinc-950 dark:text-white font-inter transition-colors duration-300 ${layoutPaddingClass} ${compactMode ? 'mm-compact' : ''}`}
             data-compact={compactMode ? 'true' : undefined}
-            onInputCapture={uppercaseEnabled ? handleUppercaseInputCapture : undefined}
         >
             <GlobalHeader 
                 companyName={companyInfo.name}
@@ -3695,7 +3671,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 onLogout={handleLogout}
                 onCompanyClick={handleOpenCompanySheet}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
-                onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: null })}
+                onOpenAudit={isMobile ? () => {} : () => setAuditModalState({ isOpen: true, entityTypes: null })}
                 canAccessSettings={canAccessSettings}
                 versionLabel={APP_VERSION}
             />
@@ -4289,20 +4265,34 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 onOpenAccounts={() => setCurrentView(ViewState.ACCOUNTS)}
                 onOpenVariableExpenses={() => {
                     setMobileExpensesScope('variable');
+                    setAutoOpenExpense(true);
                     setCurrentView(ViewState.VARIABLE_EXPENSES);
                 }}
                 onOpenFixedExpenses={() => {
                     setMobileExpensesScope('fixed');
+                    setAutoOpenExpense(true);
                     setCurrentView(ViewState.FIXED_EXPENSES);
                 }}
                 onOpenPersonalExpenses={() => {
                     setMobileExpensesScope('personal');
+                    setAutoOpenExpense(true);
                     setCurrentView(ViewState.PERSONAL_EXPENSES);
                 }}
-                onOpenIncomes={() => setCurrentView(ViewState.INCOMES)}
+                onOpenIncomes={() => {
+                    if (isMobile) {
+                        setAutoOpenIncome(true);
+                    }
+                    setCurrentView(ViewState.INCOMES);
+                }}
                 onOpenYields={() => setCurrentView(ViewState.YIELDS)}
                 onOpenInvoices={() => setCurrentView(ViewState.INVOICES)}
                 onOpenReports={() => setCurrentView(ViewState.REPORTS)}
+                onOpenLaunches={() => setCurrentView(ViewState.LAUNCHES)}
+                onOpenExpenseAll={() => {
+                    setMobileExpensesScope('all');
+                    setAutoOpenExpense(true);
+                    setCurrentView(ViewState.VARIABLE_EXPENSES);
+                }}
                 onOpenDas={() => setCurrentView(ViewState.DAS)}
                 financialData={{
                     balance: totalBalance,
@@ -4355,7 +4345,8 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
             onDelete={handleDeleteAgendaItem}
             onBack={() => setCurrentView(ViewState.DASHBOARD)}
             viewDate={viewDate}
-          />
+          />,
+          { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.DAS && renderLayout(
@@ -4376,7 +4367,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              accountTypes={accountTypes}
              onUpdateAccountTypes={setAccountTypes}
              onAuditLog={handleAuditLog}
-             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['account'] })}
+             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['account'] })}
              balanceSnapshot={balanceSnapshot}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
@@ -4386,6 +4377,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       {currentView === ViewState.INCOMES && renderLayout(
           <IncomesView 
              incomes={incomes}
+             autoOpenNew={autoOpenIncome}
+             onAutoOpenHandled={() => setAutoOpenIncome(false)}
+             autoOpenEditId={autoOpenIncomeEditId}
+             onAutoOpenEditHandled={() => setAutoOpenIncomeEditId(null)}
              onUpdateIncomes={handleUpdateIncomes}
              onDeleteIncome={handleDeleteIncome}
               accounts={accounts}
@@ -4397,8 +4392,51 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('incomes', name)}
              onRemoveCategory={(name) => handleRemoveCategory('incomes', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['income'] })}
+             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['income'] })}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
+          />,
+          { skipMobileOffset: true }
+      )}
+
+      {currentView === ViewState.LAUNCHES && renderLayout(
+          <LaunchesView
+              onBack={() => setCurrentView(ViewState.DASHBOARD)}
+              incomes={incomes}
+              expenses={expenses}
+              accounts={accounts}
+              creditCards={creditCards}
+              expenseTypeOptions={expenseTypeOptions}
+              viewDate={viewDate}
+              onCreateIncome={() => {
+                  if (isMobile) {
+                      setAutoOpenIncome(true);
+                  }
+                  setCurrentView(ViewState.INCOMES);
+              }}
+              onCreateExpense={() => {
+                  setMobileExpensesScope('all');
+                  setAutoOpenExpense(true);
+                  setCurrentView(ViewState.VARIABLE_EXPENSES);
+              }}
+              onDeleteIncome={handleDeleteIncome}
+              onDeleteExpense={handleDeleteExpense}
+              onEditIncome={(id) => {
+                  setAutoOpenIncomeEditId(id);
+                  setCurrentView(ViewState.INCOMES);
+              }}
+              onEditExpense={(id, subtype) => {
+                  setAutoOpenExpenseEditId(id);
+                  setMobileExpensesScope('all');
+                  if (subtype === 'fixed') {
+                      setCurrentView(ViewState.FIXED_EXPENSES);
+                      return;
+                  }
+                  if (subtype === 'personal') {
+                      setCurrentView(ViewState.PERSONAL_EXPENSES);
+                      return;
+                  }
+                  setCurrentView(ViewState.VARIABLE_EXPENSES);
+              }}
           />,
           { skipMobileOffset: true }
       )}
@@ -4411,7 +4449,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              licenseId={currentUser?.licenseId || null}
              licenseCryptoEpoch={licenseCryptoEpoch}
              onAuditLog={handleAuditLog}
-             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['yield'] })}
+             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['yield'] })}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
           { skipMobileOffset: true }
@@ -4421,7 +4459,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           <FaturasErrorBoundary>
               <InvoicesView 
                  onBack={() => setCurrentView(ViewState.DASHBOARD)}
-                 onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+                 onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
                  expenses={expenses}
                  creditCards={creditCards}
                  accounts={accounts}
@@ -4444,10 +4482,14 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       {/* Expense Views */}
       {currentView === ViewState.VARIABLE_EXPENSES && renderLayout(
          <ExpensesView 
-             title="Despesas Variáveis"
+             title={`Despesas ${variableExpenseLabel}`}
              subtitle="Gerencie seus gastos"
              expenseType="variable"
              themeColor="pink"
+             autoOpenNew={autoOpenExpense}
+             onAutoOpenHandled={() => setAutoOpenExpense(false)}
+             autoOpenEditId={autoOpenExpenseEditId}
+             onAutoOpenEditHandled={() => setAutoOpenExpenseEditId(null)}
              expenseTypeOptions={expenseTypeOptions}
              onUpdateExpenseTypes={setExpenseTypeOptions}
              expenses={expenses}
@@ -4463,7 +4505,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
              mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
@@ -4472,10 +4514,14 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
 
       {currentView === ViewState.FIXED_EXPENSES && renderLayout(
          <ExpensesView 
-             title="Despesas Fixas"
+             title={`Despesas ${fixedExpenseLabel}`}
              subtitle="Contas recorrentes"
              expenseType="fixed"
              themeColor="amber"
+             autoOpenNew={autoOpenExpense}
+             onAutoOpenHandled={() => setAutoOpenExpense(false)}
+             autoOpenEditId={autoOpenExpenseEditId}
+             onAutoOpenEditHandled={() => setAutoOpenExpenseEditId(null)}
              expenseTypeOptions={expenseTypeOptions}
              onUpdateExpenseTypes={setExpenseTypeOptions}
              expenses={expenses}
@@ -4491,7 +4537,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
              mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,
@@ -4500,10 +4546,14 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
 
       {currentView === ViewState.PERSONAL_EXPENSES && renderLayout(
          <ExpensesView 
-             title="Despesas Pessoais"
+             title={`Despesas ${personalExpenseLabel}`}
              subtitle="Retiradas pessoais"
              expenseType="personal"
              themeColor="cyan"
+             autoOpenNew={autoOpenExpense}
+             onAutoOpenHandled={() => setAutoOpenExpense(false)}
+             autoOpenEditId={autoOpenExpenseEditId}
+             onAutoOpenEditHandled={() => setAutoOpenExpenseEditId(null)}
              expenseTypeOptions={expenseTypeOptions}
              onUpdateExpenseTypes={setExpenseTypeOptions}
              expenses={expenses}
@@ -4519,7 +4569,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={() => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
              mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />,

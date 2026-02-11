@@ -1,39 +1,21 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CreditCard,
-  ArrowDownCircle,
   ChevronRight,
-  Eye,
   Calendar,
-  Plus,
-  Building2,
   AlertTriangle,
   CheckCircle2,
-  Tag,
-  PieChart,
   Smile,
   Target,
   Flame,
-  OctagonAlert,
-  Lock,
-  Download,
-  ChevronDown,
-  Sparkles
+  OctagonAlert
 } from 'lucide-react';
-import MobileEmptyState from './mobile/MobileEmptyState';
 // Mobile layout does not support drag reordering.
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
-import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
-import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
-import { getHelperTips } from '../helpers/meumeiHelperEngine';
-import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
-import SearchHelperBar from './SearchHelperBar';
-import { preferencesService } from '../services/preferencesService';
-import { auth } from '../services/firebase';
+import useIsMobile from '../hooks/useIsMobile';
 
 interface FinancialData {
     balance: number;
@@ -51,7 +33,6 @@ interface ExpenseBreakdown {
     personal: number;
 }
 
-const CATEGORY_TREND_COLORS = ['#a855f7', '#38bdf8', '#f97316', '#22c55e', '#ec4899', '#facc15', '#0ea5e9', '#f472b6', '#94a3b8', '#fb923c'];
 
 const MONTH_ALIASES: Record<string, string> = {
   jan: '01',
@@ -174,6 +155,8 @@ interface DashboardProps {
   onOpenYields?: () => void; 
   onOpenInvoices?: () => void;
   onOpenReports?: () => void; // New Prop
+  onOpenLaunches?: () => void;
+  onOpenExpenseAll?: () => void;
   onOpenDas: () => void;
   financialData: FinancialData;
   creditCards: CreditCardType[];
@@ -321,15 +304,11 @@ const getMascotConfig = (percentage: number): MascotConfig => {
 };
 
 const DashboardMobileV2: React.FC<DashboardProps> = ({
-  onOpenAccounts,
   onOpenVariableExpenses,
-  onOpenFixedExpenses,
-  onOpenPersonalExpenses,
   onOpenIncomes,
-  onOpenYields,
-  onOpenInvoices,
   onOpenReports,
-  onOpenDas,
+  onOpenLaunches,
+  onOpenExpenseAll,
     financialData,
     creditCards,
     expenseBreakdown = { fixed: 0, variable: 0, personal: 0 },
@@ -341,7 +320,6 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
     viewDate,
   onOpenInstall,
   isAppInstalled,
-  tipsEnabled,
   onOpenSettings,
   categoriesCount = 0,
   isPwaInstallable = false,
@@ -350,10 +328,47 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
 }) => {
   const canViewBalances = true;
   const canViewMeiLimit = true;
-  const canViewInvoices = true;
-  const canViewReports = true;
   const canManageIncomes = true;
   const canManageExpenses = true;
+  const incomeAccent = '#22c55e';
+  const expenseAccent = '#FF0000';
+  const isMobile = useIsMobile();
+  const resultValue = financialData.income - financialData.expenses;
+  const resultTextClass = resultValue >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400';
+  const handleViewMore = onOpenLaunches ?? onOpenIncomes ?? onOpenVariableExpenses;
+  const recentTransactions = useMemo(() => {
+      const toTimestamp = (value?: string) => {
+          if (!value) return null;
+          const parsed = new Date(`${value}T12:00:00`);
+          return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+      };
+
+      const items = [
+          ...incomes.map(income => ({
+              id: `income-${income.id}`,
+              kind: 'income' as const,
+              title: income.description || 'Entrada',
+              amount: income.amount,
+              date: income.date
+          })),
+          ...expenses.map(expense => ({
+              id: `expense-${expense.id}`,
+              kind: 'expense' as const,
+              title: expense.description || 'Despesa',
+              amount: expense.amount,
+              date: expense.date || expense.dueDate
+          }))
+      ];
+
+      return items
+          .map(item => {
+              const timestamp = toTimestamp(item.date);
+              return timestamp ? { ...item, timestamp } : null;
+          })
+          .filter((item): item is typeof items[number] & { timestamp: number } => Boolean(item))
+          .sort((a, b) => b.timestamp - a.timestamp)
+          .slice(0, 3);
+  }, [expenses, incomes]);
 
   const helperSignals = useMemo(
       () => ({
@@ -369,60 +384,10 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       [accounts.length, categoriesCount, expenses.length, incomes.length, isPwaInstallable, isStandalone]
   );
 
-  const helperActions = useMemo(
-      () => ({
-          accounts: onOpenAccounts,
-          incomes: onOpenIncomes,
-          expenses: onOpenVariableExpenses,
-          personal_expenses: onOpenPersonalExpenses,
-          reports: onOpenReports,
-          invoices: onOpenInvoices,
-          yields: onOpenYields,
-          das: onOpenDas,
-          pwa_install: onInstallApp || onOpenInstall
-      }),
-      [
-          onInstallApp,
-          onOpenAccounts,
-          onOpenDas,
-          onOpenIncomes,
-          onOpenInstall,
-          onOpenInvoices,
-          onOpenPersonalExpenses,
-          onOpenReports,
-          onOpenVariableExpenses,
-          onOpenYields
-      ]
-  );
-
-  const mobileTips = useMemo(() => getHelperTips(helperSignals).slice(0, 8), [helperSignals]);
-
-  const [refreshNonce, setRefreshNonce] = useState(0);
-  const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
-  const [isCardsExpanded, setIsCardsExpanded] = useState(false);
-  const [isCategoryListExpanded, setIsCategoryListExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [isSearchActive, setIsSearchActive] = useState(false);
-  const [isMeiDetailsOpen, setIsMeiDetailsOpen] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
-  const subHeaderRef = useRef<HTMLDivElement | null>(null);
-  const subHeaderScrollRef = useRef<HTMLDivElement | null>(null);
-  const subHeaderScrollTimer = useRef<number | null>(null);
-  const subHeaderJumpingRef = useRef(false);
-  const subHeaderIndexRef = useRef(0);
-  const [subHeaderIndex, setSubHeaderIndex] = useState(0);
-  const [subHeaderTipIndex, setSubHeaderTipIndex] = useState(0);
-  const tipsActive = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
-  const tipsCount = tipsActive ? mobileTips.length : 0;
-  const activeTip =
-      tipsActive && mobileTips.length > 0 ? mobileTips[subHeaderTipIndex % mobileTips.length] : null;
-  const tipAction = activeTip?.ctaId ? helperActions[activeTip.ctaId] : undefined;
-  const subHeaderPanelClass = 'h-[140px] flex flex-col gap-2';
-  const SUBHEADER_PANEL_COUNT = 3;
-  const SUBHEADER_RENDERED_COUNT = SUBHEADER_PANEL_COUNT + 2;
-  const [subHeaderHeight, setSubHeaderHeight] = useState(0);
-  const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
   const categoryNames = useMemo(() => {
       const names = new Set<string>();
       expenses.forEach(exp => {
@@ -604,150 +569,6 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       }
   };
 
-  const getCardStyle = (card: CreditCardType) => {
-      const gradient = getCardGradient(card);
-      return {
-          gradient,
-          icon: getBrandIcon(card.brand || card.name),
-          badgeBg: withAlpha(gradient.base, 0.3)
-      };
-  };
-
-  const cardTotals = useMemo(() => {
-      return creditCards.reduce<Record<string, number>>((totals, card) => {
-          totals[card.id] = getCreditCardInvoiceTotalForMonth(expenses, card.id, viewDate, card);
-          return totals;
-      }, {});
-  }, [creditCards, expenses, viewDate]);
-
-  const CARD_COLLAPSE_LIMIT = 2;
-  const CATEGORY_COLLAPSE_LIMIT = 2;
-  const shouldCollapseCards = creditCards.length > CARD_COLLAPSE_LIMIT;
-  const extraCardCount = Math.max(creditCards.length - CARD_COLLAPSE_LIMIT, 0);
-  const visibleCards = shouldCollapseCards && !isCardsExpanded
-      ? creditCards.slice(0, CARD_COLLAPSE_LIMIT)
-      : creditCards;
-
-  const accountNameById = useMemo(() => {
-      return accounts.reduce<Record<string, string>>((acc, account) => {
-          acc[account.id] = account.name;
-          return acc;
-      }, {});
-  }, [accounts]);
-
-  const cardNameById = useMemo(() => {
-      return creditCards.reduce<Record<string, string>>((acc, card) => {
-          acc[card.id] = card.name;
-          return acc;
-      }, {});
-  }, [creditCards]);
-
-  const categoryTotals = useMemo(
-      () =>
-          computeCategoryTotals(expenses, {
-              viewDate,
-              statusRule: 'paid+pending',
-              dateField: 'date',
-              topN: 8,
-              includeOthers: true,
-              source: 'dashboard',
-              variant: 'mobileV2',
-              expensesRevision,
-              refreshNonce,
-              expandedCategory: expandedCategoryKey
-          }),
-      [expenses, viewDate, expensesRevision, refreshNonce, expandedCategoryKey]
-  );
-
-  const maxCategoryTotal = useMemo(
-      () => Math.max(...categoryTotals.items.map(item => item.total), 0),
-      [categoryTotals.items]
-  );
-
-  const shouldCollapseCategories = categoryTotals.items.length > CATEGORY_COLLAPSE_LIMIT;
-  const extraCategoryCount = Math.max(categoryTotals.items.length - CATEGORY_COLLAPSE_LIMIT, 0);
-  const visibleCategoryItems = shouldCollapseCategories && !isCategoryListExpanded
-      ? categoryTotals.items.slice(0, CATEGORY_COLLAPSE_LIMIT)
-      : categoryTotals.items;
-
-  const spendInsights = useMemo(() => {
-      if (!categoryTotals.items.length || categoryTotals.totalSum <= 0) return [];
-      const topCategory = categoryTotals.items[0];
-      const top3Total = categoryTotals.items
-          .slice(0, 3)
-          .reduce((sum, item) => sum + item.total, 0);
-      const top3Percent = categoryTotals.totalSum > 0 ? (top3Total / categoryTotals.totalSum) * 100 : 0;
-      return [
-          {
-              label: 'Categoria líder',
-              value: topCategory.category,
-              sub: formatCurrency(topCategory.total)
-          },
-          {
-              label: 'Top 3',
-              value: `${top3Percent.toFixed(1)}% do total`
-          }
-      ];
-  }, [categoryTotals]);
-
-  useEffect(() => {
-      if (!expandedCategoryKey) return;
-      if (!categoryTotals.categoryItems[expandedCategoryKey]) {
-          console.info('[category-totals] expanded_reset', {
-              variant: 'mobileV2',
-              key: expandedCategoryKey
-          });
-          setExpandedCategoryKey(null);
-      }
-  }, [categoryTotals.categoryItems, expandedCategoryKey]);
-
-  const handleManualRecalc = () => {
-      setRefreshNonce(prev => prev + 1);
-      if (onRefreshExpenses) {
-          onRefreshExpenses();
-      }
-      console.info('[category-totals] manual-recalc', {
-          monthLabel: categoryTotals.monthLabel,
-          variant: 'mobileV2'
-      });
-  };
-
-  useEffect(() => {
-      const totalSaidasMes = financialData.expenses;
-      const totalRank = categoryTotals.totalSum;
-      const diff = Number((totalSaidasMes - totalRank).toFixed(2));
-      console.info('[category-totals] compare', {
-          variant: 'mobileV2',
-          totalSaidasMes,
-          totalRank,
-          diff
-      });
-
-      if (Math.abs(diff) > 0.01) {
-          const monthList = categoryTotals.monthExpensesAll;
-          const groupedList = Object.values(categoryTotals.categoryItems).flat();
-          const monthMap = new Map(monthList.map(item => [item.id, item]));
-          const groupedMap = new Map(groupedList.map(item => [item.id, item]));
-          const onlyInMonth = monthList.filter(item => !groupedMap.has(item.id));
-          const onlyInGrouped = groupedList.filter(item => !monthMap.has(item.id));
-          const pickTop = (list: Expense[]) =>
-              [...list]
-                  .sort((a, b) => b.amount - a.amount)
-                  .slice(0, 5)
-                  .map(item => ({
-                      id: item.id,
-                      amount: item.amount,
-                      category: item.category,
-                      date: item.date
-                  }));
-          console.info('[category-totals] diff_items', {
-              variant: 'mobileV2',
-              onlyInMonth: pickTop(onlyInMonth),
-              onlyInGrouped: pickTop(onlyInGrouped)
-          });
-      }
-  }, [financialData.expenses, categoryTotals.totalSum, categoryTotals.monthExpensesAll, categoryTotals.categoryItems]);
-
   // --- MEI Logic ---
   const meiRevenue = financialData.annualMeiRevenue || 0;
   const rawPercentage = (meiRevenue / MEI_LIMIT) * 100;
@@ -770,13 +591,15 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       }
   })();
   const calloutIcon = meiStatus.level === 'over' ? OctagonAlert : meiStatus.level === 'critical' ? Flame : meiStatus.level === 'attention' ? AlertTriangle : CheckCircle2;
-  const monthNet = financialData.income - financialData.expenses;
-  const expenseRatio = financialData.income > 0 ? (financialData.expenses / financialData.income) * 100 : 0;
-  const expenseRatioValue = Math.min(Math.max(expenseRatio, 0), 999);
-  const expenseRatioFill = Math.min(expenseRatioValue, 100);
-  const pendingIncome = financialData.pendingIncome || 0;
-  const pendingExpenses = financialData.pendingExpenses || 0;
-
+  const healthScore = useMemo(() => {
+      const totalReceitas = financialData.income;
+      const totalDespesas = financialData.expenses;
+      if (totalReceitas <= 0 && totalDespesas <= 0) return 0.5;
+      if (totalReceitas <= 0) return 0;
+      const margin = (totalReceitas - totalDespesas) / totalReceitas;
+      const clamped = Math.max(-1, Math.min(1, margin));
+      return (clamped + 1) / 2;
+  }, [financialData.expenses, financialData.income]);
   const { navigateToResult } = useGlobalActions();
   const { layout, loading: layoutLoading } = useDashboardLayout();
 
@@ -792,9 +615,9 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       quick_access: false,
       mei_limit: canViewMeiLimit,
       financial_xray: false,
-      credit_cards: canViewInvoices,
-      expense_breakdown: canManageExpenses
-  }), [canViewMeiLimit, canViewInvoices, canManageExpenses]);
+      credit_cards: false,
+      expense_breakdown: false
+  }), [canViewMeiLimit]);
 
   const orderMap = useMemo(() => {
       const map: Record<DashboardBlockId, number> = {
@@ -810,140 +633,34 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       return map;
   }, [layout.order]);
 
-  useEffect(() => {
-      const node = subHeaderRef.current;
-      if (!node) return;
-
-      const updateMetrics = () => {
-          const rect = node.getBoundingClientRect();
-          const height = Math.round(rect.height);
-          setSubHeaderHeight(prev => (prev === height ? prev : height));
-          const fillHeight = Math.max(0, Math.round(rect.top));
-          setHeaderFill(prev => (prev.top === 0 && prev.height === fillHeight ? prev : { top: 0, height: fillHeight }));
-      };
-
-      updateMetrics();
-
-      const observer =
-          typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateMetrics) : null;
-      observer?.observe(node);
-      window.addEventListener('resize', updateMetrics);
-
-      return () => {
-          observer?.disconnect();
-          window.removeEventListener('resize', updateMetrics);
-      };
-  }, []);
+  const meiCheckpoint = Math.floor(rawPercentage / 10) * 10;
+  const showMeiAlert = canViewMeiLimit && rawPercentage >= 10;
+  const showHealthAlert = true;
+  const meiAlertText = `Limite MEI ${meiCheckpoint.toFixed(0)}% usado`;
+  const healthPercent = Math.round(healthScore * 100);
+  const shouldRotateAlerts = showMeiAlert && showHealthAlert;
+  const [alertMode, setAlertMode] = useState<'mei' | 'health'>(showMeiAlert ? 'mei' : 'health');
 
   useEffect(() => {
-      const uid = auth.currentUser?.uid || null;
-      if (!uid) return;
-      let isActive = true;
-      preferencesService.getPreferences(uid).then((pref) => {
-          if (!isActive) return;
-          if (typeof pref.mobileDashboardSubHeader !== 'number') return;
-          const nextIndex = Math.min(Math.max(pref.mobileDashboardSubHeader, 0), 2);
-          subHeaderIndexRef.current = nextIndex;
-          setSubHeaderIndex(nextIndex);
-          requestAnimationFrame(() => {
-              const node = subHeaderScrollRef.current;
-              if (!node) return;
-              node.scrollTo({ left: node.clientWidth * (nextIndex + 1), behavior: 'auto' });
-          });
-      }).catch((error) => {
-          console.error('[prefs] mobile_subheader_load', { message: (error as any)?.message });
-      });
-      return () => {
-          isActive = false;
-      };
-  }, []);
-
-  useEffect(() => {
-      if (subHeaderIndex !== 0) {
-          setIsSearchActive(false);
+      if (!shouldRotateAlerts) {
+          setAlertMode(showMeiAlert ? 'mei' : 'health');
+          return;
       }
-  }, [subHeaderIndex]);
+      const interval = window.setInterval(() => {
+          setAlertMode(prev => (prev === 'mei' ? 'health' : 'mei'));
+      }, 5000);
+      return () => window.clearInterval(interval);
+  }, [shouldRotateAlerts, showMeiAlert]);
 
   useEffect(() => {
-      subHeaderIndexRef.current = subHeaderIndex;
-  }, [subHeaderIndex]);
-
-  useEffect(() => {
-      if (!tipsActive || tipsCount <= 1) return;
-      const timer = window.setInterval(() => {
-          setSubHeaderTipIndex(prev => prev + 1);
-      }, 10000);
-      return () => window.clearInterval(timer);
-  }, [tipsActive, tipsCount]);
-
-  useEffect(() => {
-      const node = subHeaderScrollRef.current;
-      if (!node) return;
-      requestAnimationFrame(() => {
-          const width = node.clientWidth || 1;
-          node.scrollTo({ left: width * (subHeaderIndexRef.current + 1), behavior: 'auto' });
-      });
-  }, []);
-
-  const persistSubHeaderIndex = (nextIndex: number) => {
-      const uid = auth.currentUser?.uid || null;
-      if (!uid) return;
-      preferencesService
-          .setMobileDashboardSubHeader(uid, nextIndex)
-          .catch((error) => {
-              console.error('[prefs] mobile_subheader_save', { message: (error as any)?.message });
-          });
-  };
-
-  const handleSubHeaderScroll = () => {
-      const node = subHeaderScrollRef.current;
-      if (!node) return;
-      if (subHeaderJumpingRef.current) return;
-      if (subHeaderScrollTimer.current) {
-          window.clearTimeout(subHeaderScrollTimer.current);
-      }
-      subHeaderScrollTimer.current = window.setTimeout(() => {
-          const width = node.clientWidth || 1;
-          const rawIndex = Math.round(node.scrollLeft / width);
-          const maxRenderedIndex = SUBHEADER_RENDERED_COUNT - 1;
-          let nextIndex = 0;
-          let jumpTo: number | null = null;
-
-          if (rawIndex <= 0) {
-              nextIndex = SUBHEADER_PANEL_COUNT - 1;
-              jumpTo = SUBHEADER_PANEL_COUNT;
-          } else if (rawIndex >= maxRenderedIndex) {
-              nextIndex = 0;
-              jumpTo = 1;
-          } else {
-              nextIndex = rawIndex - 1;
-          }
-
-          if (nextIndex !== subHeaderIndexRef.current) {
-              subHeaderIndexRef.current = nextIndex;
-              setSubHeaderIndex(nextIndex);
-              persistSubHeaderIndex(nextIndex);
-          }
-
-          if (jumpTo !== null) {
-              subHeaderJumpingRef.current = true;
-              requestAnimationFrame(() => {
-                  node.scrollTo({ left: width * jumpTo, behavior: 'auto' });
-                  requestAnimationFrame(() => {
-                      subHeaderJumpingRef.current = false;
-                  });
-              });
-          }
-      }, 140);
-  };
-
-  const scrollSubHeader = (direction: 'prev' | 'next') => {
-      const node = subHeaderScrollRef.current;
-      if (!node) return;
-      const width = node.clientWidth || 1;
-      const delta = direction === 'next' ? width : -width;
-      node.scrollTo({ left: node.scrollLeft + delta, behavior: 'smooth' });
-  };
+      if (!isMobile) return;
+      document.documentElement.classList.add('lock-scroll');
+      document.body.classList.add('lock-scroll');
+      return () => {
+          document.documentElement.classList.remove('lock-scroll');
+          document.body.classList.remove('lock-scroll');
+      };
+  }, [isMobile]);
 
   const searchResultsNode =
       Boolean(trimmedSearchQuery) && isSearchActive ? (
@@ -1011,610 +728,126 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
           </div>
       ) : null;
 
-  const renderSearchPanel = (isClone: boolean) => (
-      <div className={`min-w-full snap-start ${isClone ? 'pointer-events-none' : ''}`} aria-hidden={isClone}>
-                  <div className={`${subHeaderPanelClass} justify-center`}>
-                      <div className="flex flex-col gap-1 px-1">
-                          <div className="relative" ref={isClone ? undefined : searchContainerRef}>
-                              <SearchHelperBar
-                          variant="mobile"
-                          appearance="subheader"
-                          modeToggle="button"
-                          assistantButtonLabel="Ajudante do meumei"
-                          assistantBackLabel="Voltar para busca"
-                          searchQuery={searchQuery}
-                          setSearchQuery={setSearchQuery}
-                          setActiveSearchIndex={setActiveSearchIndex}
-                          setIsSearchActive={setIsSearchActive}
-                          onSearchKeyDown={handleSearchKeyDown}
-                          signals={helperSignals}
-                          actions={helperActions}
-                          tipsEnabled={false}
-                          results={isClone ? null : searchResultsNode}
-                      />
-                          </div>
-                          <div className="mt-1 flex items-center justify-between w-full px-1">
-                              <button
-                                  type="button"
-                                  onClick={() => scrollSubHeader('prev')}
-                                  className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                                  aria-label="Voltar no carrossel"
-                              >
-                                  <ChevronRight size={16} className="rotate-180 text-zinc-400" />
-                              </button>
-                              <button
-                                  type="button"
-                                  onClick={() => scrollSubHeader('next')}
-                                  className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                                  aria-label="Avançar no carrossel"
-                              >
-                                  <ChevronRight size={16} className="text-zinc-400" />
-                              </button>
-                          </div>
-                      </div>
-                  </div>
-      </div>
-  );
-
-  const renderSummaryPanel = (isClone: boolean) => (
-      <div className={`min-w-full snap-start ${isClone ? 'pointer-events-none' : ''}`} aria-hidden={isClone}>
-          <div className={`${subHeaderPanelClass} justify-between gap-2`}>
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900/95 via-zinc-900/85 to-indigo-900/70 text-white px-2.5 py-1.5 shadow-[0_18px_40px_rgba(0,0,0,0.35)]">
-                  <div className="absolute -right-6 -top-6 h-20 w-20 rounded-full bg-white/10 blur-2xl" />
-                  <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-400/70 via-white/40 to-rose-400/70" />
-                  <div className="relative flex items-start justify-between gap-3">
-                      <div>
-                          <p className="text-[8px] uppercase tracking-[0.28em] text-white/60">Resultado do mês</p>
-                          <p className={`mt-0.5 text-[16px] font-semibold leading-tight ${monthNet < 0 ? 'text-rose-200' : 'text-emerald-200'}`}>
-                              {formatCurrencyCompact(monthNet)}
-                          </p>
-                          <p className="text-[9px] text-white/60">Entradas - Saídas</p>
-                      </div>
-                      <div className="text-right">
-                          <p className="text-[8px] uppercase tracking-[0.2em] text-white/60">Margem</p>
-                          <p className="mt-0.5 text-[11px] font-semibold">
-                              {financialData.income > 0 ? `${Math.max(0, Math.round(100 - expenseRatioValue))}%` : '0%'}
-                          </p>
-                      </div>
-                  </div>
-                  <div className="relative mt-1.5 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                      <div
-                          className={`h-full ${expenseRatioValue > 100 ? 'bg-rose-400/90' : 'bg-emerald-300/90'}`}
-                          style={{ width: `${expenseRatioFill}%` }}
-                      />
-                  </div>
-              </div>
-
-              <div className="rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70">
-                  <div className="grid grid-cols-3 divide-x divide-zinc-200/70 dark:divide-zinc-800/70">
-                      {canViewBalances ? (
-                          <div className="px-2 py-1.5 text-center">
-                              <p className="text-[7px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saldo</p>
-                              <p className={`mt-0.5 text-[10px] font-semibold leading-tight ${financialData.balance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-white'}`}>
-                                  {formatCurrencyCompact(financialData.balance)}
-                              </p>
-                          </div>
-                      ) : (
-                          <div className="px-2 py-1.5 text-center text-zinc-400">
-                              <Lock size={14} className="mx-auto" />
-                              <p className="mt-1 text-[9px] leading-tight">Saldo oculto</p>
-                          </div>
-                      )}
-
-                      {canManageIncomes && (
-                          <div className="px-2 py-1.5 text-center">
-                              <p className="text-[7px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Entradas</p>
-                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-emerald-600 dark:text-emerald-400">
-                                  {formatCurrencyCompact(financialData.income)}
-                              </p>
-                          </div>
-                      )}
-
-                      {canManageExpenses && (
-                          <div className="px-2 py-1.5 text-center">
-                              <p className="text-[7px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saídas</p>
-                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-rose-600 dark:text-rose-400">
-                                  {formatCurrencyCompact(financialData.expenses)}
-                              </p>
-                          </div>
-                      )}
-                  </div>
-              </div>
-
-              <div className="flex items-center justify-between w-full px-1">
-                  <button
-                      type="button"
-                      onClick={() => scrollSubHeader('prev')}
-                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                      aria-label="Voltar no carrossel"
-                  >
-                      <ChevronRight size={16} className="rotate-180 text-zinc-400" />
-                  </button>
-                  <button
-                      type="button"
-                      onClick={() => scrollSubHeader('next')}
-                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                      aria-label="Avançar no carrossel"
-                  >
-                      <ChevronRight size={16} className="text-zinc-400" />
-                  </button>
-              </div>
-          </div>
-      </div>
-  );
-
-  const renderTipsPanel = (isClone: boolean) => (
-      <div className={`min-w-full snap-start ${isClone ? 'pointer-events-none' : ''}`} aria-hidden={isClone}>
-          <div className={subHeaderPanelClass}>
-                  <div className="flex-1 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/80 px-3 py-2 text-left shadow-sm relative overflow-hidden">
-                      <div>
-                          {activeTip ? (
-                              <>
-                                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white mb-1">{activeTip.title}</p>
-                                  <p
-                                      className="text-[11px] text-zinc-500 dark:text-zinc-400"
-                                      style={{
-                                          display: '-webkit-box',
-                                          WebkitLineClamp: 2,
-                                          WebkitBoxOrient: 'vertical',
-                                          overflow: 'hidden'
-                                      }}
-                                  >
-                                      {activeTip.body}
-                                  </p>
-                              </>
-                          ) : tipsActive ? (
-                              <p className="text-[11px] text-zinc-500">Nenhuma dica disponível agora.</p>
-                          ) : (
-                              <p className="text-[11px] text-zinc-500">Dicas desativadas nas Configurações.</p>
-                          )}
-                      </div>
-                  </div>
-                  {tipAction && (
-                      <button
-                          type="button"
-                          onClick={tipAction}
-                          className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 text-[11px] font-semibold shadow-lg shadow-indigo-900/20"
-                      >
-                          {activeTip?.ctaLabel || 'Abrir'}
-                      </button>
-                  )}
-              <div className="flex items-center justify-between w-full px-1">
-                  <button
-                      type="button"
-                      onClick={() => scrollSubHeader('prev')}
-                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                      aria-label="Voltar no carrossel"
-                  >
-                      <ChevronRight size={16} className="rotate-180 text-zinc-400" />
-                  </button>
-                  <button
-                      type="button"
-                      onClick={() => scrollSubHeader('next')}
-                      className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-[#151517]/70 flex items-center justify-center shadow-sm hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                      aria-label="Avançar no carrossel"
-                  >
-                      <ChevronRight size={16} className="text-zinc-400" />
-                  </button>
-              </div>
-          </div>
-      </div>
-  );
-
-  const mobileSubHeader = (
-      <div className="relative">
-          <div
-              ref={subHeaderScrollRef}
-              onScroll={handleSubHeaderScroll}
-              className="flex w-full items-stretch overflow-x-auto snap-x snap-mandatory"
-              style={{ touchAction: 'pan-x' }}
-          >
-              {renderTipsPanel(true)}
-              {renderSearchPanel(false)}
-              {renderSummaryPanel(false)}
-              {renderTipsPanel(false)}
-              {renderSearchPanel(true)}
-          </div>
-      </div>
-  );
-
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
-        <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
-            {headerFill.height > 0 && (
-                <div
-                    className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
-                    style={{ top: headerFill.top, height: headerFill.height }}
-                />
-            )}
-            <div
-                className="fixed left-0 right-0 z-30"
-                style={{ top: 'var(--mm-mobile-top, 0px)' }}
-            >
-                <div
-                    ref={subHeaderRef}
-                    className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
-                >
-                    <div className="px-4 pb-3 pt-2">
-                        {mobileSubHeader}
-                    </div>
-                </div>
-            </div>
-            <div
-                className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
-                style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
-            >
-                <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
-
-                {/* MEI Limit Monitor (GAMIFIED) - Conditionally Rendered */}
-                {canViewMeiLimit && (
-                    <SortableBlock
-                        id="mei_limit"
-                        label={blockLabels.mei_limit}
-                        disabled={layoutLoading}
-                        style={{ order: orderMap.mei_limit }}
-                    >
-                    <section>
-                        <div className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm transition-colors duration-300`}>
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                            <div className="flex items-center gap-2 min-w-0">
-                                <div className="p-1 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
-                                    <Building2 size={14} />
-                                </div>
-                                <h3 className="text-[15px] font-semibold text-zinc-900 dark:text-white truncate">
-                                    Faturamento Fiscal MEI (PJ)
-                                </h3>
-                            </div>
-                            <p className={`text-[11px] font-semibold ${meiStatus.accentText}`}>{meiStatus.label}</p>
-                        </div>
-                        <div className={`text-[11px] font-semibold px-2 py-1 rounded-full ${meiStatus.badgeClass}`}>
-                            {rawPercentage.toFixed(1)}%
-                        </div>
+    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+        <div className="px-4 pt-0 pb-[calc(env(safe-area-inset-bottom)+88px)]">
+                <div className="flex flex-col gap-[5px]">
+                    <div className="-mx-4 rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-6 text-center">
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-400">Seu dinheiro agora</p>
+                        <p className={`mt-2 text-4xl font-bold ${financialData.balance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-white'}`}>
+                            {formatCurrency(financialData.balance)}
+                        </p>
                     </div>
 
-                    <div className="mt-3 space-y-2 text-xs">
-                        <div className="flex items-center justify-between gap-3">
-                            <span className="text-zinc-500 dark:text-zinc-400">Faturado no ano</span>
-                            <span className="font-semibold text-zinc-900 dark:text-white">{formatCurrency(meiRevenue)}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                            <span className="text-zinc-500 dark:text-zinc-400">{meiStatus.level === 'over' ? 'Excedente sobre o limite' : 'Restante até o limite'}</span>
-                            <span className={`font-semibold ${meiStatus.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
-                                {formatCurrency(meiStatus.level === 'over' ? meiExcess : meiRemaining)}
+                    <div className="-mx-4 rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-3 text-sm">
+                        <div className="flex items-center justify-between border-b border-zinc-200/70 dark:border-zinc-800/70 pb-2">
+                            <span className="text-zinc-500 dark:text-zinc-400">Resultado</span>
+                            <span className={`font-semibold ${resultTextClass}`}>
+                                {formatCurrencyCompact(resultValue)}
                             </span>
                         </div>
-                        <div className="flex items-center justify-between gap-3">
-                            <span className="text-zinc-500 dark:text-zinc-400">Limite MEI</span>
-                            <span className="font-semibold text-zinc-900 dark:text-white">{formatCurrency(MEI_LIMIT)}</span>
+                        <div className="mt-2 flex items-center justify-between">
+                            <span className="text-zinc-500 dark:text-zinc-400">Entradas</span>
+                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                {formatCurrencyCompact(financialData.income)}
+                            </span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between">
+                            <span className="text-zinc-500 dark:text-zinc-400">Saídas</span>
+                            <span className="font-semibold text-rose-500 dark:text-rose-400">
+                                {formatCurrencyCompact(financialData.expenses)}
+                            </span>
                         </div>
                     </div>
 
-                    <button
-                        type="button"
-                        onClick={() => setIsMeiDetailsOpen(prev => !prev)}
-                        className="mt-3 w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                    >
-                        {isMeiDetailsOpen ? 'Toque para recolher' : 'Toque para expandir'}
-                        <ChevronDown
-                            size={12}
-                            className={`transition-transform ${isMeiDetailsOpen ? 'rotate-180' : ''}`}
-                        />
-                    </button>
-
-                    {isMeiDetailsOpen && (
-                        <div className="mt-3 space-y-3">
-                            <p className="text-xs text-zinc-500 dark:text-zinc-400">{meiStatus.description}</p>
-                            <div className="relative h-2 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                                <div 
-                                    className={`absolute inset-y-0 left-0 bg-gradient-to-r ${meiStatus.gradient} transition-all duration-700 ease-out`}
-                                    style={{ width: `${progressVisualPercentage}%` }}
-                                ></div>
-                            </div>
-                            <div className={`rounded-xl border ${meiStatus.calloutBorder} ${meiStatus.calloutBg} p-3 flex gap-2`}>
-                                {React.createElement(calloutIcon, { size: 18, className: `${meiStatus.accentText} shrink-0` })}
-                                <p className={`text-xs leading-relaxed ${meiStatus.calloutText}`}>
-                                    {statusCalloutText}
-                                </p>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </section>
-            </SortableBlock>
-        )}
-
-        {/* Financial X-Ray */}
-        {availableBlocks.financial_xray && (
-        <SortableBlock
-            id="financial_xray"
-            label={blockLabels.financial_xray}
-            disabled={layoutLoading}
-            style={{ order: orderMap.financial_xray }}
-        >
-        <section className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
-            <div className="border-y border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517]">
-            <div className="grid grid-cols-3 divide-x divide-zinc-200 dark:divide-zinc-800">
-                {canViewBalances ? (
-                    <div className="px-2 py-2 text-center flex flex-col justify-center">
-                        <p className="text-[8px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saldo</p>
-                        <p className={`mt-1 text-[11px] font-semibold leading-tight ${financialData.balance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-white'}`}>
-                            {formatCurrencyCompact(financialData.balance)}
-                        </p>
-                    </div>
-                ) : (
-                    <div className="px-2 py-2 text-center text-zinc-400 flex flex-col justify-center">
-                        <Lock size={14} className="mx-auto" />
-                        <p className="mt-1 text-[9px] leading-tight">Saldo oculto</p>
-                    </div>
-                )}
-
-                {canManageIncomes && (
-                    <div className="px-2 py-2 text-center flex flex-col justify-center">
-                        <p className="text-[8px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Entradas</p>
-                        <p className="mt-1 text-[11px] font-semibold leading-tight text-emerald-600 dark:text-emerald-400">
-                            {formatCurrencyCompact(financialData.income)}
-                        </p>
-                    </div>
-                )}
-
-                {canManageExpenses && (
-                    <div className="px-2 py-2 text-center flex flex-col justify-center">
-                        <p className="text-[8px] uppercase tracking-[0.18em] text-zinc-400 leading-tight">Saídas</p>
-                        <p className="mt-1 text-[11px] font-semibold leading-tight text-rose-600 dark:text-rose-400">
-                            {formatCurrencyCompact(financialData.expenses)}
-                        </p>
-                    </div>
-                )}
-            </div>
-            </div>
-        </section>
-        </SortableBlock>
-        )}
-
-        {/* Credit Cards Section */}
-        {canViewInvoices && (
-            <SortableBlock
-                id="credit_cards"
-                label={blockLabels.credit_cards}
-                disabled={layoutLoading}
-                style={{ order: orderMap.credit_cards }}
-            >
-            <section>
-                <div className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-[15px] font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
-                            <CreditCard className="text-purple-600 dark:text-purple-500" size={18} />
-                            Faturas dos Cartões
-                        </h2>
+                    <div className="grid grid-cols-2 gap-[5px] -mx-4 px-4 mt-[5px]">
+                        <button
+                            type="button"
+                            onClick={onOpenIncomes}
+                            className="h-14 rounded-none bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-base shadow-lg shadow-emerald-900/25"
+                        >
+                            + Entrada
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onOpenExpenseAll ?? onOpenVariableExpenses}
+                            className="h-14 rounded-none bg-[#FF0000] hover:bg-red-600 text-white font-semibold text-base shadow-lg shadow-red-900/25"
+                        >
+                            – Saída
+                        </button>
                     </div>
 
-                    {creditCards.length > 0 ? (
-                        <div className="space-y-2">
-                            {visibleCards.map((card) => {
-                                const style = getCardStyle(card); 
-                                const invoiceTotal = cardTotals[card.id] ?? 0;
-                                const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-                                if (card.dueDay < card.closingDay) {
-                                    dueDateObj.setMonth(dueDateObj.getMonth() + 1);
-                                }
-                                const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
-
-                                return (
-                                    <MobileListItem
-                                        key={card.id}
-                                        icon={
-                                            <div
-                                                className="h-10 w-10 rounded-xl flex items-center justify-center"
-                                                style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
-                                            >
-                                                <img src={style.icon} className="w-6 h-6" alt="Card Brand" />
-                                            </div>
-                                        }
-                                        label={card.name}
-                                        description={`Vence em ${formattedDueDate}`}
-                                        value={`R$ ${invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                                        iconContainerClassName="bg-transparent p-0"
-                                        onClick={onOpenInvoices}
-                                    />
-                                );
-                            })}
-                            {shouldCollapseCards && (
-                                <button
-                                    type="button"
-                                    onClick={() => setIsCardsExpanded(prev => !prev)}
-                                    className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                                >
-                                    {isCardsExpanded ? 'Toque para recolher' : `Toque para expandir (+${extraCardCount})`}
-                                    <ChevronDown
-                                        size={12}
-                                        className={`transition-transform ${isCardsExpanded ? 'rotate-180' : ''}`}
-                                    />
-                                </button>
+                    {(showMeiAlert || showHealthAlert) && (
+                        <div
+                            className={`-mx-4 mt-[5px] rounded-none border px-4 py-3 flex items-center justify-between gap-2 text-xs ${
+                                alertMode === 'mei'
+                                    ? 'border-amber-200/70 dark:border-amber-900/40 bg-amber-50/80 dark:bg-amber-900/10 text-amber-700 dark:text-amber-200'
+                                    : 'border-emerald-200/70 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/10 text-emerald-700 dark:text-emerald-200'
+                            }`}
+                        >
+                            {alertMode === 'mei' ? (
+                                <>
+                                    <div className="flex items-center gap-2">
+                                        <AlertTriangle size={14} />
+                                        <span>{meiAlertText}</span>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="flex items-center gap-2">
+                                        <CheckCircle2 size={14} />
+                                        <span>Saúde da empresa {healthPercent}%</span>
+                                    </div>
+                                </>
                             )}
                         </div>
-                    ) : (
-                        <MobileEmptyState
-                            icon={<CreditCard size={18} />}
-                            title="Nenhum cartão cadastrado"
-                            message="Adicione seus cartões de crédito nas configurações."
-                        />
                     )}
-                </div>
-            </section>
-            </SortableBlock>
-        )}
 
-        {/* Categorized Expense Breakdown - BAR RANKING */}
-        {canManageExpenses && (
-            <SortableBlock
-                id="expense_breakdown"
-                label={blockLabels.expense_breakdown}
-                disabled={layoutLoading}
-                style={{ order: orderMap.expense_breakdown }}
-            >
-            <section className="bg-white dark:bg-[#151517] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
-                <div className="flex items-start justify-between gap-3 mb-4">
-                    <div>
-                        <h2 className="text-[15px] font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
-                            <PieChart size={18} className="text-indigo-500" />
-                            Onde foi parar seu dinheiro?
-                        </h2>
-                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                            Ranking das despesas do mês ({categoryTotals.monthLabel}).
-                        </p>
-                    </div>
-                    <div className="text-right text-[11px] text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
-                        <span className="uppercase tracking-wide font-semibold">Total</span>
-                        <div className="text-xs font-semibold text-zinc-900 dark:text-white">
-                            {formatCurrency(categoryTotals.totalSum)}
+                    <div className="-mx-4 mt-[5px] rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-3">
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] uppercase tracking-[0.25em] text-zinc-400">Últimos lançamentos</span>
                         </div>
-                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                            Pagas: {formatCurrency(categoryTotals.totalPaid)}
-                        </span>
-                    </div>
-                </div>
-                {categoryTotals.displayItems.length > 0 && categoryTotals.totalSum > 0 ? (
-                    <div className="space-y-3">
-                        <ul className="space-y-2.5">
-                            {visibleCategoryItems.map((item, index) => {
-                                const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
-                                const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
-                                const barColor =
-                                    item.category === 'Outros'
-                                        ? '#94a3b8'
-                                        : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
-                                const isExpanded = expandedCategoryKey === item.key;
-                                const categoryExpenses = categoryTotals.categoryItems[item.key] || [];
-                                const itemsToShow = categoryExpenses.slice(0, CATEGORY_ITEMS_PREVIEW_LIMIT);
-                                const extraCount = Math.max(categoryExpenses.length - itemsToShow.length, 0);
-                                return (
-                                    <li key={item.key} className="space-y-1">
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setExpandedCategoryKey(prev => (prev === item.key ? null : item.key))
-                                            }
-                                            aria-expanded={isExpanded}
-                                            className="w-full text-left"
-                                        >
-                                            <div className="flex items-center justify-between gap-2 text-xs">
-                                                <div className="flex items-center gap-2 min-w-0">
-                                                    <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
-                                                        {item.category}
-                                                    </span>
-                                                    <ChevronDown
-                                                        size={12}
-                                                        className={`text-zinc-400 transition-transform ${
-                                                            isExpanded ? 'rotate-180' : ''
-                                                        }`}
-                                                    />
-                                                </div>
-                                                <span className="text-[11px] text-zinc-500 dark:text-zinc-400 shrink-0">
-                                                    {formatCurrency(item.total)} • {pct.toFixed(1)}%
-                                                </span>
+                        {recentTransactions.length === 0 ? (
+                            <p className="text-xs text-zinc-500">Sem lançamentos recentes.</p>
+                        ) : (
+                            <div className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
+                                {recentTransactions.map(item => {
+                                    const itemDate = item.date
+                                        ? new Date(`${item.date}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+                                        : '';
+                                    const isIncome = item.kind === 'income';
+                                    return (
+                                        <div key={item.id} className="flex items-center justify-between py-2">
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-medium text-zinc-900 dark:text-white truncate flex items-center gap-2">
+                                                    <span className={`h-2 w-2 rounded-full ${isIncome ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                                    <span className="truncate">{item.title}</span>
+                                                </p>
+                                                <p className="text-[11px] text-zinc-500">
+                                                    {isIncome ? 'Entrada' : 'Despesa'}{itemDate ? ` • ${itemDate}` : ''}
+                                                </p>
                                             </div>
-                                            <div className="mt-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                                                <div
-                                                    className="h-full rounded-full"
-                                                    style={{ width: `${barWidth}%`, backgroundColor: barColor }}
-                                                ></div>
-                                            </div>
-                                        </button>
-                                        {isExpanded && (
-                                            <div className="mt-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-2">
-                                                <ul className="space-y-2">
-                                                    {itemsToShow.map(expense => {
-                                                        const meta =
-                                                            (expense.accountId && accountNameById[expense.accountId]) ||
-                                                            (expense.cardId && cardNameById[expense.cardId]) ||
-                                                            expense.paymentMethod ||
-                                                            null;
-                                                        return (
-                                                            <li
-                                                                key={expense.id}
-                                                                className="flex items-start justify-between gap-3 text-[11px]"
-                                                            >
-                                                                <div className="min-w-0">
-                                                                    <p className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
-                                                                        {expense.description || 'Sem descrição'}
-                                                                    </p>
-                                                                    <div className="flex items-center gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-                                                                        <span>
-                                                                            {new Date(
-                                                                                `${expense.date}T12:00:00`
-                                                                            ).toLocaleDateString('pt-BR', {
-                                                                                day: '2-digit',
-                                                                                month: '2-digit'
-                                                                            })}
-                                                                        </span>
-                                                                        {meta && <span className="truncate">{meta}</span>}
-                                                                    </div>
-                                                                </div>
-                                                                <span className="text-[11px] font-semibold text-zinc-900 dark:text-white shrink-0">
-                                                                    {formatCurrency(expense.amount)}
-                                                                </span>
-                                                            </li>
-                                                        );
-                                                    })}
-                                                </ul>
-                                                {extraCount > 0 && (
-                                                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                                                        + {extraCount} itens
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                        {shouldCollapseCategories && (
-                            <button
-                                type="button"
-                                onClick={() => setIsCategoryListExpanded(prev => !prev)}
-                                className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                            >
-                                {isCategoryListExpanded ? 'Toque para recolher' : `Toque para expandir (+${extraCategoryCount})`}
-                                <ChevronDown
-                                    size={12}
-                                    className={`transition-transform ${isCategoryListExpanded ? 'rotate-180' : ''}`}
-                                />
-                            </button>
-                        )}
-                        {spendInsights.length > 0 && (
-                            <div className="grid gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-                                {spendInsights.map(insight => (
-                                    <div
-                                        key={insight.label}
-                                        className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1"
-                                    >
-                                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                            {insight.label}
-                                        </span>
-                                        <span className="font-semibold text-zinc-900 dark:text-white">
-                                            {insight.value}
-                                        </span>
-                                        {insight.sub && (
-                                            <span className="text-[10px] text-zinc-400">{insight.sub}</span>
-                                        )}
-                                    </div>
-                                ))}
+                                            <span className={`text-sm font-semibold ${isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                                {isIncome ? '+' : '-'} {formatCurrencyCompact(item.amount)}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
-                ) : (
-                    <MobileEmptyState
-                        icon={<PieChart size={18} />}
-                        message="Nenhuma despesa paga encontrada no mês."
-                    />
-                )}
-            </section>
-            </SortableBlock>
-        )}
 
+                    <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen mt-[5px]">
+                        <button
+                            type="button"
+                            onClick={handleViewMore}
+                            disabled={!handleViewMore}
+                            className="h-12 w-full rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Ver mais
+                        </button>
+                    </div>
                 </div>
-            </div>
         </div>
     </div>
   );

@@ -95,23 +95,27 @@ const SettingsSection: React.FC<{
   onToggle: () => void;
   className?: string;
   children: React.ReactNode;
-}> = ({ label, collapsed, onToggle, className, children }) => {
-  const toggleLabel = collapsed ? `Expandir ${label}` : `Recolher ${label}`;
+  collapsible?: boolean;
+}> = ({ label, collapsed, onToggle, className, children, collapsible = true }) => {
+  const isCollapsed = collapsible && collapsed;
+  const toggleLabel = isCollapsed ? `Expandir ${label}` : `Recolher ${label}`;
   return (
     <section
       className={`rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-6 shadow-sm relative overflow-hidden ${className || ''}`}
     >
-      <div className="absolute right-3 top-3 z-10">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={toggleLabel}
-          className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
-        >
-          <ChevronDown size={16} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />
-        </button>
-      </div>
-      {collapsed ? (
+      {collapsible && (
+        <div className="absolute right-3 top-3 z-10">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={toggleLabel}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
+          >
+            <ChevronDown size={16} className={`transition-transform ${isCollapsed ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+      )}
+      {isCollapsed ? (
         <button
           type="button"
           onClick={onToggle}
@@ -221,15 +225,19 @@ const Settings: React.FC<SettingsProps> = ({
   const resolvedTipsEnabled = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
   const actionButtonBase =
       'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition h-10 w-full sm:w-48 whitespace-nowrap';
-  const shortcutGroups = useMemo(
-      () => [
+  const shortcutGroups = useMemo(() => {
+      const quickAccessLabel = isMobile
+          ? 'Navegar pelos botões do Acesso Rápido (do Início até Relatórios, em ciclo).'
+          : 'Navegar pelos botões do Acesso Rápido (do Início até Auditoria, em ciclo).';
+
+      return [
           {
               id: 'quick_access',
               title: 'Acesso Rápido (← / →)',
               description: 'Funciona quando nenhum campo de texto estiver ativo.',
               layout: 'list',
               items: [
-                  { key: '← / →', label: 'Navegar pelos botões do Acesso Rápido (do Início até Auditoria, em ciclo).' }
+                  { key: '← / →', label: quickAccessLabel }
               ]
           },
           {
@@ -244,9 +252,8 @@ const Settings: React.FC<SettingsProps> = ({
                   { key: 'Enter (Ajudante)', label: 'Enviar pergunta no modo Ajudante.' }
               ]
           }
-      ],
-      []
-  );
+      ];
+  }, [isMobile]);
   const isSectionCollapsed = (id: SettingsSectionId) => Boolean(collapsedSections[id]);
   const toggleSection = (id: SettingsSectionId) => {
       setCollapsedSections((prev) => ({
@@ -459,7 +466,7 @@ useEffect(() => {
   const renderErrorFallback = (state: ConfigErrorState) => {
       const copy = getConfigErrorCopy(state);
       return (
-          <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter flex items-center justify-center px-4">
+          <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter flex items-center justify-center px-4">
               <div className="max-w-3xl w-full rounded-3xl bg-white dark:bg-[#131315] border border-red-200 dark:border-red-700 shadow-lg p-8 space-y-4 text-center">
                   <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
                       {copy.title}
@@ -704,7 +711,7 @@ useEffect(() => {
   }, [resetPhase]);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
       
       {/* Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6 flex items-center gap-4">
@@ -727,15 +734,11 @@ useEffect(() => {
                 Carregando configurações em segundo plano...
             </div>
         )}
-        {/* --- SECTION 2: ADMINISTRATION (Restricted) --- */}
         <div>
-            <h3 className="text-xs font-bold text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-4 ml-1 flex items-center gap-2">
-                Administração
-            </h3>
-
             <div className="space-y-6">
                     
                     {/* Company Management Card */}
+                    {!isMobile && (
                     <SettingsSection
                         label="Gestão da Empresa"
                         collapsed={isSectionCollapsed('company')}
@@ -897,11 +900,13 @@ useEffect(() => {
                             </div>
                         </div>
                     </SettingsSection>
+                    )}
 
                     <SettingsSection
                         label="Instalar app"
-                        collapsed={isSectionCollapsed('install')}
+                        collapsed={isMobile ? false : isSectionCollapsed('install')}
                         onToggle={() => toggleSection('install')}
+                        collapsible={!isMobile}
                     >
                         <div className="flex items-start gap-4">
                             <div className="p-3 bg-emerald-100 dark:bg-emerald-900/20 rounded-xl text-emerald-600 dark:text-emerald-400">
@@ -937,8 +942,9 @@ useEffect(() => {
                     {isMobile && (
                         <SettingsSection
                             label="Notificações"
-                            collapsed={isSectionCollapsed('notifications')}
+                            collapsed={false}
                             onToggle={() => toggleSection('notifications')}
+                            collapsible={false}
                         >
                             <div className="flex items-start gap-4">
                                 <div className="p-3 bg-violet-100 dark:bg-violet-900/20 rounded-xl text-violet-600 dark:text-violet-300">
@@ -1037,6 +1043,7 @@ useEffect(() => {
                         </SettingsSection>
                     )}
 
+                    {!isMobile && (
                     <SettingsSection
                         label="Dicas do meumei"
                         collapsed={isSectionCollapsed('tips')}
@@ -1077,7 +1084,9 @@ useEffect(() => {
                             </button>
                         </div>
                     </SettingsSection>
+                    )}
 
+                    {!isMobile && (
                     <SettingsSection
                         label="Atalhos do teclado"
                         collapsed={isSectionCollapsed('shortcuts')}
@@ -1129,6 +1138,7 @@ useEffect(() => {
                             ))}
                         </div>
                     </SettingsSection>
+                    )}
 
                     <div className="grid grid-cols-1 gap-6">
                         <SettingsSection
@@ -1136,6 +1146,7 @@ useEffect(() => {
                             collapsed={isSectionCollapsed('danger')}
                             onToggle={() => toggleSection('danger')}
                             className="border-red-100 dark:border-red-900/30 flex flex-col"
+                            collapsible
                         >
                             <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
                             <div className="relative z-10 space-y-3 flex-1">

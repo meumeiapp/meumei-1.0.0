@@ -72,7 +72,7 @@ const CompanyDetailsView: React.FC<CompanyDetailsViewProps> = ({ onBack, company
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
         
         {/* Header Spacer for global header overlap */}
         <div className="pt-8 max-w-4xl mx-auto px-4 sm:px-6 relative z-10">

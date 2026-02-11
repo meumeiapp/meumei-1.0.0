@@ -37,7 +37,8 @@ const useMobileTopOffset = () => {
       const hasMonth = monthBottom > 0;
       const measuredBottom = hasMonth ? monthBottom : headerBottom;
       const source = hasMonth ? 'month' : 'header';
-      const appliedPadding = Math.round(Math.max(DEFAULT_OFFSET, measuredBottom + safeTop));
+      const measuredPadding = Math.round(measuredBottom + safeTop);
+      const appliedPadding = measuredPadding > 0 ? measuredPadding : DEFAULT_OFFSET;
 
       if (lastAppliedRef.current !== appliedPadding) {
         document.documentElement.style.setProperty('--mm-mobile-top', `${appliedPadding}px`);

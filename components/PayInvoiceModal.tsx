@@ -111,62 +111,64 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
   );
 
   if (isMobile) {
+    const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
     return (
       <div className="fixed inset-0 z-[1200]">
         <button
           type="button"
           onClick={onClose}
-          className="absolute inset-0 bg-black/70"
+          className="absolute left-0 right-0 top-0 bg-black/70"
+          style={{ bottom: dockOffset }}
           aria-label="Fechar pagamento de fatura"
         />
         <div
-          className="absolute left-0 right-0 bottom-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
-          style={{ top: 0 }}
+          className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+          style={{ top: 0, bottom: dockOffset }}
         >
-          <div className="px-3 pt-2 pb-2 bg-gradient-to-r from-rose-500/80 via-rose-500/35 to-black">
+          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 size={16} className="text-white" />
-                  <p className="text-sm font-semibold text-white truncate">Pagar Fatura</p>
+                  <p className="text-[13px] font-semibold text-white truncate">Pagar Fatura</p>
                 </div>
-                <p className="text-[10px] text-white/70">Cartão: {selectedCard?.name}</p>
+                <p className="text-[9px] text-white/70">Cartão: {selectedCard?.name}</p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="h-8 w-8 rounded-full bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                 aria-label="Fechar pagamento de fatura"
               >
                 <X size={16} />
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-hidden px-2 pt-1 pb-16">
-            <div className="bg-zinc-900/40 rounded-xl p-3 mb-3 border border-white/10">
-              <div className="flex justify-between items-center mb-2">
+          <div className="flex-1 overflow-hidden px-3 pt-1 pb-16">
+            <div className="bg-white/5 border border-white/10 rounded-none px-3 py-2 mb-2">
+              <div className="flex justify-between items-center mb-1">
                 <span className="text-[10px] uppercase font-bold text-white/60">Itens Selecionados</span>
                 <span className="text-xs font-semibold text-white">{selectedCount} transações</span>
               </div>
-              <div className="flex justify-between items-center pt-2 border-t border-white/10">
+              <div className="flex justify-between items-center pt-1 border-t border-white/10">
                 <span className="text-[10px] uppercase font-bold text-white/60">Total a Pagar</span>
-                <span className="text-lg font-bold text-rose-400">R$ {totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <span className="text-base font-bold text-rose-400">R$ {totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
               </div>
             </div>
             {formFields}
           </div>
-          <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+6px)] grid grid-cols-2 gap-2">
+          <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-0 grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+              className="rounded-none border border-rose-400/50 bg-rose-950/30 py-3 text-sm font-semibold text-rose-200 hover:bg-rose-900/40 transition"
             >
               Cancelar
             </button>
             <button
               type="button"
               onClick={handleConfirm}
-              className="rounded-lg py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 transition"
+              className="rounded-none border border-rose-500/40 py-3 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition"
             >
               Confirmar
             </button>

@@ -197,9 +197,11 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
     onClose();
   };
 
-  const dockFieldClass =
-    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40';
+  const dockFieldClass = isMobile
+    ? 'w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 text-sm font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40 placeholder:font-light placeholder:text-zinc-400'
+    : 'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40';
   const dockTextareaClass = `${dockFieldClass} min-h-[80px] resize-none`;
+  const labelClass = isMobile ? 'text-sm uppercase tracking-wide font-light text-white/70' : modalLabelClass;
 
   const modalBody = (
       <div className="px-4 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
@@ -207,7 +209,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
             {/* Account Name */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-5 items-start">
               <div className="space-y-2 md:col-span-1">
-                <label htmlFor={fieldId('name')} className={modalLabelClass}>
+                <label htmlFor={fieldId('name')} className={labelClass}>
                   Nome da Conta
                 </label>
                 <input 
@@ -221,7 +223,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                 />
               </div>
               <div className="space-y-2 md:col-span-1">
-                <label className={modalLabelClass}>Natureza fiscal</label>
+                <label className={labelClass}>Natureza fiscal</label>
                 <SelectDropdown
                   value={accountNature}
                   onChange={(value) => setAccountNature(value as 'PJ' | 'PF')}
@@ -232,11 +234,11 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                   placeholder="Selecione"
                   buttonClassName={dockFieldClass}
                   listClassName="max-h-56"
-                  placeholderClassName="text-[12px] font-light"
+                  placeholderClassName="text-sm font-light"
                 />
               </div>
               <div className="space-y-2 md:col-span-1">
-                <label className={modalLabelClass}>Tipo de conta</label>
+                <label className={labelClass}>Tipo de conta</label>
                 <button
                   type="button"
                   onClick={() => {
@@ -255,7 +257,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
             <div className={`grid grid-cols-1 ${isEditMode ? 'md:grid-cols-2' : ''} gap-2 sm:gap-5 items-start`}>
               <div className="space-y-2">
-                <label className={modalLabelClass}>
+                <label className={labelClass}>
                   {isEditMode ? 'Saldo Inicial (somente leitura)' : 'Saldo Inicial (R$)'}
                 </label>
                 <input
@@ -271,7 +273,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
               </div>
               {isEditMode ? (
                 <div className="space-y-2">
-                  <label className={modalLabelClass}>Saldo Atual (R$)</label>
+                  <label className={labelClass}>Saldo Atual (R$)</label>
                   <input
                     id={fieldId('current-balance')}
                     name="currentBalance"
@@ -287,7 +289,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
             {isEditMode && (
               <div className="space-y-2">
-                <label htmlFor={fieldId('notes')} className={modalLabelClass}>
+                <label htmlFor={fieldId('notes')} className={labelClass}>
                   Observações
                 </label>
                 <textarea
@@ -303,7 +305,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
             )}
 
             <div className="space-y-2">
-              <label className={modalLabelClass}>Cor da tag</label>
+              <label className={labelClass}>Cor da tag</label>
               <div className="flex flex-wrap gap-2">
                 {PREMIUM_COLOR_PRESETS.map((color) => {
                   const isActive = accountColor === color;
@@ -403,7 +405,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
               <div className="pt-3 flex-1 overflow-auto space-y-4">
                   <div className="space-y-2">
-                      <label htmlFor={fieldId('type-new')} className={modalLabelClass}>
+                      <label htmlFor={fieldId('type-new')} className={labelClass}>
                           Novo tipo
                       </label>
                       <div className="flex items-center gap-2">

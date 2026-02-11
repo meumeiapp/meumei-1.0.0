@@ -146,6 +146,18 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       };
   }, [isMobile]);
 
+  useEffect(() => {
+      if (!isMobile || typeof window === 'undefined') return;
+      const handleDockClick = () => {
+          setIsModalOpen(false);
+          setIsGoalModalOpen(false);
+          setEditingYield(null);
+          setDetailAccount(null);
+      };
+      window.addEventListener('mm:mobile-dock-click', handleDockClick);
+      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+  }, [isMobile]);
+
   // Filtra apenas contas de investimento (tratando contas sem tipo definido)
   const investmentAccounts = accounts.filter(acc => {
       const normalizedType = acc.type ? acc.type.toLowerCase() : '';
@@ -1353,7 +1365,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   }
 
   return (
-    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-6 transition-colors duration-300 ${isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
+    <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-6 transition-colors duration-300 ${isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 relative z-10">
         <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
           <div className="space-y-2">

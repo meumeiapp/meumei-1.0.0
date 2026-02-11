@@ -2,6 +2,7 @@ import React from 'react';
 import { Check, Copy, ExternalLink, FileText, Home } from 'lucide-react';
 import type { CompanyInfo } from '../types';
 import useIsMobile from '../hooks/useIsMobile';
+import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 
 interface DasViewProps {
   onBack: () => void;
@@ -122,18 +123,18 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
     );
 
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+      <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
         <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
           {headerFill.height > 0 && (
             <div
-              className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+              className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
               style={{ top: headerFill.top, height: headerFill.height }}
             />
           )}
           <div className="fixed left-0 right-0 z-30" style={{ top: 'var(--mm-mobile-top, 0px)' }}>
             <div
               ref={subHeaderRef}
-              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
             >
               <div className="px-4 pb-3 pt-2">
                 {mobileHeader}
@@ -142,55 +143,67 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
           </div>
           <div
             className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
-            style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
+            style={{
+              paddingTop: subHeaderHeight
+                ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px)`
+                : 'calc(var(--mm-mobile-top, 0px) + 2px)'
+            }}
           >
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4 space-y-3 text-sm text-zinc-500 dark:text-zinc-400">
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-zinc-400">Passo a passo</p>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm text-zinc-600 dark:text-zinc-300">1) Copie o CNPJ abaixo.</div>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm text-zinc-600 dark:text-zinc-300">2) Abra o PGMEI.</div>
-                  <button
-                    type="button"
-                    onClick={handleOpenPgmei}
-                    className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-full bg-teal-600 text-white hover:bg-teal-500"
-                  >
-                    Abrir PGMEI
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 flex flex-col gap-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">CNPJ</div>
-                {cnpj ? (
-                  <div className="flex flex-col gap-3">
-                    <div className="text-lg font-semibold text-zinc-900 dark:text-white break-all">{cnpj}</div>
+            <div className="space-y-0">
+              <MobileFullWidthSection contentClassName="px-4 py-4">
+                <div className="space-y-3 text-sm text-zinc-500 dark:text-zinc-400">
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-zinc-400">Passo a passo</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm text-zinc-600 dark:text-zinc-300">1) Copie o CNPJ abaixo.</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm text-zinc-600 dark:text-zinc-300">2) Abra o PGMEI.</div>
                     <button
                       type="button"
-                      onClick={handleCopy}
-                      className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-full border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white"
+                      onClick={handleOpenPgmei}
+                      className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-full bg-teal-600 text-white hover:bg-teal-500"
                     >
-                      {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                      {copied ? 'Copiado' : 'Copiar CNPJ'}
+                      Abrir PGMEI
                     </button>
                   </div>
-                ) : (
-                  <div className="space-y-2 text-sm text-rose-500">
-                    <p>CNPJ não informado.</p>
-                    {onOpenCompany && (
+                </div>
+              </MobileFullWidthSection>
+
+              <MobileFullWidthSection
+                contentClassName="px-4 py-4"
+                withDivider={false}
+                backgroundClassName="bg-zinc-50 dark:bg-zinc-900/40"
+              >
+                <div className="flex flex-col gap-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">CNPJ</div>
+                  {cnpj ? (
+                    <div className="flex flex-col gap-3">
+                      <div className="text-lg font-semibold text-zinc-900 dark:text-white break-all">{cnpj}</div>
                       <button
                         type="button"
-                        onClick={onOpenCompany}
-                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                        onClick={handleCopy}
+                        className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-full border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white"
                       >
-                        Preencher na gestão da empresa
+                        {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                        {copied ? 'Copiado' : 'Copiar CNPJ'}
                       </button>
-                    )}
-                  </div>
-                )}
-              </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 text-sm text-rose-500">
+                      <p>CNPJ não informado.</p>
+                      {onOpenCompany && (
+                        <button
+                          type="button"
+                          onClick={onOpenCompany}
+                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                        >
+                          Preencher na gestão da empresa
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </MobileFullWidthSection>
             </div>
           </div>
         </div>
@@ -249,7 +262,7 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20">
+    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20">
       {desktopSummarySection}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] pb-12 space-y-6">
         <div className="bg-white dark:bg-[#151517] rounded-3xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6 sm:p-8 space-y-6">

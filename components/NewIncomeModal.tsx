@@ -72,10 +72,11 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const isInline = variant === 'inline';
   const isDock = variant === 'dock';
   const isDockDesktop = isDock && !isMobile;
+  const isMobileInline = isMobile && isInline;
   const contentPadding = isInline
-    ? 'p-2'
+    ? 'px-3 py-1.5'
     : isMobile
-      ? 'px-2.5 py-2'
+      ? 'px-2 py-1.5'
       : isDockDesktop
         ? 'px-4 py-4'
         : 'px-8 py-8';
@@ -87,9 +88,9 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         ? 'pt-3'
         : 'px-8 py-6';
   const contentSpacing = isInline
-    ? 'space-y-1'
+    ? 'space-y-0.5'
     : isMobile
-      ? 'space-y-1'
+      ? 'space-y-0.5'
       : isDockDesktop
         ? 'space-y-4'
         : 'space-y-6';
@@ -515,17 +516,23 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   }, [handleSave, onPrimaryActionRef]);
 
   const dockFieldClass =
-    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+  const mobileInlineInputClass =
+    'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400';
+  const mobileModalInputClass = isMobile
+    ? (isMobileInline ? mobileInlineInputClass : 'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400')
+    : modalInputClass;
+  const mobileModalTextareaClass = isMobile ? `${mobileModalInputClass} resize-none` : modalTextareaClass;
   const inputBaseClass = isDockDesktop
-    ? `${dockFieldClass} focus:ring-emerald-500/40 pr-8 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`
-    : `${modalInputClass} focus:ring-emerald-500 pr-8 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`;
+    ? `${dockFieldClass} focus:ring-emerald-500/40 pr-8 placeholder:uppercase placeholder:font-light`
+    : `${mobileModalInputClass} focus:ring-emerald-500 pr-8 placeholder:uppercase placeholder:font-light`;
   const selectBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 text-left`
-    : `${modalInputClass} focus:ring-emerald-500 text-left`;
+    : `${mobileModalInputClass} focus:ring-emerald-500 text-left`;
   const textareaBaseClass = isDockDesktop
-    ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light placeholder:text-[10px] min-h-[80px] resize-none`
-    : `${modalTextareaClass} focus:ring-emerald-500 placeholder:uppercase placeholder:font-light placeholder:text-[10px]`;
-  const compactLabelClass = 'text-[10px] uppercase tracking-wide font-bold text-white';
+    ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light min-h-[64px] resize-none`
+    : `${mobileModalTextareaClass} focus:ring-emerald-500 placeholder:uppercase placeholder:font-light`;
+  const compactLabelClass = 'text-sm uppercase tracking-wide font-light text-white/70';
   const labelClass = isDockDesktop ? modalLabelClass : compactLabelClass;
 
   const formContent = (
@@ -553,7 +560,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
       <div className={`${contentPadding} ${contentSpacing}`}>
         
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           <label htmlFor={fieldId('description')} className={labelClass}>
             Descrição / Origem
           </label>
@@ -564,12 +571,13 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             placeholder="EX: PAGAMENTO CLIENTE X, VENDA LOJA"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            data-preserve-case="true"
             className={inputBaseClass}
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-1 sm:gap-4 items-end">
-            <div className="space-y-1">
+        <div className="grid grid-cols-1 gap-0.5 sm:gap-3 items-end">
+            <div className="space-y-0.5">
                 <label htmlFor={fieldId('amount')} className={labelClass}>
                   Valor (R$)
                 </label>
@@ -585,7 +593,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </div>
             
             {/* NATUREZA FISCAL - Posicionado logo após Categoria/Valor conforme solicitado */}
-            <div className="space-y-1">
+            <div className="space-y-0.5">
                 <label htmlFor={fieldId('taxStatus')} className={labelClass}>
                     Natureza Fiscal
                 </label>
@@ -603,17 +611,17 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-1 sm:gap-4 items-end">
+        <div className="grid grid-cols-1 gap-0.5 sm:gap-3 items-end">
             {/* Dynamic Category Section */}
-            <div className="space-y-1 relative">
-                <div className="flex justify-between items-center min-h-[12px] mb-1">
+            <div className="space-y-0.5 relative">
+                <div className="flex justify-between items-center min-h-[10px] mb-0.5">
                     <label htmlFor={fieldId('category')} className={`${labelClass} leading-none`}>
                       Categoria
                     </label>
                     <button 
                         type="button"
                         onClick={() => setIsManagingCategories(true)}
-                        className="text-[10px] font-bold flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
+                        className="text-[9px] font-bold flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
                     >
                         <Edit2 size={10} /> Editar
                     </button>
@@ -741,7 +749,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </div>
 
             {/* Data de Competência */}
-            <div className="space-y-1">
+            <div className="space-y-0.5">
                 <label htmlFor={fieldId('competenceDate')} className={`${labelClass} leading-none`}>
                   DATA DA VENDA / SERVIÇO
                 </label>
@@ -756,9 +764,9 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5 sm:gap-3">
              {/* NOVO CAMPO: Forma de Pagamento */}
-            <div className="space-y-1">
+            <div className="space-y-0.5">
                 <label htmlFor={fieldId('payment-method')} className={labelClass}>
                   Forma de Pagamento
                 </label>
@@ -773,8 +781,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </div>
         </div>
 
-        <div className="space-y-1">
-            <div className="space-y-1">
+        <div className="space-y-0.5">
+            <div className="space-y-0.5">
                 <label htmlFor={fieldId('account')} className={labelClass}>
                   Conta de Destino
                 </label>
@@ -788,7 +796,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     listClassName="max-h-56"
                 />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-0.5">
                 <label htmlFor={fieldId('date')} className={labelClass}>
                     {isInstallment ? 'Data da 1ª Parcela (Caixa)' : 'Data de Recebimento (Caixa)'}
                 </label>
@@ -803,9 +811,9 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </div>
 
             {/* Status (Automático mas editável) */}
-            <div className="space-y-1 col-span-2">
+            <div className="space-y-0.5 col-span-2">
                 <label className={labelClass}>Status</label>
-                <div className="grid grid-cols-2 gap-2 w-full justify-items-stretch">
+                <div className="grid grid-cols-2 gap-1.5 w-full justify-items-stretch">
                     <button
                         type="button"
                         onClick={() => setStatus('received')}
@@ -832,7 +840,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     className={`${selectBaseClass} flex items-center justify-between w-full col-span-2`}
                   >
                     Entrada Parcelada
-                    <span className="text-[10px]">Adicionar</span>
+                    <span className="text-[9px]">Adicionar</span>
                   </button>
                 )}
             </div>
@@ -1084,6 +1092,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                   placeholder="DETALHES ADICIONAIS..."
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
+                  data-preserve-case="true"
                   className={textareaBaseClass}
                 />
               </div>

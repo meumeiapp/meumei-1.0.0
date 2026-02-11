@@ -181,6 +181,8 @@ interface DashboardProps {
   onOpenYields?: () => void; 
   onOpenInvoices?: () => void;
   onOpenReports?: () => void; // New Prop
+  onOpenLaunches?: () => void;
+  onOpenExpenseAll?: () => void;
   onOpenDas: () => void;
   financialData: FinancialData;
   creditCards: CreditCardType[];

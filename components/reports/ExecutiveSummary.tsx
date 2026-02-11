@@ -57,6 +57,8 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
   };
   const incomeAccent = '#10b981';
   const expenseAccent = typeColors.variable;
+  const mobileRadius = isMobile ? 'rounded-none' : 'rounded-2xl';
+  const mobileRadiusSm = isMobile ? 'rounded-none' : 'rounded-xl';
   const [isTrendOpen, setIsTrendOpen] = useState(false);
   const [selectedMonthIndex, setSelectedMonthIndex] = useState(() => new Date().getMonth());
   const expenseDistribution = useMemo(() => {
@@ -241,7 +243,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
 
         <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Evolução mensal (barras)</div>
 
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-2 flex-1 min-h-0 overflow-hidden">
+        <div className={`${mobileRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-2 flex-1 min-h-0 overflow-hidden`}>
           <div className="grid grid-cols-12 gap-1 items-end h-full pb-1">
             {trendSeries.map((item, idx) => {
               const incomeHeight = (item.totalReceitas / maxTrend) * 100;
@@ -300,7 +302,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
           ))}
         </div>
 
-        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-1.5 text-[10px] text-zinc-700 dark:text-zinc-200">
+        <div className={`${mobileRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-1.5 text-[10px] text-zinc-700 dark:text-zinc-200`}>
           <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-wide text-zinc-400">
             <span>Ano todo</span>
             <span>Resumo anual</span>
@@ -319,7 +321,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
           </div>
         </div>
 
-        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[10px] text-zinc-700 dark:text-zinc-200">
+        <div className={`${mobileRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[10px] text-zinc-700 dark:text-zinc-200`}>
           <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-wide text-zinc-400">
             <span>{monthLabel(safeSelectedMonth)}</span>
             <span>Resumo do mês</span>
@@ -357,24 +359,24 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-[10px] text-zinc-700 dark:text-zinc-200">
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2">
+          <div className={`${mobileRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2`}>
             <div className="text-[9px] uppercase tracking-wide text-zinc-400">Maior receita</div>
             <div className="text-emerald-500 font-semibold">{formatCurrency(trendStats.bestIncome.value)}</div>
             <div className="text-[9px] text-zinc-400">{monthLabel(trendStats.bestIncome.mes)}</div>
           </div>
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2">
+          <div className={`${mobileRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2`}>
             <div className="text-[9px] uppercase tracking-wide text-zinc-400">Maior despesa</div>
             <div className="font-semibold" style={{ color: expenseAccent }}>
               {formatCurrency(trendStats.bestExpense.value)}
             </div>
             <div className="text-[9px] text-zinc-400">{monthLabel(trendStats.bestExpense.mes)}</div>
           </div>
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2">
+          <div className={`${mobileRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2`}>
             <div className="text-[9px] uppercase tracking-wide text-zinc-400">Melhor saldo</div>
             <div className="text-emerald-500 font-semibold">{formatCurrency(trendStats.bestSaldo.value)}</div>
             <div className="text-[9px] text-zinc-400">{monthLabel(trendStats.bestSaldo.mes)}</div>
           </div>
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2">
+          <div className={`${mobileRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2`}>
             <div className="text-[9px] uppercase tracking-wide text-zinc-400">Pior saldo</div>
             <div className="font-semibold" style={{ color: expenseAccent }}>
               {formatCurrency(trendStats.worstSaldo.value)}
@@ -383,7 +385,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
           </div>
         </div>
 
-        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[10px] text-zinc-700 dark:text-zinc-200">
+        <div className={`${mobileRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[10px] text-zinc-700 dark:text-zinc-200`}>
           <div className="flex items-center justify-between text-[9px] uppercase tracking-wide text-zinc-400">
             <span>Médias mensais</span>
             <span>Referência anual</span>
@@ -444,7 +446,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
       className={`grid ${isMobile ? 'grid-cols-3 gap-2' : `${desktopCardsGridClass} ${desktopGridGap} auto-rows-fr items-stretch`}`}
     >
       <div
-        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl px-2 py-2' : desktopCardClass}`}
+        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none px-2 py-2' : desktopCardClass}`}
         title="Total de despesas fixas no período."
       >
         <div className={`${isMobile ? 'text-[8px] tracking-[0.22em]' : desktopLabelClass} uppercase text-slate-400`}>Desp.fixas</div>
@@ -453,7 +455,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         </div>
       </div>
       <div
-        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl px-2 py-2' : desktopCardClass}`}
+        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none px-2 py-2' : desktopCardClass}`}
         title="Despesas variáveis do período (custos que mudam mês a mês)."
       >
         <div className={`${isMobile ? 'text-[8px] tracking-[0.22em]' : desktopLabelClass} uppercase text-slate-400`}>Desp.variáveis</div>
@@ -462,7 +464,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         </div>
       </div>
       <div
-        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl px-2 py-2' : desktopCardClass}`}
+        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none px-2 py-2' : desktopCardClass}`}
         title="Despesas pessoais registradas no período."
       >
         <div className={`${isMobile ? 'text-[8px] tracking-[0.22em]' : desktopLabelClass} uppercase text-slate-400`}>Desp.pessoais</div>
@@ -471,7 +473,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         </div>
       </div>
       <div
-        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl px-2 py-2' : desktopCardClass}`}
+        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none px-2 py-2' : desktopCardClass}`}
         title="Total de entradas (receitas) do período."
       >
         <div className={`${isMobile ? 'text-[8px] tracking-[0.22em]' : desktopLabelClass} uppercase text-slate-400`}>Entradas</div>
@@ -480,7 +482,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         </div>
       </div>
       <div
-        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl px-2 py-2' : desktopCardClass}`}
+        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none px-2 py-2' : desktopCardClass}`}
         title="Saldo somado em todas as contas."
       >
         <div className={`${isMobile ? 'text-[8px] tracking-[0.22em]' : desktopLabelClass} uppercase text-slate-400`}>Contas</div>
@@ -489,7 +491,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         </div>
       </div>
       <div
-        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl px-2 py-2' : desktopCardClass}`}
+        className={`h-full min-w-0 bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none px-2 py-2' : desktopCardClass}`}
         title="Total das faturas de cartões no mês."
       >
         <div className={`${isMobile ? 'text-[8px] tracking-[0.22em]' : desktopLabelClass} uppercase text-slate-400`}>Faturas</div>
@@ -506,7 +508,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
   const distributionBarArea = isExpanded ? 'flex-1 min-h-0' : 'min-h-[120px]';
   const distributionCardExpanded = (
     <div
-      className={`w-full bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl p-4' : distributionDesktopClass} ${isExpanded ? 'flex flex-col min-h-0 h-full overflow-hidden' : 'h-auto self-start overflow-hidden'} space-y-1.5`}
+      className={`w-full bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none p-4' : distributionDesktopClass} ${isExpanded ? 'flex flex-col min-h-0 h-full overflow-hidden' : 'h-auto self-start overflow-hidden'} space-y-1.5`}
       title="Veja a proporção das despesas por tipo dentro do período selecionado."
     >
       <div className="text-white font-semibold text-sm">
@@ -557,9 +559,9 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
                 className="flex-1 h-full flex items-end"
                 title={`${item.label}: ${formatCurrency(item.value)} (${item.percent.toFixed(1)}% do total).`}
               >
-                <div className="w-full h-full rounded-2xl bg-white/5 overflow-hidden flex items-end">
+                <div className={`w-full h-full ${mobileRadius} bg-white/5 overflow-hidden flex items-end`}>
                   <div
-                    className="w-full rounded-2xl"
+                    className={`w-full ${mobileRadius}`}
                     style={{ height: `${item.percent}%`, backgroundColor: item.color }}
                   />
                 </div>
@@ -626,21 +628,21 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
           Como usar o Resumo
         </div>
         <div className="flex-1 grid grid-rows-3 gap-3 text-[12px] text-slate-300">
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+          <div className={`${mobileRadius} border border-white/10 bg-white/5 px-3 py-2`}>
             <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Visão geral</div>
             <div className="font-semibold text-slate-100">Entenda a saúde financeira</div>
             <div className="text-[11px] text-slate-400">
               Use os cards superiores para ver receitas, despesas e saldos do período.
             </div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+          <div className={`${mobileRadius} border border-white/10 bg-white/5 px-3 py-2`}>
             <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Distribuição</div>
             <div className="font-semibold text-slate-100">Identifique o peso dos gastos</div>
             <div className="text-[11px] text-slate-400">
               Compare fixas, variáveis e pessoais para ajustar o orçamento.
             </div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+          <div className={`${mobileRadius} border border-white/10 bg-white/5 px-3 py-2`}>
             <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Evolução mensal</div>
             <div className="font-semibold text-slate-100">Acompanhe tendência</div>
             <div className="text-[11px] text-slate-400">
@@ -669,7 +671,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
     <button
       type="button"
       onClick={() => setIsTrendOpen(true)}
-      className={`w-full text-left bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-2xl p-4' : desktopPanelClass} ${isExpanded ? 'flex flex-col min-h-0 overflow-hidden' : 'overflow-hidden'} ${isExpanded ? 'space-y-4' : 'space-y-3'} hover:border-white/20 transition`}
+      className={`w-full text-left bg-slate-900/60 border border-white/10 ${isMobile ? 'rounded-none p-4' : desktopPanelClass} ${isExpanded ? 'flex flex-col min-h-0 overflow-hidden' : 'overflow-hidden'} ${isExpanded ? 'space-y-4' : 'space-y-3'} hover:border-white/20 transition`}
       title="Evolução mensal de receitas e despesas ao longo do ano."
     >
       <div className="flex items-center justify-between gap-2 text-white font-semibold text-sm">
@@ -741,7 +743,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         {isFullscreen && !isMobile && (
           <div className="grid grid-cols-2 gap-3 text-[12px] text-slate-300">
             <div
-              className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2"
+              className={`${mobileRadius} border border-white/10 bg-white/5 px-3 py-2`}
               title="Mês com maior receita registrada."
             >
               <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Melhor receita</div>
@@ -749,7 +751,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
               <div className="text-[10px] text-slate-500">{monthLabel(trendStats.bestIncome.mes)}</div>
             </div>
             <div
-              className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2"
+              className={`${mobileRadius} border border-white/10 bg-white/5 px-3 py-2`}
               title="Mês com maior volume de despesas."
             >
               <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Maior despesa</div>
@@ -759,7 +761,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
               <div className="text-[10px] text-slate-500">{monthLabel(trendStats.bestExpense.mes)}</div>
             </div>
             <div
-              className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2"
+              className={`${mobileRadius} border border-white/10 bg-white/5 px-3 py-2`}
               title="Mês com melhor saldo (receita menos despesa)."
             >
               <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Saldo em destaque</div>
@@ -772,7 +774,7 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
               <div className="text-[10px] text-slate-500">{displayLabel}</div>
             </div>
             <div
-              className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2"
+              className={`${mobileRadius} border border-white/10 bg-white/5 px-3 py-2`}
               title="Receita média considerando todos os meses do ano."
             >
               <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Média mensal</div>
@@ -842,18 +844,18 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 pt-1">
-        <div className="rounded-2xl border border-white/10 bg-white/5 px-2 py-1.5" title="Reserva mínima recomendada para 3 meses de despesas fixas.">
+        <div className={`${mobileRadius} border border-white/10 bg-white/5 px-2 py-1.5`} title="Reserva mínima recomendada para 3 meses de despesas fixas.">
           <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Reserva mínima</div>
           <div className="text-sm font-semibold text-white">{formatCurrency(reservaMinima)}</div>
           <div className="text-[10px] text-slate-500">3x despesas fixas.</div>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 px-2 py-1.5" title="Receita alvo para manter margem saudável.">
+        <div className={`${mobileRadius} border border-white/10 bg-white/5 px-2 py-1.5`} title="Receita alvo para manter margem saudável.">
           <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Meta de receita</div>
           <div className="text-sm font-semibold text-white">{formatCurrency(metaReceita)}</div>
           <div className="text-[10px] text-slate-500">Margem alvo de 20%.</div>
         </div>
       </div>
-      <div className="rounded-2xl border border-white/10 bg-white/5 px-2 py-1.5 space-y-2">
+      <div className={`${mobileRadius} border border-white/10 bg-white/5 px-2 py-1.5 space-y-2`}>
         <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Insights rápidos</div>
         <div className="space-y-2">
           {insights.map(item => (
@@ -867,23 +869,11 @@ const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({
     </div>
   ) : null;
 
-  const summaryPanels = isExpanded ? (
-    <div className="grid grid-cols-[minmax(0,30%),minmax(0,1fr)] grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-4 flex-1 min-h-0 items-stretch">
-      <div className="col-start-1 row-start-1 min-h-0 h-full">{distributionPanel}</div>
-      {diagnosticPanel && (
-        <div className="col-start-1 row-start-2 min-h-0 h-full">{diagnosticPanel}</div>
-      )}
-      <div className="col-start-2 row-start-1 row-span-2 min-h-0 h-full min-w-0">{trendPanel}</div>
+  const summaryPanels = diagnosticPanel ? (
+    <div className={isMobile ? 'space-y-4' : isExpanded ? 'h-full flex flex-col gap-4' : 'h-full flex flex-col gap-4'}>
+      {diagnosticPanel}
     </div>
-  ) : (
-    <div className="grid grid-cols-[minmax(0,44%),minmax(0,1fr)] gap-4 flex-1 min-h-0 items-stretch">
-      <div className="grid grid-rows-[auto,1fr] gap-3 min-h-0 h-full">
-        {distributionPanel}
-        {diagnosticPanel}
-      </div>
-      <div className="min-h-0">{trendPanel}</div>
-    </div>
-  );
+  ) : null;
 
   return (
     <div

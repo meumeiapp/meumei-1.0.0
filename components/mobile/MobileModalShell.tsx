@@ -23,6 +23,7 @@ const MobileModalShell: React.FC<MobileModalShellProps> = ({
   children
 }) => {
   const loggedRef = useRef(false);
+  const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
 
   useEffect(() => {
     if (!isOpen || loggedRef.current) return;
@@ -33,15 +34,16 @@ const MobileModalShell: React.FC<MobileModalShellProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm" data-modal-root="true">
+    <div className="fixed left-0 right-0 top-0 z-[80] bg-black/70 backdrop-blur-sm" style={{ bottom: dockOffset }} data-modal-root="true">
       <button
         type="button"
         onClick={onClose}
-        className="absolute inset-0"
+        className="absolute left-0 right-0 top-0"
+        style={{ bottom: dockOffset }}
         aria-label="Fechar modal"
       />
       <div
-        className="relative z-10 h-[100dvh] overflow-y-auto overscroll-contain overflow-x-hidden"
+        className="relative z-10 h-full overflow-y-auto overscroll-contain overflow-x-hidden"
         style={{ paddingTop: contentPaddingTop }}
       >
         <div className="mx-auto w-full max-w-2xl px-3 pb-6">

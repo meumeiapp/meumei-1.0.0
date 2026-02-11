@@ -1,6 +1,6 @@
 // ... existing imports ...
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { ChevronDown, CreditCard as CardIcon, Calendar, CheckSquare, Square, DollarSign, Wallet, AlertTriangle, Pencil, X, Plus, Trash2, Lock, Home, History } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
+import { CreditCard as CardIcon, Calendar, CheckSquare, Square, DollarSign, Wallet, AlertTriangle, Pencil, X, Plus, Trash2, Lock, History } from 'lucide-react';
 import { Expense, CreditCard, Account } from '../types';
 import PayInvoiceModal from './PayInvoiceModal';
 import NewCreditCardModal from './NewCreditCardModal';
@@ -11,9 +11,9 @@ import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import { categoryService } from '../services/categoryService';
 import useIsMobile from '../hooks/useIsMobile';
 import { getPrimaryActionLabel } from '../utils/formLabels';
-import MobileTransactionCard from './mobile/MobileTransactionCard';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import SelectDropdown from './common/SelectDropdown';
+import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 
 interface InvoicesViewProps {
   onBack: () => void;
@@ -57,20 +57,41 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [editingCard, setEditingCard] = useState<CreditCard | null>(null);
   const [drawerCard, setDrawerCard] = useState<CreditCard | null>(null);
-  const [isCardsExpanded, setIsCardsExpanded] = useState(false);
   const [expandedMonthKey, setExpandedMonthKey] = useState<string | null>(null);
   const [expandedExpenseId, setExpandedExpenseId] = useState<string | null>(null);
+  const [isCardsModalOpen, setIsCardsModalOpen] = useState(false);
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedCardId, setHighlightedCardId] = useState<string | null>(null);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
+  const firstSectionRef = useRef<HTMLDivElement | null>(null);
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
-  const [isCardPickerOpen, setIsCardPickerOpen] = useState(false);
-  const cardPickerRef = useRef<HTMLDivElement | null>(null);
+  const [topAdjust, setTopAdjust] = useState(0);
 
   useEffect(() => {
       console.info('[cards] view', { route: 'faturas' });
   }, []);
+
+  useLayoutEffect(() => {
+      const headerNode = subHeaderRef.current;
+      const sectionNode = firstSectionRef.current;
+      if (!headerNode || !sectionNode) return;
+
+      const measureGap = () => {
+          const headerBottom = headerNode.getBoundingClientRect().bottom;
+          const sectionTop = sectionNode.getBoundingClientRect().top;
+          const gap = Math.round(sectionTop - headerBottom);
+          const desired = 5;
+          setTopAdjust((prev) => {
+              const nextAdjust = Math.max(0, gap - desired + prev);
+              return prev === nextAdjust ? prev : nextAdjust;
+          });
+      };
+
+      measureGap();
+      window.addEventListener('resize', measureGap);
+      return () => window.removeEventListener('resize', measureGap);
+  }, [subHeaderHeight, topAdjust]);
 
   // Filter expenses: Must be Credit Card type, match selected card
   // Show PENDING and PAID? Usually invoices show history too, but for payment, only pending.
@@ -168,21 +189,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       }
   }, [highlightTarget, setHighlightTarget]);
 
-  useEffect(() => {
-      if (!isMobile || !isCardPickerOpen) return;
-      const handleOutside = (event: MouseEvent | TouchEvent) => {
-          const target = event.target as Node | null;
-          if (!target) return;
-          if (cardPickerRef.current && cardPickerRef.current.contains(target)) return;
-          setIsCardPickerOpen(false);
-      };
-      document.addEventListener('mousedown', handleOutside);
-      document.addEventListener('touchstart', handleOutside);
-      return () => {
-          document.removeEventListener('mousedown', handleOutside);
-          document.removeEventListener('touchstart', handleOutside);
-      };
-  }, [isMobile, isCardPickerOpen]);
+
 
   useEffect(() => {
       if (!isMobile) return;
@@ -210,12 +217,18 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       };
   }, [isMobile]);
 
+
   useEffect(() => {
-      if (!isMobile) return;
-      if (safeCreditCards.length <= 2 && isCardsExpanded) {
-          setIsCardsExpanded(false);
-      }
-  }, [isMobile, isCardsExpanded, safeCreditCards.length]);
+      if (!isMobile || typeof window === 'undefined') return;
+      const handleDockClick = () => {
+          setDrawerCard(null);
+          setIsPayModalOpen(false);
+          setIsEditModalOpen(false);
+          setIsCardModalOpen(false);
+      };
+      window.addEventListener('mm:mobile-dock-click', handleDockClick);
+      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+  }, [isMobile]);
 
   // Handlers
   const toggleSelection = (id: string) => {
@@ -338,98 +351,113 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       value.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 
   const headerWrapperClass = 'space-y-2';
+  const mobileCardRadius = isMobile ? 'rounded-none' : 'rounded-2xl';
+  const mobileCardRadiusSm = isMobile ? 'rounded-none' : 'rounded-xl';
+  const mobileRowRadius = isMobile ? 'rounded-none' : 'rounded-md';
 
   const mainWrapperClass = isMobile
     ? 'space-y-6'
     : 'max-w-7xl mx-auto px-4 sm:px-6 space-y-6 mt-[var(--mm-content-gap)]';
-  const cardSelectId = 'invoice-card-select';
   const editFieldId = (suffix: string) =>
     `invoice-edit-${editingExpense?.id || 'current'}-${suffix}`;
 
   const cardSelectorSection = isMobile ? (
       <div
           id="card-highlight-bar"
-          className={`rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4 shadow-sm ${
+          className={`${mobileCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-1.5 shadow-sm ${
               highlightedCardId === selectedCardId ? 'ring-2 ring-indigo-400/70 shadow-indigo-500/20' : ''
           }`}
       >
-          <label htmlFor={cardSelectId} className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide mb-2 block">
+          <label className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-0.5 block">
             Cartão selecionado
           </label>
-          <div className="relative" ref={cardPickerRef}>
-              <button
-                  type="button"
-                  onClick={() => setIsCardPickerOpen((prev) => !prev)}
-                  disabled={safeCreditCards.length === 0}
-                  className="w-full bg-white dark:bg-[#151517] border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white rounded-2xl px-4 py-3 pr-10 text-left font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-rose-500 disabled:opacity-70 disabled:cursor-not-allowed"
-                  aria-expanded={isCardPickerOpen}
-                  aria-controls="invoice-card-picker"
-              >
-                  {selectedCard?.name || 'Nenhum cartão cadastrado'}
-              </button>
-              <ChevronDown
-                  className={`absolute right-4 top-3.5 text-zinc-400 transition-transform ${isCardPickerOpen ? 'rotate-180' : ''}`}
-                  size={18}
-              />
-              {isCardPickerOpen && safeCreditCards.length > 0 && (
-                  <div
-                      id="invoice-card-picker"
-                      className="absolute left-0 right-0 mt-2 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] shadow-xl z-20 overflow-hidden"
-                  >
-                      <div className="max-h-64 overflow-y-auto py-1">
-                          {safeCreditCards.map((card) => {
-                              const isSelected = card.id === selectedCardId;
-                              return (
-                                  <button
-                                      key={card.id}
-                                      type="button"
-                                      onClick={() => {
-                                          setSelectedCardId(card.id);
-                                          setSelectedExpenseIds([]);
-                                          setIsCardPickerOpen(false);
-                                      }}
-                                      className={`w-full flex items-center justify-between gap-3 px-4 py-2 text-sm text-left ${
-                                          isSelected
-                                              ? 'bg-indigo-50 dark:bg-indigo-500/10 text-zinc-900 dark:text-white'
-                                              : 'hover:bg-zinc-50 dark:hover:bg-white/5 text-zinc-700 dark:text-zinc-200'
-                                      }`}
-                                  >
-                                      <span className="flex items-center gap-2 min-w-0">
-                                          <span
-                                              className="h-2.5 w-2.5 rounded-full border border-white/40"
-                                              style={{ backgroundColor: getCardColor(card) }}
-                                          />
-                                          <span className="truncate">{card.name}</span>
-                                      </span>
-                                      {isSelected && (
-                                          <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
-                                              Ativo
-                                          </span>
-                                      )}
-                                  </button>
-                              );
-                          })}
-                      </div>
-                  </div>
-              )}
-          </div>
-          {selectedCard && (
-              <CardTag card={selectedCard} className="mt-2 inline-flex" />
+          {safeCreditCards.length === 0 ? (
+              <div className="text-sm text-zinc-500 dark:text-zinc-400 px-2 py-2">
+                  Nenhum cartão cadastrado.
+              </div>
+          ) : (
+              <div className="space-y-1">
+                  {safeCreditCards.map((card) => {
+                      const isSelected = card.id === selectedCardId;
+                      const limitLabel =
+                          typeof card.limit === 'number' && card.limit > 0
+                              ? `R$ ${formatCurrency(card.limit)}`
+                              : 'Sem limite';
+                      const cardColor = getCardColor(card);
+                      return (
+                          <button
+                              key={card.id}
+                              type="button"
+                              onClick={() => {
+                                  setSelectedCardId(card.id);
+                                  setSelectedExpenseIds([]);
+                              }}
+                              className={`w-full px-3 py-1.5 flex items-center justify-between gap-3 text-left ${mobileRowRadius} border transition`}
+                              style={{
+                                  backgroundColor: withAlpha(cardColor, isSelected ? 0.2 : 0.1),
+                                  borderColor: withAlpha(cardColor, isSelected ? 0.6 : 0.25)
+                              }}
+                          >
+                              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                                  {card.name}
+                              </span>
+                              <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 shrink-0">
+                                  {limitLabel}
+                              </span>
+                          </button>
+                      );
+                  })}
+              </div>
           )}
       </div>
   ) : null;
 
+  const cardListContent = (
+      <>
+          {safeCreditCards.length === 0 ? (
+              <div className="text-sm text-zinc-500 dark:text-zinc-400 px-2 py-2">
+                  Nenhum cartão cadastrado.
+              </div>
+          ) : (
+              <div className="space-y-1">
+                  {safeCreditCards.map((card) => {
+                      const limitLabel =
+                          typeof card.limit === 'number' && card.limit > 0
+                              ? `R$ ${formatCurrency(card.limit)}`
+                              : 'Sem limite';
+                      const cardColor = getCardColor(card);
+                      return (
+                          <button
+                              key={card.id}
+                              type="button"
+                              onClick={() => {
+                                  setIsCardsModalOpen(false);
+                                  handleEditCard(card);
+                              }}
+                              className={`w-full px-3 py-1.5 flex items-center justify-between gap-3 text-left ${mobileRowRadius} border transition`}
+                              style={{
+                                  backgroundColor: withAlpha(cardColor, 0.12),
+                                  borderColor: withAlpha(cardColor, 0.25)
+                              }}
+                          >
+                              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                                  {card.name}
+                              </span>
+                              <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 shrink-0">
+                                  {limitLabel}
+                              </span>
+                          </button>
+                      );
+                  })}
+              </div>
+          )}
+      </>
+  );
+
   const headerSection = (
       <div className={headerWrapperClass}>
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-              <button
-                  type="button"
-                  onClick={onBack}
-                  className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-                  aria-label="Voltar para o início"
-              >
-                  <Home size={16} />
-              </button>
+              <div className="h-8 w-8" aria-hidden="true" />
 
               <div className="min-w-0 text-center">
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Faturas de Cartão</p>
@@ -443,13 +471,13 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
           <div className="space-y-2">
               <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
                       <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
                       <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
                           R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                   </div>
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
                       <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
                       <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
                           {selectedExpenseIds.length}
@@ -461,7 +489,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   {onOpenAudit && (
                       <button
                           onClick={onOpenAudit}
-                          className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-[var(--mm-view-accent)] hover:border-[var(--mm-view-accent)] transition"
+                          className={`flex items-center justify-center gap-2 ${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-[var(--mm-view-accent)] hover:border-[var(--mm-view-accent)] transition`}
                           title="Auditoria do dia"
                       >
                           <History size={14} />
@@ -471,7 +499,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   <button
                       onClick={() => setIsPayModalOpen(true)}
                       disabled={selectedExpenseIds.length === 0}
-                      className={`flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-semibold transition ${
+                      className={`flex items-center justify-center gap-2 ${mobileCardRadius} py-2.5 text-sm font-semibold transition ${
                         selectedExpenseIds.length > 0
                           ? 'bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white shadow-lg shadow-blue-900/20'
                           : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
@@ -500,34 +528,14 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       </div>
   );
 
-  const CARD_COLLAPSE_LIMIT = 2;
-  const shouldCollapseCards = isMobile && safeCreditCards.length > CARD_COLLAPSE_LIMIT;
-  const extraCardCount = Math.max(0, safeCreditCards.length - CARD_COLLAPSE_LIMIT);
-  const visibleCards = shouldCollapseCards && !isCardsExpanded
-      ? safeCreditCards.slice(0, CARD_COLLAPSE_LIMIT)
-      : safeCreditCards;
-
   const cardManagementSection = (
-      <section className="bg-white dark:bg-[#151517] rounded-2xl border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+      <section className={`bg-white dark:bg-[#151517] ${mobileCardRadius} border border-zinc-200 dark:border-zinc-800 p-3 shadow-sm`}>
           <div className="flex items-center justify-between gap-3 mb-2">
-              <div className="flex items-center gap-2">
-                  <div className="h-7 w-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-[var(--mm-view-accent)]">
-                      <CardIcon size={16} />
-                  </div>
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Cartões de Crédito</h2>
-              </div>
-              {isMobile && (
-                  <button
-                      onClick={handleOpenNewCard}
-                      className="inline-flex items-center gap-2 bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors shadow-lg shadow-blue-900/20"
-                  >
-                      Novo Cartão
-                  </button>
-              )}
+              <h2 className={`${isMobile ? 'text-sm' : 'text-sm'} font-semibold text-zinc-900 dark:text-white`}>Cartões de Crédito</h2>
           </div>
 
           {safeCreditCards.length === 0 ? (
-              <div className="bg-zinc-50 dark:bg-[#1a1a1a] border border-zinc-100 dark:border-zinc-800 rounded-xl flex flex-col items-center justify-center py-4 gap-2">
+              <div className={`bg-zinc-50 dark:bg-[#1a1a1a] border border-zinc-100 dark:border-zinc-800 ${mobileCardRadiusSm} flex flex-col items-center justify-center py-4 gap-2`}>
                   <span className="text-xs text-zinc-500 dark:text-zinc-400">Nenhum cartão ativo</span>
                   {!isMobile && (
                       <button
@@ -540,7 +548,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
               </div>
           ) : (
               <div className="space-y-1">
-                  {visibleCards.map((card, index) => {
+                  {safeCreditCards.map((card, index) => {
                       const limitLabel =
                           typeof card.limit === 'number' && card.limit > 0
                               ? `R$ ${formatCurrency(card.limit)}`
@@ -550,15 +558,23 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                       return (
                           <div key={card.id}>
                               {isMobile ? (
-                                  <MobileTransactionCard
-                                      title={card.name}
-                                      amount={limitLabel}
-                                      amountClassName={card.limit ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-400'}
-                                      dateLabel={`Fecha dia ${card.closingDay}`}
-                                      category={`Vence dia ${card.dueDay}`}
-                                      subtitle={card.brand || 'Cartão'}
-                                      onClick={() => setDrawerCard(card)}
-                                  />
+                                  <div
+                                      className={`px-3 py-1.5 ${mobileRowRadius}`}
+                                      style={{ backgroundColor: withAlpha(getCardColor(card), 0.12) }}
+                                  >
+                                      <button
+                                          type="button"
+                                          onClick={() => setDrawerCard(card)}
+                                          className="w-full flex items-center justify-between gap-3 text-left"
+                                      >
+                                  <p className={`${isMobile ? 'text-sm' : 'text-sm'} font-semibold text-zinc-900 dark:text-zinc-100 truncate`}>
+                                      {card.name}
+                                  </p>
+                                  <span className={`${isMobile ? 'text-sm' : 'text-sm'} font-semibold shrink-0 ${card.limit ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-400'}`}>
+                                      {limitLabel}
+                                  </span>
+                                      </button>
+                                  </div>
                               ) : (
                                   <div
                                       className={`rounded-md ${rowBg} ${isActive ? 'ring-2 ring-[var(--mm-view-accent)]/60 bg-white/10' : ''}`}
@@ -623,19 +639,6 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                           </div>
                       );
                   })}
-                  {shouldCollapseCards && (
-                      <button
-                          type="button"
-                          onClick={() => setIsCardsExpanded(prev => !prev)}
-                          className="w-full rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
-                      >
-                          {isCardsExpanded ? 'Toque para recolher' : `Toque para expandir (+${extraCardCount})`}
-                          <ChevronDown
-                              size={12}
-                              className={`transition-transform ${isCardsExpanded ? 'rotate-180' : ''}`}
-                          />
-                      </button>
-                  )}
               </div>
           )}
       </section>
@@ -643,86 +646,121 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const reconciliationBar = null;
 
+  const monthCards = Array.from({ length: 12 }).map((_, index) => {
+      const monthKey = `${calendarYear}-${String(index + 1).padStart(2, '0')}`;
+      const monthExpenses = groupedExpenses[monthKey] || [];
+      const totalMonth = monthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+      const selectableExpenses = monthExpenses.filter(exp => !exp.locked);
+      const allSelected = selectableExpenses.length > 0 && selectableExpenses.every(e => selectedExpenseIds.includes(e.id));
+      const partialSelected = selectableExpenses.some(e => selectedExpenseIds.includes(e.id)) && !allSelected;
+      const isDisabled = monthExpenses.length === 0;
+      const monthName = new Date(calendarYear, index, 1).toLocaleDateString('pt-BR', { month: 'long' });
+      const cardTheme = selectedCardColor || '#6366f1';
+      const cardName = selectedCard?.name || 'Cartão';
+      const cardBrand = selectedCard?.brand || 'Cartão';
+
+      if (isMobile && Math.abs(totalMonth) < 0.01) {
+          return null;
+      }
+
+      return (
+          <div
+              key={monthKey}
+              className={`${mobileCardRadius} border shadow-sm transition ${isDisabled ? 'opacity-70' : ''}`}
+              style={{
+                  background: withAlpha(cardTheme, isDisabled ? 0.08 : 0.18),
+                  borderColor: withAlpha(cardTheme, 0.35)
+              }}
+          >
+              {isMobile ? (
+                  <button
+                      type="button"
+                      onClick={() => setExpandedMonthKey(monthKey)}
+                      disabled={isDisabled}
+                      className="w-full px-3 py-2 flex items-center justify-between gap-3 text-left"
+                  >
+                      <div className="min-w-0 flex items-center gap-3">
+                          <span className="text-sm font-semibold text-zinc-900 dark:text-white">
+                              R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-sm uppercase tracking-wide text-zinc-700 dark:text-white/70">
+                              {monthName}
+                          </span>
+                      </div>
+                      <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={() => toggleSelectMonth(monthKey)}
+                          disabled={selectableExpenses.length === 0}
+                          className="h-4 w-4 shrink-0"
+                          style={{ accentColor: 'var(--mm-view-accent)' as any }}
+                          aria-label={`Selecionar faturas de ${monthName}`}
+                      />
+                  </button>
+              ) : (
+                  <>
+                      <div className="flex items-center justify-between px-3 pt-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-900 dark:text-white/80">{cardName}</p>
+                          <input
+                              type="checkbox"
+                              checked={allSelected}
+                              onChange={() => toggleSelectMonth(monthKey)}
+                              disabled={selectableExpenses.length === 0}
+                              className="h-4 w-4"
+                              style={{ accentColor: 'var(--mm-view-accent)' as any }}
+                              aria-label={`Selecionar faturas de ${monthName}`}
+                          />
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => setExpandedMonthKey(monthKey)}
+                          disabled={isDisabled}
+                          className="mt-3 w-full text-left px-3 pb-3"
+                      >
+                          <p className="text-lg font-semibold text-zinc-900 dark:text-white">
+                              R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-[11px] text-zinc-700 dark:text-white/70">
+                              {partialSelected ? 'Parcial selecionado' : isDisabled ? 'Sem despesas' : 'Ver fatura'}
+                          </p>
+                          <div className="mt-4 flex items-end justify-between">
+                              <span className="text-[10px] uppercase tracking-wide text-zinc-700 dark:text-white/70">
+                                  {monthName}
+                              </span>
+                              <span className="inline-flex items-center rounded-full border border-white/20 px-2 py-0.5 text-[10px] font-semibold text-zinc-900 dark:text-white/80">
+                                  {cardBrand}
+                              </span>
+                          </div>
+                      </button>
+                  </>
+              )}
+          </div>
+      );
+  });
+  const hasMonthCards = monthCards.some(Boolean);
+
   const invoiceListSection = (
       <>
-          {Object.keys(groupedExpenses).length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {Array.from({ length: 12 }).map((_, index) => {
-                      const monthKey = `${calendarYear}-${String(index + 1).padStart(2, '0')}`;
-                      const monthExpenses = groupedExpenses[monthKey] || [];
-                      const totalMonth = monthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-                      const selectableExpenses = monthExpenses.filter(exp => !exp.locked);
-                      const allSelected = selectableExpenses.length > 0 && selectableExpenses.every(e => selectedExpenseIds.includes(e.id));
-                      const partialSelected = selectableExpenses.some(e => selectedExpenseIds.includes(e.id)) && !allSelected;
-                      const isDisabled = monthExpenses.length === 0;
-                      const monthName = new Date(calendarYear, index, 1).toLocaleDateString('pt-BR', { month: 'long' });
-                      const monthSummary = allCardExpensesByMonth.get(monthKey);
-                      const cardTheme = selectedCardColor || '#6366f1';
-                      const cardName = selectedCard?.name || 'Cartão';
-                      const cardBrand = selectedCard?.brand || 'Cartão';
-
-                      return (
-                          <div
-                              key={monthKey}
-                              className={`rounded-2xl border p-3 shadow-sm transition ${isDisabled ? 'opacity-70' : ''}`}
-                              style={{
-                                  background: withAlpha(cardTheme, isDisabled ? 0.08 : 0.18),
-                                  borderColor: withAlpha(cardTheme, 0.35)
-                              }}
-                          >
-                              <div className="flex items-center justify-between">
-                                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-900 dark:text-white/80">{cardName}</p>
-                                  <input
-                                      type="checkbox"
-                                      checked={allSelected}
-                                      onChange={() => toggleSelectMonth(monthKey)}
-                                      disabled={selectableExpenses.length === 0}
-                                      className="h-4 w-4"
-                                      style={{ accentColor: 'var(--mm-view-accent)' as any }}
-                                      aria-label={`Selecionar faturas de ${monthName}`}
-                                  />
-                              </div>
-                              <button
-                                  type="button"
-                                  onClick={() => setExpandedMonthKey(monthKey)}
-                                  disabled={isDisabled}
-                                  className="mt-3 w-full text-left"
-                              >
-                                  <p className="text-lg font-semibold text-zinc-900 dark:text-white">
-                                      R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                  </p>
-                                  <p className="text-[11px] text-zinc-700 dark:text-white/70">
-                                      {partialSelected ? 'Parcial selecionado' : isDisabled ? 'Sem despesas' : 'Ver fatura'}
-                                  </p>
-                                  <div className="mt-4 flex items-end justify-between">
-                                      <span className="text-[10px] uppercase tracking-wide text-zinc-700 dark:text-white/70">
-                                          {monthName}
-                                      </span>
-                                      <span className="inline-flex items-center rounded-full border border-white/20 px-2 py-0.5 text-[10px] font-semibold text-zinc-900 dark:text-white/80">
-                                          {cardBrand}
-                                      </span>
-                                  </div>
-                              </button>
-                          </div>
-                      );
-                  })}
+          {hasMonthCards ? (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {monthCards}
               </div>
           ) : (
               isMobile ? (
-                  <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-4 py-4 flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
-                      <div className="h-10 w-10 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0">
-                          <CardIcon size={20} />
+                  <div className={`${mobileCardRadius} border border-dashed border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2.5 flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400`}>
+                      <div className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0">
+                          <CardIcon size={16} />
                       </div>
                       <div className="min-w-0">
                           {selectedCardId ? (
                               <>
-                                  <p className="text-zinc-900 dark:text-white font-semibold">Tudo em dia!</p>
-                                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  <p className="text-zinc-900 dark:text-white font-semibold text-sm">Tudo em dia!</p>
+                                  <p className="text-sm text-zinc-500 dark:text-zinc-400">
                                       Sem despesas pendentes para o cartão selecionado.
                                   </p>
                               </>
                           ) : (
-                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                              <p className="text-sm text-zinc-500 dark:text-zinc-400">
                                   Selecione um cartão para visualizar as faturas.
                               </p>
                           )}
@@ -757,123 +795,254 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   };
 
   const monthDetailModal = expandedMonthKey ? (
-      <div className="fixed inset-0 z-[1200] flex items-end justify-center">
-          <button
-              type="button"
-              onClick={closeExpandedMonth}
-              className="absolute inset-0 bg-black/60 z-0"
-              aria-label="Fechar fatura"
-          />
-          <div className="relative w-full max-w-7xl px-4 sm:px-6 pb-6 z-10">
-              <div className="relative bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
-                  <div>
-                      <p className="text-sm font-semibold">Fatura de {expandedMonthLabel}</p>
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                          Total: R$ {expandedMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </p>
-                  </div>
-                  <button
-                      type="button"
-                      onClick={closeExpandedMonth}
-                      className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
-                      aria-label="Fechar fatura"
-                  >
-                      <X size={16} />
-                  </button>
-              </div>
-              <div className="pt-3 flex-1 overflow-auto">
-                  <div className="space-y-3">
-                      {expandedMonthExpenses.map((exp, index) => {
-                          const isSelected = selectedExpenseIds.includes(exp.id);
-                          const isLocked = Boolean(exp.locked);
-                          const isRowExpanded = expandedExpenseId === exp.id;
-                          const rowBg = index % 2 === 0 ? 'bg-rose-500/10' : 'bg-transparent';
-
-                          return (
-                              <div key={exp.id} className="space-y-3">
-                                  <div className={`py-2 rounded-md ${rowBg}`}>
+      isMobile ? (
+          <div className="fixed inset-0 z-[1200]">
+              {(() => {
+                  const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
+                  return (
+                      <>
+                          <button
+                              type="button"
+                              onClick={closeExpandedMonth}
+                              className="absolute left-0 right-0 top-0 bg-black/70"
+                              style={{ bottom: dockOffset }}
+                              aria-label="Fechar fatura"
+                          />
+                          <div
+                              className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+                              style={{ top: 0, bottom: dockOffset }}
+                          >
+                              <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+                                  <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                          <p className="text-sm font-semibold text-white truncate">Fatura de {expandedMonthLabel}</p>
+                                          <p className="text-xs text-white/70">
+                                              Total: R$ {expandedMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                          </p>
+                                      </div>
                                       <button
                                           type="button"
-                                          onClick={() => {
-                                              if (!isLocked) {
-                                                  toggleSelection(exp.id);
-                                                  setExpandedExpenseId(isRowExpanded ? null : exp.id);
-                                              }
-                                          }}
-                                          className="w-full flex items-center justify-between gap-3 text-left"
-                                          disabled={isLocked}
+                                          onClick={closeExpandedMonth}
+                                          className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                          aria-label="Fechar fatura"
                                       >
-                                          <div className="flex items-center gap-2 min-w-0">
-                                              <input
-                                                  type="checkbox"
-                                                  checked={isSelected}
-                                                  onChange={() => toggleSelection(exp.id)}
-                                                  onClick={(event) => event.stopPropagation()}
-                                                  disabled={isLocked}
-                                                  className="h-4 w-4"
-                                                  style={{ accentColor: selectedCardColor }}
-                                                  aria-label={`Selecionar fatura ${exp.description}`}
-                                              />
-                                              <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                                                  {exp.description}
-                                              </span>
-                                          </div>
-                                          <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-rose-600 dark:text-rose-400'}`}>
-                                              R$ {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                          </span>
+                                          <X size={16} />
                                       </button>
                                   </div>
+                              </div>
+                              <div className="flex-1 overflow-auto px-3 pt-2 pb-6">
+                                  <div className="space-y-3">
+                                      {expandedMonthExpenses.map((exp, index) => {
+                                          const isSelected = selectedExpenseIds.includes(exp.id);
+                                          const isLocked = Boolean(exp.locked);
+                                          const isRowExpanded = expandedExpenseId === exp.id;
+                                          const rowBg = index % 2 === 0 ? 'bg-rose-500/10' : 'bg-transparent';
 
-                                  {isRowExpanded && (
-                                      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
-                                          <div className="flex items-center justify-between mb-3">
-                                              <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
-                                              <button
-                                                  type="button"
-                                                  onClick={() => setExpandedExpenseId(null)}
-                                                  className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
-                                                  aria-label="Fechar detalhes"
-                                              >
-                                                  <X size={14} />
-                                              </button>
-                                          </div>
-                                          <div className="grid grid-cols-2 gap-3 text-xs text-zinc-500 dark:text-zinc-400">
-                                              <div>
-                                                  <p className="text-[10px] uppercase tracking-wide">Lançamento</p>
-                                                  <p className="text-sm text-zinc-900 dark:text-white">
-                                                      {new Date(exp.date + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                  </p>
+                                          return (
+                                              <div key={exp.id} className="space-y-3">
+                                                  <div className={`py-2 ${rowBg}`}>
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                              if (!isLocked) {
+                                                                  toggleSelection(exp.id);
+                                                                  setExpandedExpenseId(isRowExpanded ? null : exp.id);
+                                                              }
+                                                          }}
+                                                          className="w-full flex items-center justify-between gap-3 text-left"
+                                                          disabled={isLocked}
+                                                      >
+                                                          <div className="flex items-center gap-2 min-w-0">
+                                                              <input
+                                                                  type="checkbox"
+                                                                  checked={isSelected}
+                                                                  onChange={() => toggleSelection(exp.id)}
+                                                                  onClick={(event) => event.stopPropagation()}
+                                                                  disabled={isLocked}
+                                                                  className="h-4 w-4"
+                                                                  style={{ accentColor: selectedCardColor }}
+                                                                  aria-label={`Selecionar fatura ${exp.description}`}
+                                                              />
+                                                              <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-100'}`}>
+                                                                  {exp.description}
+                                                              </span>
+                                                          </div>
+                                                          <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-rose-400'}`}>
+                                                              R$ {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                          </span>
+                                                      </button>
+                                                  </div>
+
+                                                  {isRowExpanded && (
+                                                      <div className="border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
+                                                          <div className="flex items-center justify-between mb-3">
+                                                              <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
+                                                              <button
+                                                                  type="button"
+                                                                  onClick={() => setExpandedExpenseId(null)}
+                                                                  className="h-7 w-7 rounded-none border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
+                                                                  aria-label="Fechar detalhes"
+                                                              >
+                                                                  <X size={14} />
+                                                              </button>
+                                                          </div>
+                                                          <div className="grid grid-cols-2 gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                                              <div>
+                                                                  <p className="text-[10px] uppercase tracking-wide">Lançamento</p>
+                                                                  <p className="text-sm text-zinc-900 dark:text-white">
+                                                                      {new Date(exp.date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                                  </p>
+                                                              </div>
+                                                              <div>
+                                                                  <p className="text-[10px] uppercase tracking-wide">Vencimento</p>
+                                                                  <p className="text-sm text-zinc-900 dark:text-white">
+                                                                      {new Date(exp.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                                  </p>
+                                                              </div>
+                                                              <div>
+                                                                  <p className="text-[10px] uppercase tracking-wide">Categoria</p>
+                                                                  <p className="text-sm text-zinc-900 dark:text-white">{exp.category}</p>
+                                                              </div>
+                                                              {exp.installments && (
+                                                                  <div>
+                                                                      <p className="text-[10px] uppercase tracking-wide">Parcelas</p>
+                                                                      <p className="text-sm text-zinc-900 dark:text-white">
+                                                                          {exp.installmentNumber}/{exp.totalInstallments}
+                                                                      </p>
+                                                                  </div>
+                                                              )}
+                                                          </div>
+                                                      </div>
+                                                  )}
                                               </div>
-                                              <div>
-                                                  <p className="text-[10px] uppercase tracking-wide">Vencimento</p>
-                                                  <p className="text-sm text-zinc-900 dark:text-white">
-                                                      {new Date(exp.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}
-                                                  </p>
+                                          );
+                                      })}
+                                  </div>
+                              </div>
+                          </div>
+                      </>
+                  );
+              })()}
+          </div>
+      ) : (
+          <div className="fixed inset-0 z-[1200] flex items-end justify-center">
+              <button
+                  type="button"
+                  onClick={closeExpandedMonth}
+                  className="absolute inset-0 bg-black/60 z-0"
+                  aria-label="Fechar fatura"
+              />
+              <div className="relative w-full max-w-7xl px-4 sm:px-6 pb-6 z-10">
+                  <div className="relative bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 max-h-[80vh] flex flex-col">
+                  <div className="flex items-center justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                      <div>
+                          <p className="text-sm font-semibold">Fatura de {expandedMonthLabel}</p>
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                              Total: R$ {expandedMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={closeExpandedMonth}
+                          className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                          aria-label="Fechar fatura"
+                      >
+                          <X size={16} />
+                      </button>
+                  </div>
+                  <div className="pt-3 flex-1 overflow-auto">
+                      <div className="space-y-3">
+                          {expandedMonthExpenses.map((exp, index) => {
+                              const isSelected = selectedExpenseIds.includes(exp.id);
+                              const isLocked = Boolean(exp.locked);
+                              const isRowExpanded = expandedExpenseId === exp.id;
+                              const rowBg = index % 2 === 0 ? 'bg-rose-500/10' : 'bg-transparent';
+
+                              return (
+                                  <div key={exp.id} className="space-y-3">
+                                      <div className={`py-2 rounded-md ${rowBg}`}>
+                                          <button
+                                              type="button"
+                                              onClick={() => {
+                                                  if (!isLocked) {
+                                                      toggleSelection(exp.id);
+                                                      setExpandedExpenseId(isRowExpanded ? null : exp.id);
+                                                  }
+                                              }}
+                                              className="w-full flex items-center justify-between gap-3 text-left"
+                                              disabled={isLocked}
+                                          >
+                                              <div className="flex items-center gap-2 min-w-0">
+                                                  <input
+                                                      type="checkbox"
+                                                      checked={isSelected}
+                                                      onChange={() => toggleSelection(exp.id)}
+                                                      onClick={(event) => event.stopPropagation()}
+                                                      disabled={isLocked}
+                                                      className="h-4 w-4"
+                                                      style={{ accentColor: selectedCardColor }}
+                                                      aria-label={`Selecionar fatura ${exp.description}`}
+                                                  />
+                                                  <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                                                      {exp.description}
+                                                  </span>
                                               </div>
-                                              <div>
-                                                  <p className="text-[10px] uppercase tracking-wide">Categoria</p>
-                                                  <p className="text-sm text-zinc-900 dark:text-white">{exp.category}</p>
+                                              <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-rose-600 dark:text-rose-400'}`}>
+                                                  R$ {exp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                              </span>
+                                          </button>
+                                      </div>
+
+                                      {isRowExpanded && (
+                                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
+                                              <div className="flex items-center justify-between mb-3">
+                                                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => setExpandedExpenseId(null)}
+                                                      className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
+                                                      aria-label="Fechar detalhes"
+                                                  >
+                                                      <X size={14} />
+                                                  </button>
                                               </div>
-                                              {exp.installments && (
+                                              <div className="grid grid-cols-2 gap-3 text-xs text-zinc-500 dark:text-zinc-400">
                                                   <div>
-                                                      <p className="text-[10px] uppercase tracking-wide">Parcelas</p>
+                                                      <p className="text-[10px] uppercase tracking-wide">Lançamento</p>
                                                       <p className="text-sm text-zinc-900 dark:text-white">
-                                                          {exp.installmentNumber}/{exp.totalInstallments}
+                                                          {new Date(exp.date + 'T12:00:00').toLocaleDateString('pt-BR')}
                                                       </p>
                                                   </div>
-                                              )}
+                                                  <div>
+                                                      <p className="text-[10px] uppercase tracking-wide">Vencimento</p>
+                                                      <p className="text-sm text-zinc-900 dark:text-white">
+                                                          {new Date(exp.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                                      </p>
+                                                  </div>
+                                                  <div>
+                                                      <p className="text-[10px] uppercase tracking-wide">Categoria</p>
+                                                      <p className="text-sm text-zinc-900 dark:text-white">{exp.category}</p>
+                                                  </div>
+                                                  {exp.installments && (
+                                                      <div>
+                                                          <p className="text-[10px] uppercase tracking-wide">Parcelas</p>
+                                                          <p className="text-sm text-zinc-900 dark:text-white">
+                                                              {exp.installmentNumber}/{exp.totalInstallments}
+                                                          </p>
+                                                      </div>
+                                                  )}
+                                              </div>
                                           </div>
-                                      </div>
-                                  )}
-                              </div>
-                          );
-                      })}
+                                      )}
+                                  </div>
+                              );
+                          })}
+                      </div>
+                  </div>
                   </div>
               </div>
-              </div>
           </div>
-      </div>
+      )
   ) : null;
 
   const mainSection = (
@@ -884,9 +1053,53 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       </main>
   );
 
+  const cardsModal = isMobile && isCardsModalOpen ? (
+      <div className="fixed inset-0 z-[1200]">
+          {(() => {
+              const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
+              return (
+                  <>
+                      <button
+                          type="button"
+                          onClick={() => setIsCardsModalOpen(false)}
+                          className="absolute left-0 right-0 top-0 bg-black/70"
+                          style={{ bottom: dockOffset }}
+                          aria-label="Fechar cartões cadastrados"
+                      />
+                      <div
+                          className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+                          style={{ top: 0, bottom: dockOffset }}
+                      >
+                          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+                              <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-white truncate">Cartões cadastrados</p>
+                                      <p className="text-xs text-white/70">Selecione o cartão que deseja usar.</p>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={() => setIsCardsModalOpen(false)}
+                                      className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                      aria-label="Fechar cartões cadastrados"
+                                  >
+                                      <X size={16} />
+                                  </button>
+                              </div>
+                          </div>
+                          <div className="flex-1 overflow-auto px-3 pt-2 pb-6">
+                              {cardListContent}
+                          </div>
+                      </div>
+                  </>
+              );
+          })()}
+      </div>
+  ) : null;
+
   const modals = (
       <>
           {monthDetailModal}
+          {cardsModal}
           <PayInvoiceModal 
             isOpen={isPayModalOpen}
             onClose={() => setIsPayModalOpen(false)}
@@ -1062,65 +1275,49 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       const mobileHeader = (
           <div className="space-y-2">
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-                  <button
-                      type="button"
-                      onClick={onBack}
-                      className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-                      aria-label="Voltar para o início"
-                  >
-                      <Home size={16} />
-                  </button>
+                  <div className="h-8 w-8" aria-hidden="true" />
                   <div className="min-w-0 text-center">
                       <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Faturas</p>
-                      <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
+                      <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
                           {selectedCard?.name || 'Selecione um cartão'}
                       </p>
                   </div>
                   <div className="min-w-[32px]" />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+              <div className="grid grid-cols-3 gap-2">
+                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
+                      <p className="text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">
                           R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                   </div>
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{selectedExpenseIds.length}</p>
+                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
+                      <p className="text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">{selectedExpenseIds.length}</p>
                   </div>
+                  <button
+                      type="button"
+                      onClick={() => setIsCardsModalOpen(true)}
+                      className={`${mobileCardRadiusSm} border bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center text-white`}
+                      style={{ borderColor: 'var(--mm-view-accent)', backgroundColor: 'var(--mm-view-accent)' }}
+                  >
+                      <p className="text-sm uppercase tracking-wide">Cartões</p>
+                      <p className="text-sm font-semibold">Cadastrados</p>
+                  </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                  <button
-                      onClick={handleOpenNewCard}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
-                  >
-                      Novo cartão
-                  </button>
-                  <button
-                      onClick={() => setIsPayModalOpen(true)}
-                      disabled={selectedExpenseIds.length === 0}
-                      className={`w-full rounded-2xl text-white font-semibold py-2.5 text-sm shadow-lg transition ${
-                          selectedExpenseIds.length > 0
-                              ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-900/20'
-                              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed shadow-none'
-                      }`}
-                  >
-                      {payLabel}
-                  </button>
-              </div>
+              <div />
           </div>
       );
 
       return (
           <>
-              <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+              <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
                   <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
                       {headerFill.height > 0 && (
                           <div
-                              className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+                              className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
                               style={{ top: headerFill.top, height: headerFill.height }}
                           />
                       )}
@@ -1130,22 +1327,61 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                       >
                           <div
                               ref={subHeaderRef}
-                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
-                              <div className="px-4 pb-3 pt-2">
+                              <div className="px-3 pb-3 pt-2">
                                   {mobileHeader}
                               </div>
                           </div>
                       </div>
                       <div
-                          className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
-                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
-                      >
-                          <div className="space-y-4">
-                              {cardSelectorSection}
-                              {invoiceListSection}
-                              {cardManagementSection}
+                      className="h-full overflow-y-auto px-0 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+72px)]"
+                      style={{
+                          paddingTop: subHeaderHeight
+                                  ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px - ${topAdjust}px)`
+                                  : 'calc(var(--mm-mobile-top, 0px))'
+                      }}
+                  >
+                          <div className="space-y-0">
+                              <div ref={firstSectionRef}>
+                                {cardSelectorSection && (
+                                    <MobileFullWidthSection contentClassName="px-0 pt-0 pb-0">
+                                        {cardSelectorSection}
+                                    </MobileFullWidthSection>
+                                )}
+                              </div>
+                              {invoiceListSection && (
+                                  <MobileFullWidthSection contentClassName="px-0 pt-[5px] pb-0">
+                                      {invoiceListSection}
+                                  </MobileFullWidthSection>
+                              )}
                           </div>
+                      </div>
+                  </div>
+              </div>
+              <div
+                  className="fixed left-0 right-0 z-40"
+                  style={{ bottom: 'var(--mm-mobile-dock-height, 68px)' }}
+              >
+                  <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-0">
+                      <div className="grid grid-cols-2 gap-2">
+                          <button
+                              onClick={handleOpenNewCard}
+                              className="rounded-none border border-rose-400/50 bg-rose-950/30 py-3 text-sm font-semibold text-rose-200 hover:bg-rose-900/40 transition"
+                          >
+                              Novo cartão
+                          </button>
+                          <button
+                              onClick={() => setIsPayModalOpen(true)}
+                              disabled={selectedExpenseIds.length === 0}
+                              className={`rounded-none border border-rose-500/40 py-3 text-sm font-semibold transition ${
+                                  selectedExpenseIds.length > 0
+                                      ? 'bg-rose-600 text-white hover:bg-rose-500'
+                                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
+                              }`}
+                          >
+                              {payLabel}
+                          </button>
                       </div>
                   </div>
               </div>
@@ -1155,7 +1391,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
       {summarySection}
       {mainSection}
       {modals}

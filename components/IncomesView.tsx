@@ -8,6 +8,7 @@ import useIsMobile from '../hooks/useIsMobile';
 import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import MobileEmptyState from './mobile/MobileEmptyState';
+import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import { buildInstallmentDescription, getIncomeInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 import { incomeStatusLabel, normalizeIncomeStatus } from '../utils/statusUtils';
@@ -15,6 +16,10 @@ import { incomeStatusLabel, normalizeIncomeStatus } from '../utils/statusUtils';
 interface IncomesViewProps {
   onBack: () => void;
   incomes: Income[];
+  autoOpenNew?: boolean;
+  onAutoOpenHandled?: () => void;
+  autoOpenEditId?: string | null;
+  onAutoOpenEditHandled?: () => void;
   onUpdateIncomes: (incomes: Income[]) => void;
   onDeleteIncome: (id: string) => void;
   onOpenAudit?: () => void;
@@ -31,7 +36,11 @@ interface IncomesViewProps {
 
 const IncomesView: React.FC<IncomesViewProps> = ({ 
   onBack, 
-  incomes, 
+  incomes,
+  autoOpenNew,
+  onAutoOpenHandled,
+  autoOpenEditId,
+  onAutoOpenEditHandled,
   onUpdateIncomes, 
   onDeleteIncome,
   accounts,
@@ -100,6 +109,21 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       if (!isMobile || headerLayoutLoggedRef.current) return;
       console.info('[layout][mobile-subheader] incomes in-flow');
       headerLayoutLoggedRef.current = true;
+  }, [isMobile]);
+
+  useEffect(() => {
+      if (!isMobile || typeof window === 'undefined') return;
+      const handleDockClick = () => {
+          setDrawerIncome(null);
+          setIncomeToDelete(null);
+          setIsBulkDeleteModalOpen(false);
+          setInlineNewOpen(false);
+          setInlineEditIncomeId(null);
+          setEditingIncome(null);
+          setMobileScreen('list');
+      };
+      window.addEventListener('mm:mobile-dock-click', handleDockClick);
+      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
   }, [isMobile]);
 
   useEffect(() => {
@@ -488,6 +512,24 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       setDrawerIncome(income);
   };
 
+  useEffect(() => {
+      if (!isMobile || !autoOpenNew) return;
+      setEditingIncome(null);
+      setMobileScreen('form');
+      onAutoOpenHandled?.();
+  }, [autoOpenNew, isMobile, onAutoOpenHandled]);
+
+  useEffect(() => {
+      if (!isMobile || !autoOpenEditId) return;
+      const target = incomes.find(income => income.id === autoOpenEditId) || null;
+      if (target) {
+          setEditingIncome(target);
+          setMobileScreen('form');
+          console.info('[mobile-ui] incomes', { screen: 'form', action: 'edit', id: target.id });
+      }
+      onAutoOpenEditHandled?.();
+  }, [autoOpenEditId, incomes, isMobile, onAutoOpenEditHandled]);
+
   const getAccountById = (accId: string) => accounts.find(a => a.id === accId);
   const getIncomeStatusMeta = (income: Income) => {
       const normalizedStatus = normalizeIncomeStatus(income.status);
@@ -609,6 +651,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           setMobileScreen('list');
           setEditingIncome(null);
           console.info('[mobile-ui] incomes', { screen: 'list', action: 'close' });
+          onBack();
       };
       const drawerStatus = drawerIncome ? normalizeIncomeStatus(drawerIncome.status) : 'pending';
       const drawerStatusLabel = drawerIncome ? incomeStatusLabel(drawerIncome.status) : '';
@@ -661,19 +704,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           ? 'Entradas'
           : (editingIncome ? 'Editar Entrada' : 'Nova Entrada');
 
-      useEffect(() => {
-          if (typeof document === 'undefined') return;
-          if (!isListView) {
-              document.body.classList.add('hide-quick-access');
-          } else {
-              document.body.classList.remove('hide-quick-access');
-          }
-          return () => {
-              document.body.classList.remove('hide-quick-access');
-          };
-      }, [isListView]);
-
-      const mobileHeader = (
+  const mobileHeader = (
           <div className="space-y-2">
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
                   <button
@@ -738,11 +769,11 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
       return (
           <>
-              <div className="fixed inset-0 bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+              <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
                   <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
                       {headerFill.height > 0 && (
                           <div
-                              className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+                              className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
                               style={{ top: headerFill.top, height: headerFill.height }}
                           />
                       )}
@@ -752,7 +783,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                       >
                           <div
                               ref={subHeaderRef}
-                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+                              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
                               <div className="px-4 pb-3 pt-2">
                                   {mobileHeader}
@@ -761,9 +792,14 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                       </div>
                       <div
                           className={`h-full px-4 overflow-hidden ${isListView ? 'pb-[calc(env(safe-area-inset-bottom)+88px)]' : 'pb-[calc(env(safe-area-inset-bottom)+16px)]'}`}
-                          style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 64 : 64 }}
+                          style={{
+                              paddingTop: subHeaderHeight
+                                  ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px)`
+                                  : 'calc(var(--mm-mobile-top, 0px) + 2px)'
+                          }}
                       >
                           {isListView ? (
+                              <MobileFullWidthSection contentClassName="px-4 py-3">
                               <div className="space-y-3">
                                   <div className="py-2">
                                       <button
@@ -858,43 +894,47 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                       />
                                   )}
                               </div>
+                              </MobileFullWidthSection>
                           ) : null}
                       </div>
                   </div>
               </div>
 
-              {!isListView && (
+              {!isListView && (() => {
+                  const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
+                  return (
                   <div className="fixed inset-0 z-[1200]">
                       <button
                           type="button"
                           onClick={handleMobileFormClose}
-                          className="absolute inset-0 bg-black/70"
+                          className="absolute left-0 right-0 top-0 bg-black/70"
+                          style={{ bottom: dockOffset }}
                           aria-label="Fechar nova entrada"
                       />
                       <div
-                          className="absolute left-0 right-0 bottom-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
-                          style={{ top: 0 }}
+                          className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+                          style={{ top: 0, bottom: dockOffset }}
                       >
-                          <div className="px-3 pt-2 pb-2 bg-gradient-to-r from-emerald-500/80 via-emerald-500/35 to-black">
+                          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
                               <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0">
                                       <div className="flex items-center gap-2">
                                           <ArrowUpCircle size={16} className="text-white" />
-                                          <p className="text-sm font-semibold text-white truncate">{headerTitle}</p>
-                                      </div>
-                                      <p className="text-[10px] text-white/70">Preencha os dados da entrada.</p>
+                                      <p className="text-[13px] font-semibold text-white truncate">{headerTitle}</p>
+                                  </div>
+                                      <p className="text-[9px] text-white/70">Preencha os dados da entrada.</p>
                                   </div>
                                   <button
                                       type="button"
                                       onClick={handleMobileFormClose}
-                                      className="h-8 w-8 rounded-full bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                      className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                                       aria-label="Fechar nova entrada"
                                   >
                                       <X size={16} />
                                   </button>
                               </div>
                           </div>
-                          <div className="flex-1 overflow-hidden px-2 pt-1 pb-16">
+                          <div className="flex-1 overflow-hidden px-3 pt-1 pb-16">
                               <NewIncomeModal
                                   isOpen
                                   variant="inline"
@@ -916,25 +956,26 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                   minDate={minDate}
                               />
                           </div>
-                          <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+6px)] grid grid-cols-2 gap-2">
+                          <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-0 grid grid-cols-2 gap-2">
                               <button
                                   type="button"
                                   onClick={handleMobileFormClose}
-                                  className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                                  className="rounded-none border border-emerald-400/50 bg-emerald-950/30 py-3 text-sm font-semibold text-emerald-200 hover:bg-emerald-900/40 transition"
                               >
                                   Cancelar
                               </button>
                               <button
                                   type="button"
                                   onClick={() => submitRef.current?.()}
-                                  className="rounded-lg border border-emerald-500/40 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
+                                  className="rounded-none border border-emerald-500/40 py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
                               >
                                   Salvar
                               </button>
                           </div>
                       </div>
                   </div>
-              )}
+                  );
+              })()}
 
               <MobileTransactionDrawer
                   open={Boolean(drawerIncome)}
@@ -1091,7 +1132,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   );
 
   return (
-      <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${incomeDesktopNeedsScroll ? 'pb-20' : 'pb-6'} ${incomeDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
+      <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${incomeDesktopNeedsScroll ? 'pb-20' : 'pb-6'} ${incomeDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
           {summarySection}
 
           {selectedIds.length > 0 && (

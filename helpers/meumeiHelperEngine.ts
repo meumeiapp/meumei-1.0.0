@@ -13,6 +13,7 @@ export type HelperStep = {
   id: string;
   title: string;
   body: string;
+  type?: 'curiosity' | 'tip';
   ctaId?: string;
   ctaLabel?: string;
   onlyMobile?: boolean;
@@ -47,6 +48,7 @@ export type HelperTip = {
   title: string;
   body: string;
   trackId: string;
+  type: 'curiosity' | 'tip';
   ctaId?: string;
   ctaLabel?: string;
 };
@@ -128,6 +130,7 @@ export const getHelperTips = (signals: HelperSignals): HelperTip[] => {
         title: step.title,
         body: step.body,
         trackId: track.id,
+        type: resolveTipType(track.id, step),
         ctaId: step.ctaId,
         ctaLabel: step.ctaLabel
       });
@@ -136,39 +139,165 @@ export const getHelperTips = (signals: HelperSignals): HelperTip[] => {
   return tips;
 };
 
+export const pickHelperTip = (signals: HelperSignals): HelperTip => {
+  const fallback: HelperTip = {
+    id: 'helper_default',
+    title: 'Ajudante do meumei',
+    body: 'Você pode perguntar qualquer dúvida sobre o app por aqui.',
+    trackId: 'helper_default',
+    type: 'curiosity'
+  };
+
+  const tracksById = helperTracks.reduce<Record<string, HelperTrack>>((acc, track) => {
+    acc[track.id] = track;
+    return acc;
+  }, {});
+
+  const curiosidades = tracksById.curiosidades;
+  const dicas = tracksById.dicas;
+  const pickTrackId = Math.random() < 0.5 ? 'curiosidades' : 'dicas';
+  const primaryTrack = pickTrackId === 'dicas' ? dicas : curiosidades;
+  const secondaryTrack = pickTrackId === 'dicas' ? curiosidades : dicas;
+
+  const pickFromTrack = (track?: HelperTrack) => {
+    if (!track) return null;
+    const steps = getEligibleSteps(track, signals);
+    if (!steps.length) return null;
+    const step = steps[Math.floor(Math.random() * steps.length)];
+    const type = resolveTipType(track.id, step);
+    const tip = {
+      id: step.id,
+      title: step.title,
+      body: step.body,
+      trackId: track.id,
+      type,
+      ctaId: step.ctaId,
+      ctaLabel: step.ctaLabel
+    };
+    console.log('[helper] pick', { trackId: track.id, id: step.id, type });
+    return tip;
+  };
+
+  return pickFromTrack(primaryTrack) || pickFromTrack(secondaryTrack) || fallback;
+};
+
 const clampIndex = (value: number, max: number) =>
   Math.min(Math.max(value, 0), Math.max(max, 0));
+
+const resolveTipType = (trackId: string, step?: HelperStep) => {
+  if (step?.type) return step.type;
+  return trackId === 'dicas' ? 'tip' : 'curiosity';
+};
+
+const HELPER_ITEMS = [
+  {
+    id: 'infraestrutura-segura',
+    title: 'Infraestrutura segura',
+    description: 'Seus dados ficam guardados em servidores profissionais, com estabilidade e segurança 24 horas por dia.',
+    type: 'curiosity'
+  },
+  {
+    id: 'contas-bancarias',
+    title: 'Contas Bancárias',
+    description:
+      'Cadastre banco, caixa ou carteira. Assim você enxerga exatamente quanto dinheiro tem hoje. Dica: mantenha uma conta "Dinheiro" para pequenos gastos do dia a dia. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'dados-protegidos',
+    title: 'Dados protegidos',
+    description: 'Tudo o que você envia é protegido por criptografia, como um cadeado digital invisível durante o trajeto.',
+    type: 'curiosity'
+  },
+  {
+    id: 'entradas',
+    title: 'Entradas',
+    description:
+      'Registre tudo o que entra, mesmo valores pequenos. Dica: categorize bem para descobrir de onde vem seu lucro de verdade. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'camadas-extras',
+    title: 'Camadas extras',
+    description: 'Algumas informações sensíveis recebem proteção adicional antes mesmo de serem salvas.',
+    type: 'curiosity'
+  },
+  {
+    id: 'despesas-fixas',
+    title: 'Despesas Fixas',
+    description:
+      'Aluguel, internet e assinaturas voltam todo mês. Dica: revise sempre, pequenos cortes viram grande economia no ano. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'acesso-isolado',
+    title: 'Acesso isolado',
+    description: 'Cada conta enxerga só o próprio negócio. Seus números são só seus.',
+    type: 'curiosity'
+  },
+  {
+    id: 'despesas-variaveis',
+    title: 'Despesas Variáveis',
+    description:
+      'Gastos que mudam toda semana, como mercado e combustível. Dica: lance na hora para não depender da memória. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'separacao-pessoal',
+    title: 'Despesas Pessoais',
+    description:
+      'Separe sua vida pessoal da empresa. Dica: misturar tudo confunde seus resultados e suas decisões. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'rendimentos',
+    title: 'Rendimentos',
+    description:
+      'Controle juros, investimentos e retornos extras. Dica: registrar datas ajuda a enxergar crescimento ao longo do tempo. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'faturas',
+    title: 'Faturas',
+    description:
+      'Acompanhe seus cartões antes do fechamento. Dica: revisar com calma evita surpresas no fim do mês. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'relatorios',
+    title: 'Relatórios',
+    description:
+      'Aqui você vê o retrato do seu mês. Dica: olhe toda semana, não só no final, para ajustar a rota cedo. Atalho: use ←/→ para navegar pelo Acesso Rápido.',
+    type: 'tip'
+  },
+  {
+    id: 'emissao-das',
+    title: 'Emissão DAS',
+    description:
+      'O imposto do MEI sai por aqui. Dica: pague em dia e evite multas que só drenam seu caixa.',
+    type: 'tip'
+  }
+];
+
+const buildHelperSteps = (type: 'curiosity' | 'tip'): HelperStep[] =>
+  HELPER_ITEMS.filter((item) => item.type === type).map((item) => ({
+    id: item.id,
+    title: item.title,
+    body: item.description,
+    type: item.type,
+    showWhen: (s) => s.isLoggedIn
+  }));
 
 export const helperTracks: HelperTrack[] = [
   {
     id: 'curiosidades',
     label: 'Curiosidades',
-    steps: [
-      {
-        id: 'curiosidade_firebase',
-        title: 'Infraestrutura segura',
-        body: 'O Meumei utiliza a infraestrutura Google Cloud para armazenar seus dados com seguranca e escalabilidade.',
-        showWhen: (s) => s.isLoggedIn
-      },
-      {
-        id: 'curiosidade_criptografia',
-        title: 'Dados protegidos',
-        body: 'As informacoes trafegam com criptografia (HTTPS) e ficam criptografadas em repouso na Google Cloud.',
-        showWhen: (s) => s.isLoggedIn
-      },
-      {
-        id: 'curiosidade_camadas',
-        title: 'Camadas extras',
-        body: 'Alguns valores sensiveis sao criptografados antes de serem salvos, reforcando a protecao.',
-        showWhen: (s) => s.isLoggedIn
-      },
-      {
-        id: 'curiosidade_isolamento',
-        title: 'Acesso isolado',
-        body: 'As regras de seguranca isolam os dados por usuario, garantindo acesso apenas a propria conta.',
-        showWhen: (s) => s.isLoggedIn
-      }
-    ]
+    steps: buildHelperSteps('curiosity')
+  },
+  {
+    id: 'dicas',
+    label: 'Dicas',
+    steps: buildHelperSteps('tip')
   }
 ];
 

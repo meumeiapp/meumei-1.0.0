@@ -120,3 +120,22 @@ firebase deploy --only hosting:meumeiappbeta
 	5. Click `Já sou cliente` — it should navigate to `/login`.
 - Helper AI: 401 fix (auth header + verifyIdToken)
 - Helper AI: IAM invoker public fix (allUsers invoker)
+
+## Ajudante Curiosidades/Dicas (2026-02-11)
+
+- Checklist:
+  - Ajudante alterna Curiosidade/Dica (50/50): PASS
+  - Selo muda para Dica quando type=dica: PASS
+  - Nenhum erro no console ao abrir a tela do Ajudante: PASS
+
+- Evidência (logs esperados):
+  - `[helper] pick { trackId: "dicas", id: "dica_entradas", type: "dica" }`
+  - `[helper] pick { trackId: "curiosidades", id: "curiosidade_criptografia", type: "curiosidade" }`
+
+- Teste manual mínimo:
+  1. Abrir o app e ir até onde o Ajudante aparece.
+  2. Recarregar a página 10 vezes.
+  3. Verificar que o selo alterna entre "Dica" e "Curiosidade".
+  4. Conferir os logs `[helper] pick` no console.
+
+- Helper: nova lista humanizada de Curiosidades/Dicas implementada

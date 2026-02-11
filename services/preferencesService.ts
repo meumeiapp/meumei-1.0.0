@@ -1,6 +1,6 @@
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
-import { ThemePreference } from '../types';
+import { ExpenseTypeOption, ThemePreference } from '../types';
 import { logPermissionDenied } from '../utils/firestoreLogger';
 import { guardUserPath } from '../utils/pathGuard';
 
@@ -10,7 +10,12 @@ const getUserPreferencesRef = (uid: string) =>
 export const preferencesService = {
   async getPreferences(
     uid: string | null | undefined
-  ): Promise<{ theme?: ThemePreference; tipsEnabled?: boolean; mobileDashboardSubHeader?: number }> {
+  ): Promise<{
+    theme?: ThemePreference;
+    tipsEnabled?: boolean;
+    mobileDashboardSubHeader?: number;
+    expenseTypeOptions?: ExpenseTypeOption[];
+  }> {
     if (!uid) {
       console.info('[prefs] load_skipped', { reason: 'missing_uid' });
       return {};
@@ -30,10 +35,14 @@ export const preferencesService = {
         typeof data?.mobileDashboardSubHeader === 'number'
           ? (data.mobileDashboardSubHeader as number)
           : undefined;
+      const expenseTypeOptions = Array.isArray(data?.expenseTypeOptions)
+        ? (data.expenseTypeOptions as ExpenseTypeOption[])
+        : undefined;
       return {
         ...(theme ? { theme } : {}),
         ...(typeof tipsEnabled === 'boolean' ? { tipsEnabled } : {}),
-        ...(typeof mobileDashboardSubHeader === 'number' ? { mobileDashboardSubHeader } : {})
+        ...(typeof mobileDashboardSubHeader === 'number' ? { mobileDashboardSubHeader } : {}),
+        ...(Array.isArray(expenseTypeOptions) ? { expenseTypeOptions } : {})
       };
     } catch (error: any) {
       logPermissionDenied({
@@ -188,6 +197,36 @@ export const preferencesService = {
         licenseId: uid
       });
       console.error('[prefs] mobile_subheader_error', { step: 'save', message: (error as any)?.message });
+      throw error;
+    }
+  },
+  async setExpenseTypeOptions(
+    uid: string | null | undefined,
+    expenseTypeOptions: ExpenseTypeOption[]
+  ): Promise<void> {
+    if (!uid) {
+      console.error('[prefs] error', { step: 'expense_types_save', message: 'missing_uid' });
+      return;
+    }
+    const ref = getUserPreferencesRef(uid);
+    const path = `users/${uid}/preferences/app`;
+    if (!guardUserPath(uid, path, 'prefs_expense_types_set')) return;
+    try {
+      await setDoc(
+        ref,
+        { expenseTypeOptions, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      console.info('[prefs] expense_types_save', { path: ref.path, count: expenseTypeOptions.length });
+    } catch (error) {
+      logPermissionDenied({
+        step: 'preferences_set_expense_types',
+        path: ref.path,
+        operation: 'setDoc',
+        error,
+        licenseId: uid
+      });
+      console.error('[prefs] expense_types_error', { step: 'save', message: (error as any)?.message });
       throw error;
     }
   }

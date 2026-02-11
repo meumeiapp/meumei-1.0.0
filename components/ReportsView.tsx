@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import {
   ArrowLeft,
   Calendar,
@@ -7,8 +7,8 @@ import {
   ChevronRight,
   Maximize2,
   Minimize2,
-  X,
-  Home
+  PieChart,
+  X
 } from 'lucide-react';
 import type { Account, Expense, Income, CreditCard, ExpenseTypeOption } from '../types';
 import type { YieldRecord } from '../services/yieldsService';
@@ -25,12 +25,14 @@ import { dataService } from '../services/dataService';
 import { yieldsService } from '../services/yieldsService';
 import useIsMobile from '../hooks/useIsMobile';
 import useIsCompactHeight from '../hooks/useIsCompactHeight';
+import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import FinancialMap from './reports/FinancialMap';
 import EventMap from './reports/EventMap';
 import ExecutiveSummary from './reports/ExecutiveSummary';
 import ExportImportPanel from './reports/ExportImportPanel';
 import { formatCurrency } from './reports/reportUtils';
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
+import { computeCategoryTotals } from '../utils/categoryTotals';
 
 type PeriodMode = 'month' | 'custom';
 
@@ -50,6 +52,8 @@ interface ReportsViewProps {
 
 const buildMonthLabel = (date: Date) =>
   date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+const CATEGORY_TREND_COLORS = ['#a855f7', '#38bdf8', '#f97316', '#22c55e', '#ec4899', '#facc15', '#0ea5e9', '#f472b6', '#94a3b8', '#fb923c'];
 
 const ReportsView: React.FC<ReportsViewProps> = ({
   onBack,
@@ -77,8 +81,10 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   const [isSummaryFullscreen, setIsSummaryFullscreen] = useState(false);
   const [supportsSummaryFullscreen, setSupportsSummaryFullscreen] = useState(false);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
+  const firstSectionRef = useRef<HTMLDivElement | null>(null);
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
+  const [topAdjust, setTopAdjust] = useState(0);
 
   const defaultStart = useMemo(() => {
     return new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
@@ -190,6 +196,25 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       personal: transactions.expenses.filter(exp => exp.type === 'personal').reduce((sum, exp) => sum + exp.amount, 0)
     };
   }, [transactions.expenses]);
+
+  const categoryTotals = useMemo(() => {
+    if (!isMobile) return null;
+    return computeCategoryTotals(transactions.expenses, {
+      startDate: selectedStart,
+      endDate: selectedEnd,
+      statusRule: 'paid+pending',
+      dateField: 'date',
+      topN: 8,
+      includeOthers: true,
+      source: 'reports',
+      variant: 'mobile'
+    });
+  }, [isMobile, selectedEnd, selectedStart, transactions.expenses]);
+
+  const maxCategoryTotal = useMemo(() => {
+    if (!categoryTotals || !categoryTotals.items.length) return 0;
+    return Math.max(...categoryTotals.items.map(item => item.total), 0);
+  }, [categoryTotals]);
 
   const periodYields = useMemo(() => {
     return reportYields.filter(item => {
@@ -314,6 +339,27 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     };
   }, [isMobile]);
 
+  useLayoutEffect(() => {
+    const headerNode = subHeaderRef.current;
+    const sectionNode = firstSectionRef.current;
+    if (!headerNode || !sectionNode) return;
+
+    const measureGap = () => {
+      const headerBottom = headerNode.getBoundingClientRect().bottom;
+      const sectionTop = sectionNode.getBoundingClientRect().top;
+      const gap = Math.round(sectionTop - headerBottom);
+      const desired = 5;
+      setTopAdjust((prev) => {
+        const nextAdjust = Math.max(0, gap - desired + prev);
+        return prev === nextAdjust ? prev : nextAdjust;
+      });
+    };
+
+    measureGap();
+    window.addEventListener('resize', measureGap);
+    return () => window.removeEventListener('resize', measureGap);
+  }, [subHeaderHeight, topAdjust]);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
     if (tab !== 'summary') return;
@@ -388,6 +434,16 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isRangeModalOpen, onBack]);
+
+  useEffect(() => {
+    if (!isMobile || typeof window === 'undefined') return;
+    const handleDockClick = () => {
+      setIsRangeModalOpen(false);
+      setIsSummaryFullscreen(false);
+    };
+    window.addEventListener('mm:mobile-dock-click', handleDockClick);
+    return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+  }, [isMobile]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -504,7 +560,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   );
 
   const periodControlsMobile = (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+    <div className="rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
       <div className="flex items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-300">
         <button
           onClick={() => handleMonthChange(-1)}
@@ -526,7 +582,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       </div>
       <button
         onClick={handleOpenCustomRange}
-        className="mt-2 w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-[#151517] py-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+        className="mt-2 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-[#151517] py-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
       >
         Personalizar
       </button>
@@ -556,7 +612,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   const summaryCards = (
     <div className={isMobile ? 'space-y-2' : 'space-y-3'}>
       <div className={isMobile ? 'grid grid-cols-3 gap-1.5' : 'grid grid-cols-1 md:grid-cols-3 gap-3'}>
-        <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
           <div
             className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
             style={{ color: incomeAccent }}
@@ -570,7 +626,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             {formatCurrency(headerSummary.totalReceitas)}
           </div>
         </div>
-        <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
           <div
             className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
             style={{ color: expenseAccent }}
@@ -584,7 +640,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             {formatCurrency(headerSummary.totalComprometido)}
           </div>
         </div>
-        <div className={`${isMobile ? 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
           <div
             className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
             style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
@@ -602,6 +658,69 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       {healthBar}
     </div>
   );
+
+  const expenseBreakdownCard = isMobile && categoryTotals ? (
+    <section className="bg-white dark:bg-[#151517] rounded-none p-4 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+            <PieChart size={18} className="text-indigo-500" />
+            Onde foi parar seu dinheiro?
+          </h2>
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            Ranking das despesas do período ({periodLabel}).
+          </p>
+        </div>
+        <div className="text-right text-[11px] text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
+          <span className="uppercase tracking-wide font-semibold">Total</span>
+          <div className="text-xs font-semibold text-zinc-900 dark:text-white">
+            {formatCurrency(categoryTotals.totalSum)}
+          </div>
+          <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+            Pagas: {formatCurrency(categoryTotals.totalPaid)}
+          </span>
+        </div>
+      </div>
+      {categoryTotals.displayItems.length > 0 && categoryTotals.totalSum > 0 ? (
+        <div className="space-y-3">
+          <ul className="space-y-2.5">
+            {categoryTotals.displayItems.map((item, index) => {
+              const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
+              const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
+              const barColor =
+                item.category === 'Outros'
+                  ? '#94a3b8'
+                  : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
+              return (
+                <li key={item.key} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
+                        {item.category}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400 shrink-0">
+                      {formatCurrency(item.total)} • {pct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="mt-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${barWidth}%`, backgroundColor: barColor }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : (
+        <div className="text-xs text-zinc-500 dark:text-zinc-400 text-center">
+          Nenhuma despesa registrada neste período.
+        </div>
+      )}
+    </section>
+  ) : null;
 
   const desktopSummaryCards = (
     <div className="grid grid-cols-3 gap-2">
@@ -639,7 +758,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   );
 
   const filtersSection = (
-    <div className={`${isMobile ? 'rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] p-3' : 'rounded-3xl border border-zinc-200 bg-white/90 dark:bg-[#141418] dark:border-white/10 p-5 shadow-[0_8px_18px_rgba(0,0,0,0.12)]'}`}>
+    <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] p-3' : 'rounded-3xl border border-zinc-200 bg-white/90 dark:bg-[#141418] dark:border-white/10 p-5 shadow-[0_8px_18px_rgba(0,0,0,0.12)]'}`}>
       <div className={`flex flex-col ${isMobile ? 'gap-3' : 'gap-5'}`}>
         <div className={`grid ${isMobile ? 'grid-cols-1 gap-3' : 'grid-cols-[1.3fr_1fr] gap-6'}`}>
           <div className="flex flex-col gap-3">
@@ -770,7 +889,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
         {tab === 'map' && (
           <div className={`space-y-4 ${isMobile ? '' : 'flex flex-col h-full min-h-0'}`}>
             {isMobile ? (
-              <div className="rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-5 text-center text-sm text-zinc-600 dark:text-slate-200">
+              <div className="rounded-none border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-5 text-center text-sm text-zinc-600 dark:text-slate-200">
                 Os mapas estão disponíveis apenas no computador.
               </div>
             ) : (
@@ -798,16 +917,19 @@ const ReportsView: React.FC<ReportsViewProps> = ({
         )}
         {(tab === 'summary' || isMobile) && (
           isMobile ? (
-            <ExecutiveSummary
-              expensesByType={expensesByType}
-              totalReceitas={summary.totalReceitas}
-              totalContas={totalContas}
-              totalFaturas={totalFaturas}
-              expenseTypeColors={expenseTypeColors}
-              annualTrend={annualTrend}
-              periodLabel={periodLabel}
-              isMobile={isMobile}
-            />
+            <>
+              <ExecutiveSummary
+                expensesByType={expensesByType}
+                totalReceitas={summary.totalReceitas}
+                totalContas={totalContas}
+                totalFaturas={totalFaturas}
+                expenseTypeColors={expenseTypeColors}
+                annualTrend={annualTrend}
+                periodLabel={periodLabel}
+                isMobile={isMobile}
+              />
+              {expenseBreakdownCard}
+            </>
           ) : (
             <div
               className={`relative ${isSummaryOverlay ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0'}`}
@@ -946,14 +1068,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   const mobileHeader = (
     <div className="space-y-2">
       <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-        <button
-          type="button"
-          onClick={onBack}
-          className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-          aria-label="Voltar para o início"
-        >
-          <Home size={16} />
-        </button>
+        <div className="h-8 w-8" aria-hidden="true" />
         <div className="min-w-0 text-center">
           <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Relatórios</p>
           <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{periodLabel}</p>
@@ -970,14 +1085,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
         <div className="space-y-2">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-            <button
-              type="button"
-              onClick={onBack}
-              className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-              aria-label="Voltar para o início"
-            >
-              <Home size={16} />
-            </button>
+            <div className="h-8 w-8" aria-hidden="true" />
             <div className="min-w-0 text-center">
               <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Relatórios</p>
               <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{periodLabel}</p>
@@ -994,11 +1102,11 @@ const ReportsView: React.FC<ReportsViewProps> = ({
 
   if (isMobile) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+      <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
         <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
           {headerFill.height > 0 && (
             <div
-              className="fixed left-0 right-0 z-20 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl"
+              className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
               style={{ top: headerFill.top, height: headerFill.height }}
             />
           )}
@@ -1008,19 +1116,27 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           >
             <div
               ref={subHeaderRef}
-              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white/95 dark:bg-[#151517]/95 backdrop-blur-xl shadow-sm"
+              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
             >
-              <div className="px-4 pb-3 pt-2">
+              <div className="px-3 pb-3 pt-2">
                 {mobileHeader}
               </div>
             </div>
           </div>
           <div
-            className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
-            style={{ paddingTop: subHeaderHeight ? subHeaderHeight + 28 : undefined }}
+            className="h-full overflow-y-auto px-0 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px))]"
+            style={{
+              paddingTop: subHeaderHeight
+                ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px - ${topAdjust}px)`
+                : 'calc(var(--mm-mobile-top, 0px))'
+            }}
           >
-            <div className="space-y-4">
-              {reportContent}
+            <div className="space-y-0">
+              <div ref={firstSectionRef}>
+                <MobileFullWidthSection contentClassName="px-3 py-3" withDivider={false}>
+                  {reportContent}
+                </MobileFullWidthSection>
+              </div>
             </div>
           </div>
         </div>
@@ -1134,7 +1250,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   }
 
   return (
-    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 pb-6 ${isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
+    <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 pb-6 ${isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
       {desktopSummarySection}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] pb-0">
         <div className="space-y-3">
