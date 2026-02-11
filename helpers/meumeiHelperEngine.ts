@@ -54,11 +54,16 @@ export type HelperTip = {
 };
 
 const STORAGE_KEY = 'meumei.helper';
+const RECENT_IDS_KEY = 'helper_recent_ids';
+const SEEN_COUNT_KEY = 'helper_seen_count';
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const COOLDOWN_SHORT = DAY_MS;
 const COOLDOWN_LONG = 3 * DAY_MS;
 const COOLDOWN_COMPLETE = 7 * DAY_MS;
+const RECENT_LIMIT = 5;
+
+let frequencyDecision: boolean | null = null;
 
 const DEFAULT_STATE: HelperState = {
   dismissedCount: 0,
@@ -73,6 +78,65 @@ const DEFAULT_STATE: HelperState = {
 
 export const trackHelperEvent = (eventName: string, payload: Record<string, unknown> = {}) => {
   console.log('[helper]', eventName, payload);
+};
+
+const loadRecentIds = (): string[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(RECENT_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveRecentIds = (ids: string[]) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(RECENT_IDS_KEY, JSON.stringify(ids));
+  } catch {
+    // ignore
+  }
+};
+
+const loadSeenCount = () => {
+  if (typeof window === 'undefined') return 0;
+  try {
+    const raw = localStorage.getItem(SEEN_COUNT_KEY);
+    const parsed = raw ? Number(raw) : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const saveSeenCount = (count: number) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(SEEN_COUNT_KEY, String(count));
+  } catch {
+    // ignore
+  }
+};
+
+const shouldShowByFrequency = () => {
+  if (frequencyDecision !== null) return frequencyDecision;
+  const seenCount = loadSeenCount();
+  let chance = 1;
+  if (seenCount >= 10 && seenCount < 30) chance = 0.7;
+  else if (seenCount >= 30 && seenCount < 80) chance = 0.4;
+  else if (seenCount >= 80) chance = 0.2;
+
+  if (chance < 1 && Math.random() > chance) {
+    console.log('[helper] skipped by frequency', { seenCount, chance });
+    frequencyDecision = false;
+    return false;
+  }
+
+  frequencyDecision = true;
+  return true;
 };
 
 export const loadHelperState = (): HelperState => {
@@ -120,6 +184,17 @@ const isStepVisible = (step: HelperStep, signals: HelperSignals) => {
 const getEligibleSteps = (track: HelperTrack, signals: HelperSignals) =>
   track.steps.filter((step) => isStepVisible(step, signals));
 
+export const getContextScore = (itemId: string, appState: HelperSignals) => {
+  const baseWeight = 1;
+  const hasMonthData = appState.hasIncomes || appState.hasExpenses;
+  if (!appState.hasAccounts && itemId === 'contas-bancarias') return 5;
+  if (!appState.hasIncomes && itemId === 'entradas') return 5;
+  if (!appState.hasExpenses && itemId === 'despesas-variaveis') return 5;
+  if (hasMonthData && itemId === 'relatorios') return 5;
+  if (appState.isLoggedIn && itemId === 'emissao-das') return 3;
+  return baseWeight;
+};
+
 export const getHelperTips = (signals: HelperSignals): HelperTip[] => {
   const tips: HelperTip[] = [];
   helperTracks.forEach((track) => {
@@ -139,7 +214,11 @@ export const getHelperTips = (signals: HelperSignals): HelperTip[] => {
   return tips;
 };
 
-export const pickHelperTip = (signals: HelperSignals): HelperTip => {
+export const pickHelperTip = (signals: HelperSignals): HelperTip | null => {
+  if (!shouldShowByFrequency()) {
+    return null;
+  }
+
   const fallback: HelperTip = {
     id: 'helper_default',
     title: 'Ajudante do meumei',
@@ -148,37 +227,56 @@ export const pickHelperTip = (signals: HelperSignals): HelperTip => {
     type: 'curiosity'
   };
 
-  const tracksById = helperTracks.reduce<Record<string, HelperTrack>>((acc, track) => {
-    acc[track.id] = track;
-    return acc;
-  }, {});
-
-  const curiosidades = tracksById.curiosidades;
-  const dicas = tracksById.dicas;
-  const pickTrackId = Math.random() < 0.5 ? 'curiosidades' : 'dicas';
-  const primaryTrack = pickTrackId === 'dicas' ? dicas : curiosidades;
-  const secondaryTrack = pickTrackId === 'dicas' ? curiosidades : dicas;
-
-  const pickFromTrack = (track?: HelperTrack) => {
-    if (!track) return null;
-    const steps = getEligibleSteps(track, signals);
-    if (!steps.length) return null;
-    const step = steps[Math.floor(Math.random() * steps.length)];
-    const type = resolveTipType(track.id, step);
-    const tip = {
-      id: step.id,
-      title: step.title,
-      body: step.body,
+  const candidates = helperTracks.flatMap((track) =>
+    getEligibleSteps(track, signals).map((step) => ({
       trackId: track.id,
-      type,
-      ctaId: step.ctaId,
-      ctaLabel: step.ctaLabel
-    };
-    console.log('[helper] pick', { trackId: track.id, id: step.id, type });
-    return tip;
+      step,
+      weight: getContextScore(step.id, signals)
+    }))
+  );
+
+  if (!candidates.length) return fallback;
+
+  const recentIds = loadRecentIds();
+  let filteredCandidates = candidates;
+  if (recentIds.length) {
+    const filtered = candidates.filter((candidate) => !recentIds.includes(candidate.step.id));
+    if (filtered.length === 0) {
+      console.log('[helper] blocked by recent memory', { recentIds, remaining: 0, fallback: true });
+    } else if (filtered.length !== candidates.length) {
+      console.log('[helper] blocked by recent memory', { recentIds, remaining: filtered.length });
+      filteredCandidates = filtered;
+    }
+  }
+
+  const totalWeight = filteredCandidates.reduce((sum, candidate) => sum + candidate.weight, 0);
+  let cursor = Math.random() * totalWeight;
+  let selected = filteredCandidates[filteredCandidates.length - 1];
+  for (const candidate of filteredCandidates) {
+    cursor -= candidate.weight;
+    if (cursor <= 0) {
+      selected = candidate;
+      break;
+    }
+  }
+
+  const tip = {
+    id: selected.step.id,
+    title: selected.step.title,
+    body: selected.step.body,
+    trackId: selected.trackId,
+    type: resolveTipType(selected.trackId, selected.step),
+    ctaId: selected.step.ctaId,
+    ctaLabel: selected.step.ctaLabel
   };
 
-  return pickFromTrack(primaryTrack) || pickFromTrack(secondaryTrack) || fallback;
+  console.log('[helper] pick', { id: tip.id, type: tip.type, weight: selected.weight });
+
+  const nextRecent = [tip.id, ...recentIds.filter((id) => id !== tip.id)].slice(0, RECENT_LIMIT);
+  saveRecentIds(nextRecent);
+  saveSeenCount(loadSeenCount() + 1);
+
+  return tip;
 };
 
 const clampIndex = (value: number, max: number) =>

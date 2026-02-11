@@ -925,16 +925,43 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   }, [financialData.expenses, categoryTotals.totalSum, categoryTotals.monthExpensesAll, categoryTotals.categoryItems]);
 
   // --- MEI Logic ---
-  const meiRevenue = financialData.annualMeiRevenue || 0;
-  const rawPercentage = (meiRevenue / MEI_LIMIT) * 100;
+  const [meiMode, setMeiMode] = useState<'annual' | 'monthly'>('annual');
+  const annualMeiRevenue = financialData.annualMeiRevenue || 0;
+  const monthlyMeiRevenue = useMemo(() => {
+      return incomes
+          .filter(inc => {
+              const d = new Date(inc.date + 'T12:00:00');
+              return (
+                  d.getFullYear() === viewDate.getFullYear() &&
+                  d.getMonth() === viewDate.getMonth() &&
+                  inc.taxStatus !== 'PF'
+              );
+          })
+          .reduce((acc, curr) => acc + curr.amount, 0);
+  }, [incomes, viewDate]);
+  const meiLimit = meiMode === 'annual' ? MEI_LIMIT : MEI_LIMIT / 12;
+  const meiRevenue = meiMode === 'annual' ? annualMeiRevenue : monthlyMeiRevenue;
+  const rawPercentage = meiLimit > 0 ? (meiRevenue / meiLimit) * 100 : 0;
   const displayPercentage = Math.min(Math.max(rawPercentage, 0), 100);
   const progressVisualPercentage = Math.min(Math.max(rawPercentage, 0), 120);
-  const meiRemaining = Math.max(MEI_LIMIT - meiRevenue, 0);
-  const meiExcess = Math.max(meiRevenue - MEI_LIMIT, 0);
+  const meiRemaining = Math.max(meiLimit - meiRevenue, 0);
+  const meiExcess = Math.max(meiRevenue - meiLimit, 0);
   const meiStatus = getMeiStatus(rawPercentage);
   const mascotConfig = getMascotConfig(rawPercentage);
   const incomeAccent = '#22c55e';
   const expenseAccent = '#FF0000';
+  const meiScopeLabel = meiMode === 'annual' ? 'anual' : 'mensal';
+  const meiLimitLabel = meiMode === 'annual' ? 'limite anual' : 'limite mensal estimado';
+  const meiStatusDescription =
+      meiMode === 'annual'
+          ? meiStatus.description
+          : meiStatus.level === 'over'
+            ? 'Você ultrapassou o limite mensal estimado do MEI.'
+            : meiStatus.level === 'critical'
+              ? 'Faltam poucos passos para estourar o limite mensal estimado.'
+              : meiStatus.level === 'attention'
+                ? 'Você já passou da metade do limite mensal estimado.'
+                : 'Seu faturamento está bem abaixo do limite mensal estimado.';
   const healthScore = useMemo(() => {
       const income = financialData.income;
       const expenses = financialData.expenses;
@@ -948,13 +975,13 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const statusCalloutText = (() => {
       switch (meiStatus.level) {
           case 'over':
-              return `Você excedeu o limite em ${formatCurrency(meiExcess)}. Procure orientação contábil.`;
+              return `Você excedeu o ${meiLimitLabel} em ${formatCurrency(meiExcess)}. Procure orientação contábil.`;
           case 'critical':
-              return `Restam ${formatCurrency(meiRemaining)} até alcançar o limite anual. Planeje o próximo mês com cuidado.`;
+              return `Restam ${formatCurrency(meiRemaining)} até alcançar o ${meiLimitLabel}. Planeje o próximo mês com cuidado.`;
           case 'attention':
-              return `Você já utilizou ${rawPercentage.toFixed(1)}% do limite anual. Ajuste suas metas para não estourar.`;
+              return `Você já utilizou ${rawPercentage.toFixed(1)}% do ${meiLimitLabel}. Ajuste suas metas para não estourar.`;
           default:
-              return 'Continue acompanhando o faturamento para manter distância confortável do limite.';
+              return `Continue acompanhando o faturamento para manter distância confortável do ${meiLimitLabel}.`;
       }
   })();
   const calloutIcon = meiStatus.level === 'over' ? OctagonAlert : meiStatus.level === 'critical' ? Flame : meiStatus.level === 'attention' ? AlertTriangle : CheckCircle2;
@@ -1302,13 +1329,15 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                               <h3 className="font-bold text-zinc-900 dark:text-white">Faturamento Fiscal MEI (PJ)</h3>
                                           </div>
                                           <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-xl">
-                                              Acompanhe o seu faturamento anual e evite ultrapassar o limite de R$ 81.000,00 do regime MEI.
+                                              {meiMode === 'annual'
+                                                  ? 'Acompanhe o seu faturamento anual e evite ultrapassar o limite de R$ 81.000,00 do regime MEI.'
+                                                  : 'Acompanhe o seu faturamento mensal e compare com a média mensal do limite do MEI.'}
                                           </p>
                                           <div className={`mt-3 text-sm font-semibold ${meiStatus.accentText}`}>
                                               {meiStatus.label}
                                           </div>
                                           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                                              {meiStatus.description}
+                                              {meiStatusDescription}
                                           </p>
                                       </div>
                                   </div>
@@ -1338,7 +1367,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                   </div>
                                   {MEI_CHECKPOINTS.map((checkpoint) => {
                                       const percent = checkpoint * 100;
-                                      const value = formatCurrency(MEI_LIMIT * checkpoint);
+                                      const value = formatCurrency(meiLimit * checkpoint);
                                       return (
                                           <div
                                               key={checkpoint}
@@ -1354,22 +1383,56 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                   })}
                                   <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
                                       <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Faturado no ano</p>
+                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
+                                              {meiMode === 'annual' ? 'Faturado no ano' : 'Faturado no mês'}
+                                          </p>
                                           <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiRevenue)}</p>
                                           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{rawPercentage.toFixed(1)}% do limite</p>
                                       </div>
                                       <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">{meiStatus.level === 'over' ? 'Excedente sobre o limite' : 'Restante até o limite'}</p>
+                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
+                                              {meiStatus.level === 'over' ? 'Excedente sobre o limite' : 'Restante até o limite'}
+                                          </p>
                                           <p className={`text-xl font-semibold mt-1 ${meiStatus.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
                                               {formatCurrency(meiStatus.level === 'over' ? meiExcess : meiRemaining)}
                                           </p>
-                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Limite anual de {formatCurrency(MEI_LIMIT)}</p>
+                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                                              Limite {meiScopeLabel} de {formatCurrency(meiLimit)}
+                                          </p>
                                       </div>
                                       <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Limite MEI</p>
-                                          <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(MEI_LIMIT)}</p>
-                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Atualizado automaticamente pela legislação</p>
+                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Limite MEI {meiScopeLabel}</p>
+                                          <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiLimit)}</p>
+                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                                              {meiMode === 'annual'
+                                                  ? 'Atualizado automaticamente pela legislação'
+                                                  : 'Estimativa mensal com base no limite anual'}
+                                          </p>
                                       </div>
+                                  </div>
+                                  <div className="mt-4 grid w-full grid-cols-2 gap-3">
+                                      <button
+                                          type="button"
+                                          onClick={() => setMeiMode('annual')}
+                                          className={`h-9 w-full rounded-xl text-sm font-semibold border transition-all shadow-sm ${
+                                              meiMode === 'annual'
+                                                  ? 'border-indigo-200/70 bg-gradient-to-r from-indigo-100/80 to-white text-indigo-700 dark:border-indigo-500/40 dark:from-indigo-400/20 dark:to-indigo-300/10 dark:text-indigo-100'
+                                                  : 'border-zinc-200/70 bg-white/90 text-zinc-600 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-700/70 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:text-zinc-100 dark:hover:border-zinc-500'
+                                          }`}
+                                      >
+                                          Anual
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={() => setMeiMode('monthly')}
+                                          className={`h-9 w-full rounded-xl text-sm font-semibold border transition-all shadow-sm ${
+                                              meiMode === 'monthly'
+                                                  ? 'border-indigo-200/70 bg-gradient-to-r from-indigo-100/80 to-white text-indigo-700 dark:border-indigo-500/40 dark:from-indigo-400/20 dark:to-indigo-300/10 dark:text-indigo-100'
+                                                  : 'border-zinc-200/70 bg-white/90 text-zinc-600 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-700/70 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:text-zinc-100 dark:hover:border-zinc-500'
+                                          }`}
+                                      >
+                                          Mensal
+                                      </button>
                                   </div>
                               </div>
                           </div>

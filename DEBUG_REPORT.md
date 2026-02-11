@@ -139,3 +139,4 @@ firebase deploy --only hosting:meumeiappbeta
   4. Conferir os logs `[helper] pick` no console.
 
 - Helper: nova lista humanizada de Curiosidades/Dicas implementada
+- Helper v2: contextual + anti-repetição + frequência adaptativa implementado

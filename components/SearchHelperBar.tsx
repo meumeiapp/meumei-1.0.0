@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bot, ChevronDown, ChevronUp, Search, Sparkles, Send } from 'lucide-react';
-import type { HelperSignals } from '../helpers/meumeiHelperEngine';
+import type { HelperSignals, HelperTip } from '../helpers/meumeiHelperEngine';
 import { pickHelperTip, trackHelperEvent } from '../helpers/meumeiHelperEngine';
 import { askMeumeiAssistant } from '../services/assistantService';
 
@@ -25,7 +25,7 @@ type SearchHelperBarProps = {
   results?: React.ReactNode;
 };
 
-const TIP_ROTATE_MS = 10000;
+const TIP_ROTATE_MS = 20000;
 
 const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   variant = 'desktop',
@@ -50,7 +50,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   const [assistantError, setAssistantError] = useState('');
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestions, setAssistantSuggestions] = useState<string[]>([]);
-  const [currentTip, setCurrentTip] = useState(() => pickHelperTip(signals));
+  const [currentTip, setCurrentTip] = useState<HelperTip | null>(() => pickHelperTip(signals));
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [assistantCollapsed, setAssistantCollapsed] = useState(false);
 
@@ -93,8 +93,8 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
     ? 'rounded-xl px-2.5 py-1.5 text-[10px]'
     : 'rounded-2xl px-4 py-2 text-[11px]';
 
-  const tipLabel = currentTip.type === 'tip' ? 'Dica' : 'Curiosidade';
-  const showTips = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
+  const tipLabel = currentTip?.type === 'tip' ? 'Dica' : 'Curiosidade';
+  const showTips = (typeof tipsEnabled === 'boolean' ? tipsEnabled : true) && Boolean(currentTip);
 
   useEffect(() => {
     setCurrentTip(pickHelperTip(signals));
@@ -284,10 +284,10 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
         </button>
       )}
 
-      {!isFloatingAssistant && showTips && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3 text-xs text-zinc-600 dark:text-white/70">
-          <div className="flex items-start gap-3">
-            <span className="mt-1 inline-flex rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
+      {!isFloatingAssistant && showTips && currentTip && (
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3 text-xs text-zinc-600 dark:text-white/70">
+          <div className="flex flex-col gap-2">
+            <span className="inline-flex w-fit rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
               {tipLabel}
             </span>
             <div>
@@ -364,10 +364,10 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                         <ChevronDown size={14} />
                       </button>
                     </div>
-                    {showTips && (
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-3 py-2 text-xs text-zinc-600 dark:text-white/70">
-                        <div className="flex items-start gap-3">
-                          <span className="mt-1 inline-flex rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
+                    {showTips && currentTip && (
+                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-3 py-2 text-xs text-zinc-600 dark:text-white/70">
+                        <div className="flex flex-col gap-2">
+                          <span className="inline-flex w-fit rounded-full bg-zinc-100 dark:bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500 dark:text-white/60">
                             {tipLabel}
                           </span>
                           <div>
