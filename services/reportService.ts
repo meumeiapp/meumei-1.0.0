@@ -52,6 +52,7 @@ const filterIncomes = (context: ReportContext, filters: ReportFilters, start: Da
 
 const filterExpenses = (context: ReportContext, filters: ReportFilters, start: Date, end: Date) => {
     return context.expenses.filter(exp => {
+        if (exp.origin === 'invoice_payment' || exp.origin === 'invoice_reversal') return false;
         if (filters.taxFilter !== 'all') {
             if ((exp.taxStatus || 'PJ') !== filters.taxFilter) return false;
         }

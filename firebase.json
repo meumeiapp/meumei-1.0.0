@@ -73,6 +73,62 @@
           }
         },
         {
+          "source": "/api/createBetaKey",
+          "function": {
+            "functionId": "createBetaKey",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/listBetaKeys",
+          "function": {
+            "functionId": "listBetaKeys",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/revokeBetaKey",
+          "function": {
+            "functionId": "revokeBetaKey",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/deleteBetaKey",
+          "function": {
+            "functionId": "deleteBetaKey",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/grantLifetimeAccess",
+          "function": {
+            "functionId": "grantLifetimeAccess",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/redeemBetaKey",
+          "function": {
+            "functionId": "redeemBetaKey",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/requestTrialKey",
+          "function": {
+            "functionId": "requestTrialKey",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/masterMetrics",
+          "function": {
+            "functionId": "masterMetrics",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bot, ChevronDown, ChevronUp, Search, Sparkles, Send } from 'lucide-react';
+import { Bot, ChevronDown, ChevronUp, Search, Sparkles, Send, X } from 'lucide-react';
 import type { HelperSignals, HelperTip } from '../helpers/meumeiHelperEngine';
 import { pickHelperTip, trackHelperEvent } from '../helpers/meumeiHelperEngine';
 import { askMeumeiAssistant } from '../services/assistantService';
@@ -14,6 +14,8 @@ type SearchHelperBarProps = {
   assistantButtonLabel?: string;
   assistantBackLabel?: string;
   assistantPlacement?: 'inline' | 'floating';
+  assistantHidden?: boolean;
+  onAssistantClose?: () => void;
   searchQuery: string;
   setSearchQuery: (value: string) => void;
   setActiveSearchIndex: (value: number) => void;
@@ -34,6 +36,8 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   assistantButtonLabel = 'Ajudante do meumei',
   assistantBackLabel = 'Voltar para busca',
   assistantPlacement = 'inline',
+  assistantHidden = false,
+  onAssistantClose,
   searchQuery,
   setSearchQuery,
   setActiveSearchIndex,
@@ -57,12 +61,14 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   const isDesktop = variant === 'desktop';
   const isSubheader = appearance === 'subheader';
   const isFloatingAssistant = assistantPlacement === 'floating' && isDesktop;
+  const showFloatingAssistant = isFloatingAssistant && !assistantHidden;
   const desktopFooterOffset = '0px';
   const effectiveMode = isFloatingAssistant ? 'search' : mode;
   const showModeTabs = !isFloatingAssistant && modeToggle === 'tabs';
   const showAssistantButton = !isFloatingAssistant && modeToggle === 'button';
   const showTrailingActionButton = showModeTabs ? effectiveMode === 'assistant' : modeToggle === 'button';
   const assistantActive = !isFloatingAssistant && effectiveMode === 'assistant';
+  const canCloseAssistant = Boolean(onAssistantClose);
   const containerPadding = isSubheader
     ? isDesktop
       ? 'px-4 py-1.5'
@@ -198,6 +204,11 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
     action();
   };
 
+  const handleAssistantClose = () => {
+    setAssistantCollapsed(false);
+    onAssistantClose?.();
+  };
+
   return (
     <div className="space-y-3">
       <div className="relative">
@@ -328,7 +339,7 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
           )}
         </div>
       )}
-      {isFloatingAssistant &&
+      {showFloatingAssistant &&
         (typeof document !== 'undefined'
           ? createPortal(
               <div
@@ -336,18 +347,30 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                 style={{ bottom: desktopFooterOffset }}
               >
                 {assistantCollapsed ? (
-                  <button
-                    type="button"
-                    onClick={() => setAssistantCollapsed(false)}
-                    className="w-full rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/95 dark:bg-[#0f0f12] px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-white/80 shadow-2xl flex items-center justify-between"
-                    aria-label="Abrir ajudante"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Bot size={14} />
-                      Ajudante
-                    </span>
-                    <ChevronUp size={14} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAssistantCollapsed(false)}
+                      className="flex-1 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/95 dark:bg-[#0f0f12] px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-white/80 shadow-2xl flex items-center justify-between"
+                      aria-label="Abrir ajudante"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Bot size={14} />
+                        Ajudante
+                      </span>
+                      <ChevronUp size={14} />
+                    </button>
+                    {canCloseAssistant && (
+                      <button
+                        type="button"
+                        onClick={handleAssistantClose}
+                        className="h-9 w-9 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/95 dark:bg-[#0f0f12] text-zinc-500 dark:text-white/70 shadow-2xl flex items-center justify-center hover:text-zinc-800 dark:hover:text-white"
+                        aria-label="Fechar ajudante"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <div className="rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/95 dark:bg-[#0f0f12] px-4 py-3 text-sm text-zinc-800 dark:text-white/85 shadow-2xl space-y-3">
                     <div className="flex items-center justify-between">
@@ -355,14 +378,26 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                         <Bot size={14} className="text-zinc-500 dark:text-white/60" />
                         Ajudante
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setAssistantCollapsed(true)}
-                        className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-white/10 text-zinc-500 dark:text-white/70 flex items-center justify-center hover:text-zinc-800 dark:hover:text-white"
-                        aria-label="Recolher ajudante"
-                      >
-                        <ChevronDown size={14} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAssistantCollapsed(true)}
+                          className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-white/10 text-zinc-500 dark:text-white/70 flex items-center justify-center hover:text-zinc-800 dark:hover:text-white"
+                          aria-label="Recolher ajudante"
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                        {canCloseAssistant && (
+                          <button
+                            type="button"
+                            onClick={handleAssistantClose}
+                            className="h-7 w-7 rounded-full border border-zinc-200/70 dark:border-white/10 text-zinc-500 dark:text-white/70 flex items-center justify-center hover:text-zinc-800 dark:hover:text-white"
+                            aria-label="Fechar ajudante"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {showTips && currentTip && (
                       <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-3 py-2 text-xs text-zinc-600 dark:text-white/70">

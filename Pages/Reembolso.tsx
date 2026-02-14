@@ -13,6 +13,7 @@ export default function Reembolso() {
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [submitPendingEmail, setSubmitPendingEmail] = useState(false);
   const [submitMessage, setSubmitMessage] = useState('');
+  const [submitStatus, setSubmitStatus] = useState('');
 
   const navigate = (path: string) => {
     if (typeof window === 'undefined') return;
@@ -28,9 +29,9 @@ export default function Reembolso() {
 
   const resolveRefundEndpoint = () => {
     if (refundEndpointOverride) return refundEndpointOverride;
-    if (functionsBaseUrl) return `${functionsBaseUrl.replace(/\/+$/, '')}/requestRefund`;
+    if (functionsBaseUrl) return `${functionsBaseUrl.replace(/\/+$/, '')}/requestRefundV2`;
     if (!firebaseProjectId) return '';
-    return `https://${functionsRegion}-${firebaseProjectId}.cloudfunctions.net/requestRefund`;
+    return `https://${functionsRegion}-${firebaseProjectId}.cloudfunctions.net/requestRefundV2`;
   };
 
   const canSubmit = useMemo(() => {
@@ -44,6 +45,7 @@ export default function Reembolso() {
     setSubmitSuccess(false);
     setSubmitPendingEmail(false);
     setSubmitMessage('');
+    setSubmitStatus('');
     if (!canSubmit) {
       setSubmitError('Preencha nome, e-mail e data da compra.');
       return;
@@ -76,6 +78,7 @@ export default function Reembolso() {
       }
       setSubmitSuccess(true);
       setSubmitPendingEmail(Boolean(body?.pendingEmail));
+      setSubmitStatus(typeof body?.status === 'string' ? body.status : '');
       setSubmitMessage(
         typeof body?.message === 'string' && body.message.trim().length > 0
           ? body.message
@@ -213,10 +216,19 @@ export default function Reembolso() {
               <div className="text-sm text-rose-500">{submitError}</div>
             )}
             {submitSuccess && (
-              <div className="text-sm text-emerald-500">
-                {submitPendingEmail
-                  ? 'Solicitação registrada com sucesso. Nossa equipe vai responder manualmente em breve.'
-                  : submitMessage}
+              <div className="text-sm text-emerald-500 space-y-1">
+                <div>
+                  {submitPendingEmail
+                    ? 'Solicitação registrada com sucesso. Nossa equipe vai responder manualmente em breve.'
+                    : submitMessage}
+                </div>
+                {submitStatus === 'refunded' && (
+                  <div className="text-xs text-emerald-200">
+                    Normalmente o estorno aparece em 5–10 dias úteis. Em alguns bancos pode vir como
+                    reversão da compra. Se passar de 10 dias úteis, peça ajuda ao banco (em casos raros
+                    pode levar até ~30 dias).
+                  </div>
+                )}
               </div>
             )}
 

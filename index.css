@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+
 @layer base {
   html.is-mobile,
   html.is-mobile body {
@@ -659,7 +660,7 @@ html.dark:not(.is-mobile) .quick-access-shell::after {
 }
 
 @media (orientation: landscape) {
-  html.is-mobile:not(.allow-landscape) body::before {
+  html.is-mobile:not(.allow-landscape) body[data-app-shell='true']::before {
     content: 'Use em modo retrato';
     position: fixed;
     inset: 0;
@@ -675,7 +676,7 @@ html.dark:not(.is-mobile) .quick-access-shell::after {
     z-index: 9999;
   }
 
-  html.is-mobile:not(.allow-landscape) #root {
+  html.is-mobile:not(.allow-landscape) body[data-app-shell='true'] #root {
     visibility: hidden;
   }
 }

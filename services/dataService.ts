@@ -1269,6 +1269,21 @@ export const dataService = {
         });
     },
 
+    async updateLastActive(licenseId: string): Promise<void> {
+        if (!licenseId) return;
+        const path = `users/${licenseId}`;
+        if (!guardUserPath(licenseId, path, 'last_active')) return;
+        try {
+            await setDoc(
+                getUserDocRef(licenseId),
+                sanitizeData({ lastActiveAt: serverTimestamp() }),
+                { merge: true }
+            );
+        } catch (error) {
+            console.warn('[metrics] last_active_failed', { licenseId, error });
+        }
+    },
+
     async upsertCreditCard(card: CreditCard, licenseId: string): Promise<void> {
         const path = `users/${licenseId}/${COLLECTIONS.CREDIT_CARDS}/${card.id}`;
         if (!guardUserPath(licenseId, path, 'credit_card_upsert')) return;

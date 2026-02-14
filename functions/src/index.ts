@@ -23,6 +23,8 @@ const VERTEX_MODEL = (process.env.VERTEX_MODEL || process.env.GEMINI_MODEL || 'g
   .trim();
 const vertexAI = PROJECT_ID ? new VertexAI({ project: PROJECT_ID, location: VERTEX_LOCATION }) : null;
 const DAILY_TIP_TIMEZONE = 'America/Sao_Paulo';
+const MASTER_UID = 'ZbrLdQuqn4MlOK16MjBOr6GZM3l1';
+const MASTER_EMAIL = 'meumeiaplicativo@gmail.com';
 
 const runtimeConfig = (() => {
   try {
@@ -114,17 +116,130 @@ const sendRefundEmail = async (
   }
 };
 
+const sendTrialEmail = async (payload: { email: string; code: string; loginUrl: string }) => {
+  const transport = getRefundTransport();
+  if (!transport || !REFUND_FROM_EMAIL) return false;
+  const subject = 'Sua chave de teste do meumei (7 dias)';
+  const text = `Olá!\n\nSua chave de teste do meumei (7 dias) é:\n${payload.code}\n\nAcesse o login por aqui:\n${payload.loginUrl}\n\nSe você não solicitou este teste, ignore este e-mail.\n\nEquipe meumei.`;
+  try {
+    await transport.sendMail({
+      from: REFUND_FROM_EMAIL,
+      to: payload.email,
+      subject,
+      text
+    });
+    return true;
+  } catch (error) {
+    console.error('[trial] email_error', error);
+    return false;
+  }
+};
+
 const applyCors = (req: functions.https.Request, res: functions.Response<any>) => {
   const origin = (req.headers.origin as string) || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Vary', 'Origin');
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return true;
   }
   return false;
+};
+
+const BETA_KEY_COLLECTION = 'beta_keys';
+const TRIAL_DURATION_DAYS = 7;
+
+const parseRequestBody = (req: functions.https.Request) => {
+  if (req.body && typeof req.body === 'object') {
+    return (req.body as any).data || req.body;
+  }
+  return {};
+};
+
+const parseBearerToken = (req: functions.https.Request) => {
+  const header = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || '';
+};
+
+const requireAuth = async (req: functions.https.Request, res: functions.Response<any>) => {
+  const token = parseBearerToken(req);
+  if (!token) {
+    res.status(401).json({ ok: false, message: 'Auth ausente.' });
+    return null;
+  }
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    return { uid: decoded.uid, email: decoded.email || '' };
+  } catch (error) {
+    res.status(401).json({ ok: false, message: 'Auth inválida.' });
+    return null;
+  }
+};
+
+const requireAdmin = async (req: functions.https.Request, res: functions.Response<any>) => {
+  const auth = await requireAuth(req, res);
+  if (!auth) return null;
+  const normalizedEmail = auth.email.trim().toLowerCase();
+  const isMaster =
+    auth.uid === MASTER_UID || (normalizedEmail && normalizedEmail === MASTER_EMAIL);
+  if (!isMaster) {
+    res.status(403).json({ ok: false, message: 'Permissão negada.' });
+    return null;
+  }
+  return auth;
+};
+
+const normalizeBetaEmail = (value: string) => value.trim().toLowerCase();
+const normalizeBetaCode = (value: string) => value.trim().toUpperCase();
+const isValidEmail = (value: string) => /.+@.+\..+/.test(value.trim());
+
+const generateBetaCode = () => {
+  const part = () => Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `MEUMEI-${part()}-${part()}`;
+};
+
+const ensureUniqueBetaCode = async () => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const code = generateBetaCode();
+    const existing = await admin
+      .firestore()
+      .collection(BETA_KEY_COLLECTION)
+      .where('code', '==', code)
+      .limit(1)
+      .get();
+    if (existing.empty) return code;
+  }
+  return generateBetaCode();
+};
+
+const serializeBetaKey = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
+  const data = doc.data() || {};
+  const toMs = (value: any) => {
+    if (!value) return null;
+    if (typeof value.toMillis === 'function') return value.toMillis();
+    if (typeof value.seconds === 'number') return value.seconds * 1000;
+    return null;
+  };
+  return {
+    id: doc.id,
+    code: String(data.code || ''),
+    durationDays: Number(data.durationDays || 0),
+    maxUses: Number(data.maxUses || 0),
+    uses: Number(data.uses || 0),
+    isActive: data.isActive !== false,
+    source: String(data.source || ''),
+    requestedEmail: data.requestedEmail || null,
+    createdAtMs: toMs(data.createdAt),
+    expiresAtMs: toMs(data.expiresAt),
+    lastUsedAtMs: toMs(data.lastUsedAt),
+    lastRequestedAtMs: toMs(data.lastRequestedAt),
+    revokedAtMs: toMs(data.revokedAt),
+    lifetimeGrantedEmail: data.lifetimeGrantedEmail || null,
+    lifetimeGrantedAtMs: toMs(data.lifetimeGrantedAt)
+  };
 };
 
 const SYSTEM_PROMPT = `
@@ -147,6 +262,7 @@ Mini mapa do app:
 const MAX_RESPONSE_CHARS = 1200;
 const RATE_LIMIT = 10;
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 const getClientIp = (req: functions.https.Request) => {
   const forwarded = req.headers['x-forwarded-for'];
@@ -576,6 +692,520 @@ export const sendPushNotification = functions
       return;
     }
     res.status(200).json(result);
+  });
+
+export const createBetaKey = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const durationDays = Number(body.durationDays);
+    const maxUses = Number(body.maxUses);
+    if (!Number.isFinite(durationDays) || durationDays <= 0) {
+      res.status(400).json({ ok: false, message: 'Duração inválida.' });
+      return;
+    }
+    if (!Number.isFinite(maxUses) || maxUses <= 0) {
+      res.status(400).json({ ok: false, message: 'Limite de usos inválido.' });
+      return;
+    }
+
+    try {
+      const code = await ensureUniqueBetaCode();
+      const nowMs = Date.now();
+      const docRef = admin.firestore().collection(BETA_KEY_COLLECTION).doc();
+      await docRef.set({
+        code,
+        durationDays,
+        maxUses,
+        uses: 0,
+        isActive: true,
+        source: 'manual',
+        createdBy: auth.uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      res.status(200).json({
+        ok: true,
+        key: {
+          id: docRef.id,
+          code,
+          durationDays,
+          maxUses,
+          uses: 0,
+          isActive: true,
+          createdAtMs: nowMs,
+          expiresAtMs: null,
+          lastUsedAtMs: null
+        }
+      });
+    } catch (error) {
+      console.error('[beta] create_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao criar a chave.' });
+    }
+  });
+
+export const listBetaKeys = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    try {
+      const snap = await admin
+        .firestore()
+        .collection(BETA_KEY_COLLECTION)
+        .orderBy('createdAt', 'desc')
+        .limit(50)
+        .get();
+      const keys = snap.docs.map(serializeBetaKey);
+      res.status(200).json({ ok: true, keys });
+    } catch (error) {
+      console.error('[beta] list_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao listar as chaves.' });
+    }
+  });
+
+export const revokeBetaKey = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const keyId = String(body.keyId || '').trim();
+    if (!keyId) {
+      res.status(400).json({ ok: false, message: 'Chave inválida.' });
+      return;
+    }
+
+    try {
+      await admin
+        .firestore()
+        .collection(BETA_KEY_COLLECTION)
+        .doc(keyId)
+        .set(
+          {
+            isActive: false,
+            revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error('[beta] revoke_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao revogar a chave.' });
+    }
+  });
+
+export const deleteBetaKey = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const keyId = String(body.keyId || '').trim();
+    if (!keyId) {
+      res.status(400).json({ ok: false, message: 'Chave inválida.' });
+      return;
+    }
+
+    try {
+      await admin.firestore().collection(BETA_KEY_COLLECTION).doc(keyId).delete();
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error('[beta] delete_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao excluir a chave.' });
+    }
+  });
+
+export const grantLifetimeAccess = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const emailRaw = String(body.email || '').trim();
+    const keyId = String(body.keyId || '').trim();
+    const codeRaw = String(body.code || '').trim();
+
+    if (!emailRaw || !isValidEmail(emailRaw)) {
+      res.status(400).json({ ok: false, message: 'Informe um e-mail válido.' });
+      return;
+    }
+
+    const email = normalizeBetaEmail(emailRaw);
+    let code = codeRaw ? normalizeBetaCode(codeRaw) : '';
+    let keyRef: FirebaseFirestore.DocumentReference | null = null;
+    let keyData: FirebaseFirestore.DocumentData | null = null;
+
+    try {
+      if (keyId) {
+        keyRef = admin.firestore().collection(BETA_KEY_COLLECTION).doc(keyId);
+        const keySnap = await keyRef.get();
+        if (!keySnap.exists) {
+          res.status(404).json({ ok: false, message: 'Chave não encontrada.' });
+          return;
+        }
+        keyData = keySnap.data() || null;
+        if (keyData?.code) {
+          code = normalizeBetaCode(String(keyData.code));
+        }
+      }
+
+      const entitlementRef = admin.firestore().collection('entitlements').doc(email);
+      const entitlementSnap = await entitlementRef.get();
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const entitlementPayload: Record<string, any> = {
+        status: 'active',
+        planType: 'lifetime',
+        source: 'beta_admin',
+        lifetime: true,
+        expiresAt: null,
+        betaKeyId: keyId || null,
+        betaCode: code || null,
+        lifetimeGrantedBy: auth.uid,
+        lifetimeGrantedAt: now,
+        updatedAt: now
+      };
+      if (!entitlementSnap.exists) {
+        entitlementPayload.createdAt = now;
+      }
+
+      await entitlementRef.set(entitlementPayload, { merge: true });
+
+      if (keyRef) {
+        await keyRef.set(
+          {
+            lifetimeGrantedEmail: email,
+            lifetimeGrantedAt: now,
+            lifetimeGrantedBy: auth.uid,
+            updatedAt: now
+          },
+          { merge: true }
+        );
+      }
+
+      res.status(200).json({
+        ok: true,
+        email,
+        keyId: keyId || null,
+        code: code || null
+      });
+    } catch (error) {
+      console.error('[beta] lifetime_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao liberar acesso vitalício.' });
+    }
+  });
+
+const resolveSafeOrigin = (raw: string) => {
+  const fallback = 'https://meumeiapp.com.br';
+  if (!raw) return fallback;
+  try {
+    const url = new URL(raw);
+    const allowedHosts = new Set([
+      'meumeiapp.com.br',
+      'www.meumeiapp.com.br',
+      'meumei-d88be.web.app',
+      'meumei-d88be.firebaseapp.com',
+      'meumeiapp.web.app',
+      'meumeiapp.firebaseapp.com',
+      'localhost:3000'
+    ]);
+    if (allowedHosts.has(url.host)) return url.origin;
+  } catch {
+    return fallback;
+  }
+  return fallback;
+};
+
+export const requestTrialKey = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const body = parseRequestBody(req);
+    const emailRaw = String(body.email || '').trim();
+    if (!emailRaw || !isValidEmail(emailRaw)) {
+      res.status(400).json({ ok: false, message: 'Informe um e-mail válido.' });
+      return;
+    }
+
+    const email = normalizeBetaEmail(emailRaw);
+    const originRaw = String(body.origin || req.headers.origin || '').trim();
+    const origin = resolveSafeOrigin(originRaw);
+    const nowMs = Date.now();
+    const entitlementRef = admin.firestore().collection('entitlements').doc(email);
+
+    try {
+      const entitlementSnap = await entitlementRef.get();
+      if (entitlementSnap.exists) {
+        const data = entitlementSnap.data() || {};
+        const status = String(data.status || '');
+        const expired = (() => {
+          const raw = data.expiresAt;
+          if (!raw) return false;
+          if (typeof raw.toMillis === 'function') return raw.toMillis() <= nowMs;
+          if (typeof raw.seconds === 'number') return raw.seconds * 1000 <= nowMs;
+          return false;
+        })();
+        if (status === 'active' && !expired) {
+          res.status(200).json({
+            ok: true,
+            status: 'already_active',
+            message: 'Seu acesso já está ativo.'
+          });
+          return;
+        }
+        const source = String(data.source || '');
+        const planType = String(data.planType || '');
+        if (source === 'trial' || planType === 'trial') {
+          res.status(403).json({
+            ok: false,
+            status: 'trial_used',
+            message: 'Seu teste grátis já foi utilizado. Assine para continuar.'
+          });
+          return;
+        }
+      }
+
+      const existingSnap = await admin
+        .firestore()
+        .collection(BETA_KEY_COLLECTION)
+        .where('requestedEmail', '==', email)
+        .limit(5)
+        .get();
+
+      const toMs = (value: any) => {
+        if (!value) return 0;
+        if (typeof value.toMillis === 'function') return value.toMillis();
+        if (typeof value.seconds === 'number') return value.seconds * 1000;
+        return 0;
+      };
+
+      const candidates = existingSnap.docs
+        .map((doc) => ({ doc, data: doc.data() || {} }))
+        .sort((a, b) => toMs(b.data.createdAt) - toMs(a.data.createdAt));
+
+      let code = '';
+      let keyDocId: string | null = null;
+      candidates.some(({ doc, data }) => {
+        const maxUses = Number(data.maxUses || 0);
+        const uses = Number(data.uses || 0);
+        const isActive = data.isActive !== false;
+        const expiresAt = data.expiresAt;
+        const expired =
+          expiresAt &&
+          typeof expiresAt.toMillis === 'function' &&
+          expiresAt.toMillis() < nowMs;
+        if (isActive && (!maxUses || uses < maxUses) && !expired) {
+          keyDocId = doc.id;
+          code = String(data.code || '');
+          return true;
+        }
+        return false;
+      });
+
+      if (!code) {
+        code = await ensureUniqueBetaCode();
+        const expiresAt = admin.firestore.Timestamp.fromMillis(nowMs + TRIAL_DURATION_DAYS * DAY_MS);
+        const createdRef = await admin.firestore().collection(BETA_KEY_COLLECTION).add({
+          code,
+          durationDays: TRIAL_DURATION_DAYS,
+          maxUses: 1,
+          uses: 0,
+          isActive: true,
+          source: 'trial',
+          requestedEmail: email,
+          createdBy: 'system',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+          expiresAt
+        });
+        keyDocId = createdRef.id;
+      } else if (keyDocId) {
+        await admin.firestore().collection(BETA_KEY_COLLECTION).doc(keyDocId).set(
+          {
+            lastRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      }
+
+      const loginUrl = `${origin}/login?beta=${encodeURIComponent(code)}&email=${encodeURIComponent(email)}`;
+      const emailSent = await sendTrialEmail({ email, code, loginUrl });
+
+      if (!emailSent) {
+        res.status(200).json({
+          ok: true,
+          status: 'email_failed',
+          code,
+          loginUrl,
+          message: 'Não foi possível enviar o e-mail agora. Use a chave abaixo para entrar.'
+        });
+        return;
+      }
+
+      res.status(200).json({
+        ok: true,
+        status: 'sent',
+        code,
+        loginUrl,
+        message: 'Enviamos a chave de teste para o seu e-mail.'
+      });
+    } catch (error) {
+      console.error('[trial] request_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao gerar a chave de teste.' });
+    }
+  });
+
+export const redeemBetaKey = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const body = parseRequestBody(req);
+    const emailRaw = String(body.email || '').trim();
+    const codeRaw = String(body.code || '').trim();
+    if (!emailRaw || !codeRaw) {
+      res.status(400).json({ ok: false, message: 'Informe e-mail e chave.' });
+      return;
+    }
+
+    const email = normalizeBetaEmail(emailRaw);
+    const code = normalizeBetaCode(codeRaw);
+    const nowMs = Date.now();
+
+    try {
+      const result = await admin.firestore().runTransaction(async (tx) => {
+        const query = admin
+          .firestore()
+          .collection(BETA_KEY_COLLECTION)
+          .where('code', '==', code)
+          .limit(1);
+        const querySnap = await tx.get(query);
+        if (querySnap.empty) {
+          throw new Error('invalid_code');
+        }
+        const keyDoc = querySnap.docs[0];
+        const data = keyDoc.data() || {};
+        if (data.isActive === false) {
+          throw new Error('inactive');
+        }
+        const maxUses = Number(data.maxUses || 0);
+        const uses = Number(data.uses || 0);
+        if (!maxUses || uses >= maxUses) {
+          throw new Error('max_uses');
+        }
+        const requestedEmail = String(data.requestedEmail || '').trim().toLowerCase();
+        if (requestedEmail && requestedEmail !== email) {
+          throw new Error('email_mismatch');
+        }
+        const expiresAt = data.expiresAt;
+        if (expiresAt && typeof expiresAt.toMillis === 'function' && expiresAt.toMillis() < nowMs) {
+          throw new Error('expired');
+        }
+        const durationDays = Number(data.durationDays || 14);
+        const durationMs = Math.max(durationDays, 1) * DAY_MS;
+        const entitlementExpiresAt = admin.firestore.Timestamp.fromMillis(nowMs + durationMs);
+        const source = String(data.source || 'beta');
+        const planType = source === 'trial' ? 'trial' : 'beta';
+        const entitlementRef = admin.firestore().collection('entitlements').doc(email);
+        tx.set(
+          entitlementRef,
+          {
+            status: 'active',
+            planType,
+            source,
+            betaKeyId: keyDoc.id,
+            betaCode: code,
+            trialDays: source === 'trial' ? durationDays : null,
+            trialStartAt: source === 'trial' ? admin.firestore.FieldValue.serverTimestamp() : null,
+            expiresAt: entitlementExpiresAt,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+        tx.update(keyDoc.ref, {
+          uses: admin.firestore.FieldValue.increment(1),
+          lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return { expiresAtMs: nowMs + durationMs };
+      });
+
+      res.status(200).json({ ok: true, expiresAtMs: result.expiresAtMs });
+    } catch (error: any) {
+      const reason = error?.message || 'unknown';
+      console.error('[beta] redeem_error', { reason });
+      if (reason === 'invalid_code') {
+        res.status(404).json({ ok: false, message: 'Chave não encontrada.' });
+        return;
+      }
+      if (reason === 'inactive') {
+        res.status(403).json({ ok: false, message: 'Chave desativada.' });
+        return;
+      }
+      if (reason === 'max_uses') {
+        res.status(403).json({ ok: false, message: 'Chave já utilizada.' });
+        return;
+      }
+      if (reason === 'expired') {
+        res.status(403).json({ ok: false, message: 'Chave expirada.' });
+        return;
+      }
+      if (reason === 'email_mismatch') {
+        res.status(403).json({ ok: false, message: 'Esta chave está vinculada a outro e-mail.' });
+        return;
+      }
+      res.status(500).json({ ok: false, message: 'Falha ao validar a chave.' });
+    }
   });
 
 export const pushNotificationRequest = functions

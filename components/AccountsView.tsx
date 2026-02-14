@@ -1502,7 +1502,6 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           const isSelected = selectedIds.includes(account.id);
                           const computedBalance = resolveRealBalance(account);
                           const isExpanded = drawerAccount?.id === account.id;
-                          const isInlineEditing = inlineEditAccountId === account.id;
                           const details = isExpanded ? buildAccountDetails(account) : [];
                           const rowBg = withAlpha(account.color || getAccountColor(account), 0.12);
 
@@ -1565,15 +1564,15 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                                   <button
                                                       type="button"
                                                       onClick={() => {
-                                                          if (inlineEditAccountId === account.id) {
-                                                              setInlineEditAccountId(null);
-                                                              return;
-                                                          }
-                                                          startInlineEdit(account);
+                                                          // Desktop: abrir modal igual "Nova Conta"
+                                                          setInlineEditAccountId(null);
+                                                          setDrawerAccount(null);
+                                                          setEditingAccount(account);
+                                                          setIsModalOpen(true);
                                                       }}
                                                       className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
                                                   >
-                                                      {isInlineEditing ? 'Fechar edição' : 'Editar'}
+                                                      Editar
                                                   </button>
                                                   <button
                                                       type="button"
@@ -1584,7 +1583,6 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                                   </button>
                                               </div>
                                           )}
-                                          {!isLocked && isInlineEditing && renderInlineEditForm(account)}
                                       </div>
                                   )}
                               </div>

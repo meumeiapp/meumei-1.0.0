@@ -39,6 +39,8 @@ const toDate = (value: unknown): Date | null => {
 };
 
 export const resolveExpenseDate = (expense: Expense): Date | null => {
+  const due = toDate((expense as { dueDate?: unknown }).dueDate);
+  if (due) return due;
   const primary = toDate(expense.date);
   if (primary) return primary;
   const paidAt = toDate((expense as { paidAt?: unknown }).paidAt);
@@ -63,6 +65,7 @@ export const getMonthExpenses = (
     : `${start.toLocaleDateString('pt-BR', { month: 'long' })}/${start.getFullYear()}`;
 
   const monthExpensesAll = expenses.filter(expense => {
+    if (expense.origin === 'invoice_payment' || expense.origin === 'invoice_reversal') return false;
     const date = resolveExpenseDate(expense);
     if (!date) return false;
     return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();

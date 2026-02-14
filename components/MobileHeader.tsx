@@ -16,6 +16,16 @@ interface MobileHeaderProps {
   onCompanyClick: () => void;
   canAccessSettings: boolean;
   versionLabel?: string;
+  entitlementBadge?: {
+    label: string;
+  } | null;
+  renewalInfo?: {
+    label: string;
+    dateLabel: string;
+    daysLeft: number;
+    ctaLabel?: string;
+  } | null;
+  onRenew?: () => void;
 }
 
 const MobileHeader: React.FC<MobileHeaderProps> = ({
@@ -26,7 +36,10 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
   onOpenCalculator,
   onLogout,
   canAccessSettings,
-  versionLabel
+  versionLabel,
+  entitlementBadge,
+  renewalInfo,
+  onRenew
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -95,6 +108,33 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
           {versionLabel && (
             <div className="pt-2 text-center text-[10px] text-zinc-400">
               {versionLabel}
+            </div>
+          )}
+          {entitlementBadge && (
+            <div className="pt-2 text-center">
+              <span className="inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+                {entitlementBadge.label}
+              </span>
+            </div>
+          )}
+          {renewalInfo && (
+            <div className="pt-2 text-center text-[10px] text-zinc-400 space-y-1">
+              <div>
+                {renewalInfo.label} {renewalInfo.dateLabel}
+              </div>
+              <div>Faltam {renewalInfo.daysLeft} dias</div>
+              {onRenew && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeMenu();
+                    onRenew();
+                  }}
+                  className="mx-auto mt-1 inline-flex items-center justify-center rounded-full border border-zinc-300/40 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-zinc-500 hover:text-zinc-700"
+                >
+                  {renewalInfo.ctaLabel || 'Renovar'}
+                </button>
+              )}
             </div>
           )}
         </div>

@@ -48,8 +48,30 @@ const roundToCents = (value: number) =>
 
 const parseDate = (value?: string) => {
   if (!value) return null;
-  const date = new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('T')) {
+    const iso = new Date(trimmed);
+    if (!Number.isNaN(iso.getTime())) return iso;
+  }
+  const brMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brMatch) {
+    const [, day, month, year] = brMatch;
+    const parsed = new Date(`${year}-${month}-${day}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const parsed = new Date(`${trimmed}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const slashMatch = trimmed.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (slashMatch) {
+    const parsed = new Date(`${slashMatch[1]}-${slashMatch[2]}-${slashMatch[3]}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const fallback = new Date(trimmed);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
 };
 
 const buildCutoffDate = (viewDate: Date, includeUpToEndOfMonth: boolean) => {
@@ -60,16 +82,41 @@ const buildCutoffDate = (viewDate: Date, includeUpToEndOfMonth: boolean) => {
   return new Date(viewDate);
 };
 
-const resolveBaseBalance = (account: Account) => {
-  const initial = Number.isFinite(account.initialBalance) ? account.initialBalance : null;
-  if (initial !== null) return roundToCents(initial);
+const resolveBalanceAnchor = (account: Account, cutoffDate: Date) => {
+  let anchorDate: Date | null = null;
+  let anchorValue: number | null = null;
   if (Array.isArray(account.balanceHistory) && account.balanceHistory.length) {
     const sorted = [...account.balanceHistory]
-      .filter(entry => Number.isFinite(entry.value))
-      .sort((a, b) => new Date(`${a.date}T12:00:00`).getTime() - new Date(`${b.date}T12:00:00`).getTime());
-    if (sorted.length) return roundToCents(sorted[0].value);
+      .map(entry => {
+        const parsed = parseDate(entry.date);
+        return Number.isFinite(entry.value) && parsed
+          ? { ...entry, parsed }
+          : null;
+      })
+      .filter((entry): entry is { date: string; value: number; parsed: Date; source?: string } => Boolean(entry))
+      .filter(entry => !['invoice_pay', 'invoice_reopen', 'invoice_payment', 'invoice_reversal'].includes(entry.source || ''))
+      .sort((a, b) => a.parsed.getTime() - b.parsed.getTime());
+    if (sorted.length) {
+      const eligible = sorted.filter(entry => entry.parsed.getTime() <= cutoffDate.getTime());
+      const chosen = eligible.length ? eligible[eligible.length - 1] : null;
+      if (chosen) {
+        anchorDate = chosen.parsed;
+        anchorValue = chosen.value;
+      }
+    }
   }
-  return 0;
+  if (anchorValue === null) {
+    const initial = Number.isFinite(account.initialBalance) ? account.initialBalance : null;
+    if (initial !== null) {
+      anchorValue = initial;
+    } else {
+      anchorValue = 0;
+    }
+  }
+  return {
+    value: roundToCents(anchorValue),
+    date: anchorDate
+  };
 };
 
 export const computeRealBalances = ({
@@ -85,6 +132,14 @@ export const computeRealBalances = ({
   const cutoffDate = buildCutoffDate(viewDate, includeUpToEndOfMonth);
   const cutoffLabel = cutoffDate.toISOString().split('T')[0];
 
+  console.info('[balances] recompute start', {
+    cutoff: cutoffLabel,
+    accounts: accounts.length,
+    incomes: incomes.length,
+    expenses: expenses.length,
+    yields: yields.length
+  });
+
   const accountIds = new Set(accounts.map(account => account.id));
   const trailsByAccountId: Record<string, BalanceTrailEntry[]> = {};
 
@@ -97,16 +152,19 @@ export const computeRealBalances = ({
   };
 
   const byAccountId: Record<string, number> = {};
+  const anchorByAccountId: Record<string, Date | null> = {};
+
   accounts.forEach(account => {
-    const base = resolveBaseBalance(account);
-    byAccountId[account.id] = base;
+    const anchor = resolveBalanceAnchor(account, cutoffDate);
+    anchorByAccountId[account.id] = anchor.date;
+    byAccountId[account.id] = anchor.value;
     pushTrail(account.id, {
       type: 'base',
       id: account.id,
-      date: cutoffLabel,
-      amount: base,
+      date: anchor.date ? anchor.date.toISOString().split('T')[0] : cutoffLabel,
+      amount: anchor.value,
       sign: 0,
-      reason: 'initial_balance'
+      reason: anchor.date ? 'manual_adjustment' : 'initial_balance'
     });
   });
 
@@ -120,6 +178,8 @@ export const computeRealBalances = ({
     const dateValue = income.competenceDate || income.date;
     const parsed = parseDate(dateValue);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
+    const anchorDate = anchorByAccountId[income.accountId];
+    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
     const amount = roundToCents(income.amount);
     const next = roundToCents((byAccountId[income.accountId] || 0) + amount);
     byAccountId[income.accountId] = next;
@@ -137,9 +197,17 @@ export const computeRealBalances = ({
   expenses.forEach(expense => {
     if (expense.status !== 'paid') return;
     if (!expense.accountId || !accountIds.has(expense.accountId)) return;
-    const dateValue = expense.dueDate || expense.date;
+    if (expense.origin === 'invoice_payment' || expense.origin === 'invoice_reversal') {
+      // allow invoice ledger to impact cash
+    } else if (expense.cardId && expense.paymentMethod === 'Crédito') {
+      // credit card purchases do not impact cash directly
+      return;
+    }
+    const dateValue = (expense as { paidAt?: string }).paidAt || expense.dueDate || expense.date;
     const parsed = parseDate(dateValue);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
+    const anchorDate = anchorByAccountId[expense.accountId];
+    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
     const amount = roundToCents(expense.amount);
     const next = roundToCents((byAccountId[expense.accountId] || 0) - amount);
     byAccountId[expense.accountId] = next;
@@ -158,6 +226,8 @@ export const computeRealBalances = ({
     if (!yieldRecord.accountId || !accountIds.has(yieldRecord.accountId)) return;
     const parsed = parseDate(yieldRecord.date);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
+    const anchorDate = anchorByAccountId[yieldRecord.accountId];
+    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
     const amount = roundToCents(yieldRecord.amount);
     const next = roundToCents((byAccountId[yieldRecord.accountId] || 0) + amount);
     byAccountId[yieldRecord.accountId] = next;
@@ -178,6 +248,11 @@ export const computeRealBalances = ({
     const computed = roundToCents(byAccountId[account.id] || 0);
     total = roundToCents(total + computed);
     diffs[account.id] = roundToCents(computed - (account.currentBalance || 0));
+  });
+
+  console.info('[balances] recompute result', {
+    total,
+    accounts: byAccountId
   });
 
   return {

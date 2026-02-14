@@ -23,6 +23,7 @@ interface InvoicesViewProps {
   accounts: Account[];
   viewDate?: Date;
   onPayInvoice: (expenseIds: string[], sourceAccountId: string, totalAmount: number) => void;
+  onReopenInvoice: (expenseIds: string[]) => void;
   onUpdateExpenses: (expenses: Expense[]) => void;
   onUpdateCreditCards?: (cards: CreditCard[]) => void;
   categories: string[];
@@ -38,6 +39,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   accounts,
   viewDate,
   onPayInvoice,
+  onReopenInvoice,
   onUpdateExpenses,
   onUpdateCreditCards,
   categories,
@@ -94,18 +96,24 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   }, [subHeaderHeight, topAdjust]);
 
   // Filter expenses: Must be Credit Card type, match selected card
-  // Show PENDING and PAID? Usually invoices show history too, but for payment, only pending.
-  // The user wants a "Hub de Conciliação". Let's show Pending by default.
-  const cardExpenses = useMemo(() => filterCardExpensesForInvoices(expenses, selectedCardId), [expenses, selectedCardId]);
+  // Invoices need history (paid + pending), while payment selection only uses pending items.
+  const cardExpensesAll = useMemo(
+      () => filterCardExpensesForInvoices(expenses, selectedCardId, { includePaid: true }),
+      [expenses, selectedCardId]
+  );
+  const pendingCardExpenses = useMemo(
+      () => cardExpensesAll.filter(exp => exp.status === 'pending'),
+      [cardExpensesAll]
+  );
 
   // Group expenses by Due Month (Invoice Cycle)
   const groupedExpenses = useMemo(() => {
-      const groups = groupCardExpensesByInvoiceMonth(cardExpenses);
+      const groups = groupCardExpensesByInvoiceMonth(cardExpensesAll);
       return Object.keys(groups).sort().reduce((obj, key) => {
           obj[key] = groups[key];
           return obj;
       }, {} as Record<string, Expense[]>);
-  }, [cardExpenses]);
+  }, [cardExpensesAll]);
 
   const calendarYear = viewDate ? viewDate.getFullYear() : new Date().getFullYear();
   const allCardExpensesByMonth = useMemo(() => {
@@ -143,14 +151,14 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   // ... rest of logic ...
   // Calculation for Selected Items
-  const selectedTotal = cardExpenses
+  const selectedTotal = pendingCardExpenses
       .filter(exp => selectedExpenseIds.includes(exp.id))
       .reduce((sum, exp) => sum + exp.amount, 0);
 
   const selectedCard = safeCreditCards.find(c => c.id === selectedCardId);
   const selectedCardColor = selectedCard ? getCardColor(selectedCard) : '#6366f1';
   const editExpenseLabel = getPrimaryActionLabel('Despesa', true);
-  const pendingTotal = cardExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+  const pendingTotal = pendingCardExpenses.reduce((sum, exp) => sum + exp.amount, 0);
 
   useEffect(() => {
       if (editingExpense) {
@@ -232,7 +240,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   // Handlers
   const toggleSelection = (id: string) => {
-      const target = cardExpenses.find(exp => exp.id === id);
+      const target = pendingCardExpenses.find(exp => exp.id === id);
       if (target?.locked) return;
       setSelectedExpenseIds(prev => 
           prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
@@ -242,7 +250,9 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const toggleSelectMonth = (monthKey: string) => {
       const monthExpenses = groupedExpenses[monthKey] || [];
       if (monthExpenses.length === 0) return;
-      const idsInMonth = monthExpenses.filter(e => !e.locked).map(e => e.id);
+      const idsInMonth = monthExpenses
+          .filter(e => e.status === 'pending' && !e.locked)
+          .map(e => e.id);
       const allSelected = idsInMonth.length > 0 && idsInMonth.every(id => selectedExpenseIds.includes(id));
 
       if (allSelected) {
@@ -256,7 +266,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   };
 
   const handleConfirmPayment = (accountId: string, paymentDate: string) => {
-      onPayInvoice(selectedExpenseIds, accountId, selectedTotal);
+      onPayInvoice(selectedExpenseIds, accountId, selectedTotal, paymentDate);
       setSelectedExpenseIds([]); // Clear selection
       setIsPayModalOpen(false);
   };
@@ -650,7 +660,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       const monthKey = `${calendarYear}-${String(index + 1).padStart(2, '0')}`;
       const monthExpenses = groupedExpenses[monthKey] || [];
       const totalMonth = monthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-      const selectableExpenses = monthExpenses.filter(exp => !exp.locked);
+      const selectableExpenses = monthExpenses.filter(exp => exp.status === 'pending' && !exp.locked);
+      const isPaid = monthExpenses.length > 0 && monthExpenses.every(exp => exp.status === 'paid');
       const allSelected = selectableExpenses.length > 0 && selectableExpenses.every(e => selectedExpenseIds.includes(e.id));
       const partialSelected = selectableExpenses.some(e => selectedExpenseIds.includes(e.id)) && !allSelected;
       const isDisabled = monthExpenses.length === 0;
@@ -680,9 +691,14 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                       className="w-full px-3 py-2 flex items-center justify-between gap-3 text-left"
                   >
                       <div className="min-w-0 flex items-center gap-3">
-                          <span className="text-sm font-semibold text-zinc-900 dark:text-white">
-                              R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                          </span>
+                          <div className="flex items-center gap-2">
+                              <span className={`text-sm font-semibold text-zinc-900 dark:text-white ${isPaid ? 'line-through text-emerald-200/80' : ''}`}>
+                                  R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                              {isPaid && (
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300">Pago</span>
+                              )}
+                          </div>
                           <span className="text-sm uppercase tracking-wide text-zinc-700 dark:text-white/70">
                               {monthName}
                           </span>
@@ -717,9 +733,14 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                           disabled={isDisabled}
                           className="mt-3 w-full text-left px-3 pb-3"
                       >
-                          <p className="text-lg font-semibold text-zinc-900 dark:text-white">
-                              R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                          </p>
+                          <div className="flex items-center gap-2">
+                              <p className={`text-lg font-semibold text-zinc-900 dark:text-white ${isPaid ? 'line-through text-emerald-200/80' : ''}`}>
+                                  R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </p>
+                              {isPaid && (
+                                  <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-400">Pago</span>
+                              )}
+                          </div>
                           <p className="text-[11px] text-zinc-700 dark:text-white/70">
                               {partialSelected ? 'Parcial selecionado' : isDisabled ? 'Sem despesas' : 'Ver fatura'}
                           </p>
@@ -788,10 +809,18 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const expandedMonthExpenses = expandedMonthKey ? groupedExpenses[expandedMonthKey] || [] : [];
   const expandedMonthTotal = expandedMonthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
   const expandedMonthLabel = expandedMonthKey ? formatMonthKey(expandedMonthKey) : '';
+  const expandedMonthIsPaid = expandedMonthExpenses.length > 0 && expandedMonthExpenses.every(exp => exp.status === 'paid');
+  const expandedMonthPaidIds = expandedMonthExpenses.filter(exp => exp.status === 'paid').map(exp => exp.id);
 
   const closeExpandedMonth = () => {
       setExpandedMonthKey(null);
       setExpandedExpenseId(null);
+  };
+
+  const handleReopenInvoice = () => {
+      if (!expandedMonthKey || expandedMonthPaidIds.length === 0) return;
+      onReopenInvoice(expandedMonthPaidIds);
+      setSelectedExpenseIds(prev => prev.filter(id => !expandedMonthPaidIds.includes(id)));
   };
 
   const monthDetailModal = expandedMonthKey ? (
@@ -819,15 +848,29 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                           <p className="text-xs text-white/70">
                                               Total: R$ {expandedMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                           </p>
+                                          {expandedMonthIsPaid && (
+                                              <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300 mt-1">Pagamento confirmado</p>
+                                          )}
                                       </div>
-                                      <button
-                                          type="button"
-                                          onClick={closeExpandedMonth}
-                                          className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
-                                          aria-label="Fechar fatura"
-                                      >
-                                          <X size={16} />
-                                      </button>
+                                      <div className="flex items-center gap-2">
+                                          {expandedMonthIsPaid && (
+                                              <button
+                                                  type="button"
+                                                  onClick={handleReopenInvoice}
+                                                  className="h-8 px-3 rounded-none bg-amber-500/20 text-amber-200 text-xs font-semibold hover:bg-amber-500/30 transition"
+                                              >
+                                                  Reabrir fatura
+                                              </button>
+                                          )}
+                                          <button
+                                              type="button"
+                                              onClick={closeExpandedMonth}
+                                              className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                              aria-label="Fechar fatura"
+                                          >
+                                              <X size={16} />
+                                          </button>
+                                      </div>
                                   </div>
                               </div>
                               <div className="flex-1 overflow-auto px-3 pt-2 pb-6">
@@ -835,6 +878,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                       {expandedMonthExpenses.map((exp, index) => {
                                           const isSelected = selectedExpenseIds.includes(exp.id);
                                           const isLocked = Boolean(exp.locked);
+                                          const isPaid = exp.status === 'paid';
+                                          const isSelectable = !isLocked && !isPaid;
                                           const isRowExpanded = expandedExpenseId === exp.id;
                                           const rowBg = index % 2 === 0 ? 'bg-rose-500/10' : 'bg-transparent';
 
@@ -844,13 +889,13 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                                       <button
                                                           type="button"
                                                           onClick={() => {
-                                                              if (!isLocked) {
+                                                              if (isSelectable) {
                                                                   toggleSelection(exp.id);
                                                                   setExpandedExpenseId(isRowExpanded ? null : exp.id);
                                                               }
                                                           }}
                                                           className="w-full flex items-center justify-between gap-3 text-left"
-                                                          disabled={isLocked}
+                                                          disabled={!isSelectable}
                                                       >
                                                           <div className="flex items-center gap-2 min-w-0">
                                                               <input
@@ -858,13 +903,16 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                                                   checked={isSelected}
                                                                   onChange={() => toggleSelection(exp.id)}
                                                                   onClick={(event) => event.stopPropagation()}
-                                                                  disabled={isLocked}
+                                                                  disabled={!isSelectable}
                                                                   className="h-4 w-4"
                                                                   style={{ accentColor: selectedCardColor }}
                                                                   aria-label={`Selecionar fatura ${exp.description}`}
                                                               />
                                                               <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-100'}`}>
                                                                   {exp.description}
+                                                              </span>
+                                                              <span className={`text-[10px] uppercase tracking-wide ${isPaid ? 'text-emerald-300' : 'text-amber-300'}`}>
+                                                                  {isPaid ? 'Pago' : 'Pendente'}
                                                               </span>
                                                           </div>
                                                           <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-rose-400'}`}>
@@ -940,21 +988,37 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                           <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                               Total: R$ {expandedMonthTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </p>
+                          {expandedMonthIsPaid && (
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-500 mt-1">Pagamento confirmado</p>
+                          )}
                       </div>
-                      <button
-                          type="button"
-                          onClick={closeExpandedMonth}
-                          className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
-                          aria-label="Fechar fatura"
-                      >
-                          <X size={16} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                          {expandedMonthIsPaid && (
+                              <button
+                                  type="button"
+                                  onClick={handleReopenInvoice}
+                                  className="h-8 px-3 rounded-full bg-amber-500/20 text-amber-500 text-[11px] font-semibold hover:bg-amber-500/30 transition"
+                              >
+                                  Reabrir fatura
+                              </button>
+                          )}
+                          <button
+                              type="button"
+                              onClick={closeExpandedMonth}
+                              className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                              aria-label="Fechar fatura"
+                          >
+                              <X size={16} />
+                          </button>
+                      </div>
                   </div>
                   <div className="pt-3 flex-1 overflow-auto">
                       <div className="space-y-3">
                           {expandedMonthExpenses.map((exp, index) => {
                               const isSelected = selectedExpenseIds.includes(exp.id);
                               const isLocked = Boolean(exp.locked);
+                              const isPaid = exp.status === 'paid';
+                              const isSelectable = !isLocked && !isPaid;
                               const isRowExpanded = expandedExpenseId === exp.id;
                               const rowBg = index % 2 === 0 ? 'bg-rose-500/10' : 'bg-transparent';
 
@@ -964,13 +1028,13 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                           <button
                                               type="button"
                                               onClick={() => {
-                                                  if (!isLocked) {
+                                                  if (isSelectable) {
                                                       toggleSelection(exp.id);
                                                       setExpandedExpenseId(isRowExpanded ? null : exp.id);
                                                   }
                                               }}
                                               className="w-full flex items-center justify-between gap-3 text-left"
-                                              disabled={isLocked}
+                                              disabled={!isSelectable}
                                           >
                                               <div className="flex items-center gap-2 min-w-0">
                                                   <input
@@ -978,13 +1042,16 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                                       checked={isSelected}
                                                       onChange={() => toggleSelection(exp.id)}
                                                       onClick={(event) => event.stopPropagation()}
-                                                      disabled={isLocked}
+                                                      disabled={!isSelectable}
                                                       className="h-4 w-4"
                                                       style={{ accentColor: selectedCardColor }}
                                                       aria-label={`Selecionar fatura ${exp.description}`}
                                                   />
                                                   <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
                                                       {exp.description}
+                                                  </span>
+                                                  <span className={`text-[10px] uppercase tracking-wide ${isPaid ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                                      {isPaid ? 'Pago' : 'Pendente'}
                                                   </span>
                                               </div>
                                               <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-rose-600 dark:text-rose-400'}`}>

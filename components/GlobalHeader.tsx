@@ -8,7 +8,8 @@ import {
   Building2,
   ExternalLink,
   Sun,
-  Moon
+  Moon,
+  Bot
 } from 'lucide-react';
 import Logo from './Logo';
 import { getInitial } from '../utils/stringUtils';
@@ -40,6 +41,18 @@ interface GlobalHeaderProps {
   onOpenAudit: () => void;
   canAccessSettings: boolean;
   versionLabel?: string;
+  entitlementBadge?: {
+    label: string;
+  } | null;
+  renewalInfo?: {
+    label: string;
+    dateLabel: string;
+    daysLeft: number;
+    ctaLabel?: string;
+  } | null;
+  onRenew?: () => void;
+  assistantHidden?: boolean;
+  onOpenAssistant?: () => void;
 }
 
 const GlobalHeader: React.FC<GlobalHeaderProps> = ({ 
@@ -59,7 +72,12 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   onOpenAudit,
   canAccessSettings,
   summary,
-  versionLabel
+  versionLabel,
+  entitlementBadge,
+  renewalInfo,
+  onRenew,
+  assistantHidden,
+  onOpenAssistant
 }) => {
   
   const isMobile = useIsMobile();
@@ -132,19 +150,22 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
         className="pwa-safe-top w-full bg-black/25 backdrop-blur-md border-b border-white/10 sticky top-0 z-[999]"
       >
         <div className="px-4 pt-2 pb-1">
-          <MobileHeader
-            companyName={companyName}
-            username={username}
-            theme={theme}
-            onThemeChange={onThemeChange}
-            onOpenSettings={onOpenSettings}
-            onOpenReports={onOpenReports}
-            onOpenAudit={onOpenAudit}
-            onOpenCalculator={onOpenCalculator}
-            onLogout={onLogout}
-            onCompanyClick={onCompanyClick}
-            canAccessSettings={canAccessSettings}
-            versionLabel={versionLabel}
+            <MobileHeader
+                    companyName={companyName}
+                    username={username}
+                    theme={theme}
+                    onThemeChange={onThemeChange}
+                    onOpenSettings={onOpenSettings}
+                    onOpenReports={onOpenReports}
+                    onOpenAudit={onOpenAudit}
+                    onOpenCalculator={onOpenCalculator}
+                    onLogout={onLogout}
+                    onCompanyClick={onCompanyClick}
+                    canAccessSettings={canAccessSettings}
+                    versionLabel={versionLabel}
+                    entitlementBadge={entitlementBadge}
+                    renewalInfo={renewalInfo}
+                    onRenew={onRenew}
           />
         </div>
         {monthSelector}
@@ -180,6 +201,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                  <div className="relative">
                         <div className="flex items-center justify-between gap-3 md:gap-4">
                         <div className="flex flex-col items-start justify-center gap-1 min-w-0 max-w-[45%] md:max-w-none">
+                          <div className="rounded-2xl border border-white/10 bg-white/10 backdrop-blur-md px-2.5 py-2 md:px-3 md:py-2 shadow-sm shadow-black/20">
                             <button 
                                 onClick={onCompanyClick}
                                 className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md px-2.5 py-0.5 md:px-3 md:py-1 rounded-full border border-white/5 transition-all group max-w-full"
@@ -189,16 +211,46 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                 <span className="text-[11px] md:text-xs font-semibold text-white tracking-wide truncate max-w-[180px] sm:max-w-[220px] md:max-w-[260px]">{companyName}</span>
                                 <ExternalLink size={11} className="text-white/50 group-hover:text-white transition-colors ml-1 shrink-0" />
                             </button>
-                            {versionLabel && (
-                                <span className="text-[10px] text-white/60 leading-none">
-                                    {versionLabel}
+                            {entitlementBadge && (
+                                <span className="mt-1 inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+                                    {entitlementBadge.label}
                                 </span>
                             )}
+                            {renewalInfo && (
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-white/70">
+                                    <span>
+                                        {renewalInfo.label} {renewalInfo.dateLabel}
+                                    </span>
+                                    {Number.isFinite(renewalInfo.daysLeft) && (
+                                        <span>• faltam {renewalInfo.daysLeft} dias</span>
+                                    )}
+                                    {onRenew && (
+                                        <button
+                                            type="button"
+                                            onClick={onRenew}
+                                            className="rounded-full border border-white/25 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-white/80 hover:text-white hover:border-white/60 transition"
+                                        >
+                                            {renewalInfo.ctaLabel || 'Renovar'}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                          </div>
                         </div>
 
                         <div className="flex items-center justify-end min-w-0 max-w-[45%] md:max-w-none">
                             <div className="flex flex-col items-end gap-2 min-w-0">
                                 <div className="flex flex-wrap items-center justify-end gap-2">
+                                    {assistantHidden && onOpenAssistant && (
+                                        <button
+                                            onClick={onOpenAssistant}
+                                            aria-label="Abrir ajudante"
+                                            className="p-1.5 md:p-2 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
+                                            title="Ajudante"
+                                        >
+                                            <Bot size={15} />
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => onThemeChange(isDark ? 'light' : 'dark')}
                                         aria-label={isDark ? 'Ativar tema claro' : 'Ativar tema escuro'}
@@ -226,9 +278,16 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                         <LogOut size={15} />
                                     </button>
                                 </div>
-                                <p className="text-[10px] md:text-[11px] text-white/80 max-w-[180px] sm:max-w-[220px] md:max-w-[260px] truncate">
-                                    {username}
-                                </p>
+                                <div className="flex flex-col items-end gap-1">
+                                  <p className="text-[10px] md:text-[11px] text-white/80 max-w-[180px] sm:max-w-[220px] md:max-w-[260px] truncate">
+                                      {username}
+                                  </p>
+                                  {versionLabel && (
+                                    <span className="text-[10px] text-white/60 leading-none">
+                                        {versionLabel}
+                                    </span>
+                                  )}
+                                </div>
                             </div>
                         </div>
                      </div>

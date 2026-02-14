@@ -176,6 +176,8 @@ interface DashboardProps {
   isPwaInstallable?: boolean;
   isStandalone?: boolean;
   onInstallApp?: () => void;
+  assistantHidden?: boolean;
+  onCloseAssistant?: () => void;
 }
 
 const MEI_LIMIT = 81000;

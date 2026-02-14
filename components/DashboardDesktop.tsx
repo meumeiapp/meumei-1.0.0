@@ -202,6 +202,8 @@ interface DashboardProps {
   isPwaInstallable?: boolean;
   isStandalone?: boolean;
   onInstallApp?: () => void;
+  assistantHidden?: boolean;
+  onCloseAssistant?: () => void;
 }
 
 const MEI_LIMIT = 81000;
@@ -350,6 +352,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   isAppInstalled,
   tipsEnabled,
   onOpenSettings,
+  assistantHidden,
+  onCloseAssistant,
   categoriesCount = 0,
   isPwaInstallable = false,
   isStandalone = false,
@@ -1063,10 +1067,25 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                           
                           const invoiceTotal = cardTotals[card.id] ?? 0;
 
-                          const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-                          if (card.dueDay < card.closingDay) {
-                              dueDateObj.setMonth(dueDateObj.getMonth() + 1);
-                          }
+                          const monthExpenses = expenses.filter(exp => {
+                              if (!exp.cardId || exp.cardId !== card.id) return false;
+                              if (!exp.dueDate) return false;
+                              const due = new Date(exp.dueDate + 'T12:00:00');
+                              return due.getMonth() === viewDate.getMonth() && due.getFullYear() === viewDate.getFullYear();
+                          });
+                          const dueDateFromExpenses = monthExpenses.length
+                              ? monthExpenses.reduce((latest, exp) => {
+                                    const next = new Date(exp.dueDate + 'T12:00:00');
+                                    return next > latest ? next : latest;
+                                }, new Date(monthExpenses[0].dueDate + 'T12:00:00'))
+                              : null;
+                          const dueDateObj = dueDateFromExpenses ?? (() => {
+                              const fallback = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
+                              if (card.dueDay < card.closingDay) {
+                                  fallback.setMonth(fallback.getMonth() + 1);
+                              }
+                              return fallback;
+                          })();
                           const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
 
                           return (
@@ -1208,7 +1227,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                                   <div className="flex flex-col">
                                                       <span className="font-semibold text-zinc-700 dark:text-zinc-200">{expense.description}</span>
                                                       <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                          {new Date(expense.date).toLocaleDateString('pt-BR')} • {expense.status === 'paid' ? 'Pago' : expense.status === 'pending' ? 'Pendente' : 'Cancelado'}
+                                                          {new Date((expense.dueDate || expense.date) + 'T12:00:00').toLocaleDateString('pt-BR')} • {expense.status === 'paid' ? 'Pago' : expense.status === 'pending' ? 'Pendente' : 'Cancelado'}
                                                       </span>
                                                   </div>
                                                   <span className="font-semibold text-zinc-700 dark:text-zinc-200">
@@ -1520,6 +1539,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                           actions={helperActions}
                           tipsEnabled={tipsEnabled}
                           assistantPlacement="floating"
+                          assistantHidden={assistantHidden}
+                          onAssistantClose={onCloseAssistant}
                           results={
                               Boolean(trimmedSearchQuery) && isSearchActive ? (
                                   <div className="absolute left-0 right-0 mt-3 bg-[#111114] border border-white/10 rounded-2xl shadow-2xl max-h-80 overflow-y-auto z-20">

@@ -96,7 +96,8 @@ export enum ViewState {
   LAUNCHES = 'LAUNCHES',
   YIELDS = 'YIELDS',
   INVOICES = 'INVOICES',
-  REPORTS = 'REPORTS'
+  REPORTS = 'REPORTS',
+  MASTER = 'MASTER'
 }
 
 export type LockedReason = 'decrypt_failed' | 'missing_salt' | 'epoch_mismatch';
@@ -173,6 +174,11 @@ export interface Expense {
   status: 'pending' | 'paid';
   type: ExpenseType;
   notes?: string;
+  paidAt?: string;
+  origin?: 'invoice_payment' | 'invoice_reversal';
+  invoiceCardId?: string;
+  invoiceMonthKey?: string;
+  invoicePaymentId?: string;
   taxStatus?: 'PJ' | 'PF';
   createdBy?: string;
   licenseId?: string;

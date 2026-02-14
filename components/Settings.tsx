@@ -261,7 +261,6 @@ const Settings: React.FC<SettingsProps> = ({
           [id]: !prev[id]
       }));
   };
-
   const timeoutRef = useRef<number | null>(null);
   const matrixCharset = useMemo(() => '01MEUMEI-SYSTEM-REBOOT::', []);
   const setupMatrixAudio = () => {

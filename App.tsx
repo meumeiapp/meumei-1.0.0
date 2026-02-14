@@ -16,6 +16,7 @@ import CompanyDetailsView from './components/CompanyDetailsView';
 import CompanyDetailsSheet from './components/CompanyDetailsSheet';
 import CalculatorModal from './components/CalculatorModal';
 import AuditLogModal from './components/AuditLogModal';
+import MasterControlPanel from './components/MasterControlPanel';
 import FaturasErrorBoundary from './components/FaturasErrorBoundary';
 import InstallAppModal from './components/InstallAppModal';
 import MobileQuickAccessFooter from './components/mobile/MobileQuickAccessFooter';
@@ -39,6 +40,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
  
 import { auth, db, firebaseDebugInfo } from './services/firebase';
 import { preferencesService } from './services/preferencesService';
+import { betaKeysService } from './services/betaKeysService';
 import {
   ArrowUpCircle,
   ArrowDownUp,
@@ -57,6 +59,7 @@ import {
   ShieldOff,
   ShoppingCart,
   TrendingUp,
+  Shield,
   User,
   Wallet
 } from 'lucide-react';
@@ -76,8 +79,16 @@ import type { AuditEntityType } from './services/auditService';
 import { APP_VERSION as LOGIN_APP_VERSION, BUILD_TIME } from './version';
 import { BUILD_ID } from './utils/buildInfo';
 
+const roundToCents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
 const PURCHASE_URL = 'https://meumeiapp.web.app/';
 const BETA_LANDING_URL = 'https://meumei-d88be.web.app';
+const MASTER_UID = 'ZbrLdQuqn4MlOK16MjBOr6GZM3l1';
+const MASTER_EMAIL = 'meumeiaplicativo@gmail.com';
+const LIFETIME_UIDS = new Set([
+  'ZbrLdQuqn4MlOK16MjBOr6GZM3l1',
+  '9nenft1OJpadIE8064wHq4KEefq2'
+]);
 const RESOLVE_TIMEOUT_MS = 12_000;
 
 const ReportsBarsIcon: React.FC<{ size?: number }> = ({ size = 28 }) => (
@@ -260,6 +271,12 @@ const AppInner: React.FC = () => {
   const [loginError, setLoginError] = useState('');
   const [loginErrorCode, setLoginErrorCode] = useState('');
   const [resetPasswordMessage, setResetPasswordMessage] = useState<string | null>(null);
+  const [betaKeyOpen, setBetaKeyOpen] = useState(false);
+  const [betaKeyCode, setBetaKeyCode] = useState('');
+  const [betaKeyStatus, setBetaKeyStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [betaKeyMessage, setBetaKeyMessage] = useState('');
+  const [betaFlowActive, setBetaFlowActive] = useState(false);
+  const betaAutoRedeemRef = useRef(false);
   const [authTimeoutHit, setAuthTimeoutHit] = useState(false);
   const [licenseBlockedDetail, setLicenseBlockedDetail] = useState('');
   const [licenseResolveState, setLicenseResolveState] = useState<'idle' | 'loading' | 'ready' | 'blocked'>('idle');
@@ -276,6 +293,14 @@ const AppInner: React.FC = () => {
   const [entitlementStatus, setEntitlementStatus] = useState<'idle' | 'loading' | 'active' | 'none' | 'error'>('idle');
   const [entitlementRetryToken, setEntitlementRetryToken] = useState(0);
   const [entitlementError, setEntitlementError] = useState<{ code?: string; message?: string } | null>(null);
+  const [entitlementMeta, setEntitlementMeta] = useState<{
+    expiresAtMs: number | null;
+    source?: string | null;
+    planType?: string | null;
+    subscriptionCurrentPeriodEndMs?: number | null;
+    stripeCheckoutSessionCreated?: number | null;
+  } | null>(null);
+  const [trialNotice, setTrialNotice] = useState<{ daysLeft: number } | null>(null);
   const [accessFlowState, setAccessFlowState] = useState<
     | 'idle'
     | 'post_checkout_verifying'
@@ -325,11 +350,12 @@ const AppInner: React.FC = () => {
     // Onboarding should be available on all hosts (production and beta).
     const isOnboardingRoute = currentPath === '/onboarding';
   const isLandingRoute = currentPath === '/';
+  const isUpgradeRoute = currentPath === '/upgrade';
   const isLoginRoute = currentPath === '/login';
   const isTermsRoute = currentPath === '/termos';
   const isPrivacyRoute = currentPath === '/privacidade';
   const isRefundRoute = currentPath === '/reembolso';
-  const isPublicRoute = isLandingRoute || isLoginRoute || isOnboardingRoute || isTermsRoute || isPrivacyRoute || isRefundRoute;
+  const isPublicRoute = isLandingRoute || isUpgradeRoute || isLoginRoute || isOnboardingRoute || isTermsRoute || isPrivacyRoute || isRefundRoute;
   useEffect(() => {
       if (typeof document === 'undefined') return;
       document.body.dataset.appShell = isPublicRoute ? 'false' : 'true';
@@ -448,6 +474,50 @@ const AppInner: React.FC = () => {
   const PWA_LEGACY_DISMISS_KEY = 'pwa_install_dismissed_v1';
   const PWA_POST_ONBOARDING_KEY = 'pwa_install_post_onboarding_shown';
   const PWA_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const TRIAL_NOTICE_KEY = 'meumei_trial_notice_last_shown';
+
+  const renewalInfo = useMemo(() => {
+      if (!entitlementMeta) return null;
+      const planType = String(entitlementMeta.planType || '').toLowerCase();
+      let renewalAtMs = entitlementMeta.expiresAtMs || null;
+      if (!renewalAtMs && entitlementMeta.subscriptionCurrentPeriodEndMs) {
+        renewalAtMs = entitlementMeta.subscriptionCurrentPeriodEndMs;
+      }
+      if (!renewalAtMs && planType === 'annual' && entitlementMeta.stripeCheckoutSessionCreated) {
+        renewalAtMs = entitlementMeta.stripeCheckoutSessionCreated * 1000 + 365 * DAY_MS;
+      }
+      if (!renewalAtMs) return null;
+      const daysLeft = Math.max(0, Math.ceil((renewalAtMs - Date.now()) / DAY_MS));
+      const dateLabel = new Date(renewalAtMs).toLocaleDateString('pt-BR');
+      return {
+        label: planType === 'trial' ? 'Teste encerra em' : 'Renova em',
+        dateLabel,
+        daysLeft,
+        planType: planType || 'annual',
+        ctaLabel: planType === 'trial' ? 'Assinar' : 'Renovar'
+      };
+  }, [entitlementMeta, DAY_MS]);
+
+  const entitlementBadge = useMemo(() => {
+      const planType = String(entitlementMeta?.planType || '').toLowerCase();
+      if (planType === 'lifetime') {
+        return { label: 'Vitalício' };
+      }
+      return null;
+  }, [entitlementMeta]);
+
+  const handleRenew = () => {
+      if (typeof window === 'undefined') return;
+      const url = new URL('/upgrade', landingUrl);
+      const plan = renewalInfo?.planType === 'monthly' ? 'monthly' : 'annual';
+      url.searchParams.set('plan', plan);
+      url.searchParams.set('upgrade', '1');
+      if (authUser?.email) {
+        url.searchParams.set('email', authUser.email);
+      }
+      window.location.href = url.toString();
+  };
 
   const readInstalledFlag = () => {
     try {
@@ -532,6 +602,7 @@ const AppInner: React.FC = () => {
 
   const clearCheckoutParamsFromUrl = (emailOverride?: string) => {
     if (typeof window === 'undefined') return;
+        const hasAuth = Boolean(authUser);
         // Preserve explicit email in the URL (or the verified email from verify flow)
         // and send the user to the create-account route when we were on the login page.
         // Log full location and chosen route to help debugging Stripe return flow.
@@ -544,7 +615,7 @@ const AppInner: React.FC = () => {
             console.log('[checkout-cleanup] query_params', params);
             const emailFromParam = url.searchParams.get('email') || '';
             const email = (emailFromParam || emailOverride || checkoutVerifiedEmail || loginEmail || '').trim();
-            if (isLoginRoute) {
+            if (isLoginRoute && !hasAuth) {
                 if (email) {
                     console.log('[checkout-cleanup] choosing route', { route: '/criar-conta', reason: 'email_present', email });
                     const search = `?email=${encodeURIComponent(email)}`;
@@ -591,6 +662,27 @@ const AppInner: React.FC = () => {
     return { rawEmail: trimmed, normalizedEmail: normalized, docIds };
   };
 
+  const resolveEntitlementExpiry = (data: any) => {
+    const raw = data?.expiresAt;
+    if (!raw) return null;
+    if (typeof raw.toMillis === 'function') {
+      return raw.toMillis();
+    }
+    if (typeof raw.seconds === 'number') {
+      return raw.seconds * 1000;
+    }
+    if (raw instanceof Date) {
+      return raw.getTime();
+    }
+    return null;
+  };
+
+  const isEntitlementExpired = (data: any) => {
+    const expiryMs = resolveEntitlementExpiry(data);
+    if (!expiryMs) return false;
+    return expiryMs <= Date.now();
+  };
+
   const canRegisterWithEntitlement = async (email: string) => {
     if (!email) return false;
     const { docIds } = buildEntitlementDocIds(email);
@@ -600,7 +692,7 @@ const AppInner: React.FC = () => {
         const snap = await getDoc(ref);
         if (snap.exists()) {
           const data = snap.data() as any;
-          if (data?.status === 'active') {
+          if (data?.status === 'active' && !isEntitlementExpired(data)) {
             return true;
           }
         }
@@ -609,6 +701,55 @@ const AppInner: React.FC = () => {
       }
     }
     return false;
+  };
+
+  const handleRedeemBetaKey = async () => {
+    const email = loginEmail.trim();
+    const code = betaKeyCode.trim();
+    if (!email) {
+      setBetaKeyStatus('error');
+      setBetaKeyMessage('Informe seu e-mail antes de validar a chave.');
+      return;
+    }
+    if (!code) {
+      setBetaKeyStatus('error');
+      setBetaKeyMessage('Informe a chave beta.');
+      return;
+    }
+    setBetaKeyStatus('loading');
+    setBetaKeyMessage('');
+    try {
+      const result = await betaKeysService.redeemBetaKey({ code, email });
+      if (!result.ok) {
+        setBetaKeyStatus('error');
+        setBetaKeyMessage(result.message || 'Não foi possível validar a chave.');
+        return;
+      }
+      const expiresAtMs = result.data?.expiresAtMs || null;
+      const daysLeft =
+        expiresAtMs && Number.isFinite(expiresAtMs)
+          ? Math.max(1, Math.ceil((expiresAtMs - Date.now()) / DAY_MS))
+          : null;
+      const daysCopy = daysLeft ? `por ${daysLeft} ${daysLeft === 1 ? 'dia' : 'dias'}` : 'por tempo limitado';
+      setBetaKeyStatus('success');
+      setBetaKeyMessage(`Chave validada. Seu acesso foi liberado ${daysCopy}. Agora crie sua senha e clique em Criar conta.`);
+      setCheckoutStatus({
+        tone: 'success',
+        message: 'Chave validada. Você tem acesso temporário ao meumei.'
+      });
+      if (authMode !== 'register') {
+        setAuthMode('register');
+        setRegisterConfirmPassword('');
+        setRegisterAcceptedTerms(false);
+        setRegisterTermsError('');
+        setLoginError('');
+        setLoginErrorCode('');
+      }
+      setBetaFlowActive(true);
+    } catch (error) {
+      setBetaKeyStatus('error');
+      setBetaKeyMessage('Não foi possível validar a chave.');
+    }
   };
 
   const checkEntitlement = async (
@@ -629,6 +770,26 @@ const AppInner: React.FC = () => {
       currentUserUid: currentUser?.tenantId || null,
       currentUserEmail: currentUser?.email || null
     });
+    if (uid && LIFETIME_UIDS.has(uid)) {
+      if (checkId !== entitlementCheckRef.current) return 'idle';
+      setEntitlementStatus('active');
+      setEntitlementError(null);
+      setEntitlementMeta({
+        expiresAtMs: null,
+        source: 'lifetime',
+        planType: 'lifetime',
+        subscriptionCurrentPeriodEndMs: null,
+        stripeCheckoutSessionCreated: null
+      });
+      console.log('[entitlement] lifetime_access', { uid, trigger });
+      if (authUser) {
+        updateFlowState('post_checkout_done', { reason: 'lifetime_access', trigger });
+      }
+      if (authUser && isLoginRoute) {
+        updateRoute('/app', '');
+      }
+      return 'active';
+    }
     if (!rawEmail) {
       if (checkId !== entitlementCheckRef.current) return 'idle';
       setEntitlementStatus('idle');
@@ -656,8 +817,25 @@ const AppInner: React.FC = () => {
         const exists = snap.exists();
         const data = exists ? (snap.data() as any) : null;
         const status = data?.status || null;
+        const expired = exists && status === 'active' ? isEntitlementExpired(data) : false;
         console.log('[entitlement] result', { exists, status, data });
-        if (exists && status === 'active') {
+        if (exists && data) {
+          const subscriptionPeriodRaw = data?.subscriptionCurrentPeriodEnd ?? data?.subscriptionCurrentPeriodEndMs ?? null;
+          const subscriptionPeriodMs =
+            subscriptionPeriodRaw && typeof subscriptionPeriodRaw.toMillis === 'function'
+              ? subscriptionPeriodRaw.toMillis()
+              : typeof subscriptionPeriodRaw === 'number'
+              ? subscriptionPeriodRaw
+              : null;
+          setEntitlementMeta({
+            expiresAtMs: resolveEntitlementExpiry(data),
+            source: data?.source || null,
+            planType: data?.planType || null,
+            subscriptionCurrentPeriodEndMs: subscriptionPeriodMs,
+            stripeCheckoutSessionCreated: typeof data?.stripeCheckoutSessionCreated === 'number' ? data.stripeCheckoutSessionCreated : null
+          });
+        }
+        if (exists && status === 'active' && !expired) {
           setEntitlementStatus('active');
           setEntitlementError(null);
           console.log('[entitlement] active -> unlocking', { docId, trigger });
@@ -668,6 +846,9 @@ const AppInner: React.FC = () => {
             updateRoute('/app', '');
           }
           return 'active';
+        }
+        if (expired) {
+          console.log('[entitlement] expired', { docId });
         }
       } catch (error: any) {
         if (checkId !== entitlementCheckRef.current) return 'idle';
@@ -691,6 +872,7 @@ const AppInner: React.FC = () => {
       status: 'none',
       data: null
     });
+    setEntitlementMeta(null);
     if (authUser) {
       updateFlowState('pending', { reason: 'entitlement_none', trigger });
     }
@@ -961,13 +1143,14 @@ const AppInner: React.FC = () => {
           return;
       }
       if (isLandingRoute) {
-          updateRoute('/app', '');
+        updateRoute('/app', '');
       }
-  }, [authUser, isLandingRoute, isLoginRoute, isOnboardingRoute]);
+  }, [authUser, isLandingRoute, isLoginRoute, isOnboardingRoute, currentSearch]);
 
   useEffect(() => {
       if (!isStandalone || !isBetaHost) return;
       if (!isLandingRoute) return;
+      if (isUpgradeRoute) return;
       const target = authUser ? '/app' : '/login';
       if (currentPath === target) return;
       console.log('[pwa] detected standalone', {
@@ -976,10 +1159,9 @@ const AppInner: React.FC = () => {
         target
       });
       updateRoute(target, '');
-  }, [authUser, currentPath, isBetaHost, isLandingRoute, isStandalone]);
+  }, [authUser, currentPath, currentSearch, isBetaHost, isLandingRoute, isUpgradeRoute, isStandalone]);
 
   useEffect(() => {
-      if (!isLoginRoute) return;
       const { checkout, sessionId } = getCheckoutParams(currentSearch);
       if (!checkout) return;
       if (checkout === 'cancel') {
@@ -1042,17 +1224,62 @@ const AppInner: React.FC = () => {
           });
       } else {
           updateFlowState('post_checkout_verifying', { reason: 'no_auth' });
-          void verifyCheckoutSession(sessionId).then((email) => {
-              clearCheckoutParamsFromUrl(email || undefined);
+          void verifyCheckoutSession(sessionId).then(async (email) => {
+              if (!email) {
+                  clearCheckoutParamsFromUrl();
+                  return;
+              }
+              const ok = await grantEntitlement(sessionId, 'register');
+              if (!ok) {
+                  clearCheckoutParamsFromUrl(email || undefined);
+                  return;
+              }
+              void checkEntitlement('post-login');
           });
       }
-  }, [authUser, currentSearch, isLoginRoute]);
+  }, [authUser, currentSearch]);
 
   const mpStatus = useMemo(() => {
       if (!isOnboardingRoute) return null;
       const params = new URLSearchParams(currentSearch);
       return params.get('mp');
   }, [currentSearch, isOnboardingRoute]);
+
+  const betaPrefillRef = useRef(false);
+  useEffect(() => {
+      if (!isLoginRoute) {
+          betaPrefillRef.current = false;
+          return;
+      }
+      if (betaPrefillRef.current) return;
+      const params = new URLSearchParams(currentSearch);
+      const beta = params.get('beta') || params.get('chave') || params.get('key');
+      const emailParam = params.get('email') || '';
+      if (emailParam && !loginEmail) {
+          setLoginEmail(emailParam);
+      }
+      if (beta) {
+          setBetaKeyCode(beta.trim().toUpperCase());
+          setBetaKeyOpen(true);
+          setBetaFlowActive(true);
+          setAuthMode('register');
+          setRegisterConfirmPassword('');
+          setRegisterAcceptedTerms(false);
+          setRegisterTermsError('');
+          setLoginError('');
+          setLoginErrorCode('');
+      }
+      betaPrefillRef.current = true;
+  }, [currentSearch, isLoginRoute, loginEmail]);
+
+  useEffect(() => {
+      if (!isLoginRoute) return;
+      if (!betaFlowActive) return;
+      if (betaAutoRedeemRef.current) return;
+      if (!betaKeyCode.trim() || !loginEmail.trim()) return;
+      betaAutoRedeemRef.current = true;
+      void handleRedeemBetaKey();
+  }, [betaFlowActive, betaKeyCode, isLoginRoute, loginEmail]);
 
   useEffect(() => {
       if (!isOnboardingRoute || onboardingMpLoggedRef.current) return;
@@ -1074,7 +1301,7 @@ const AppInner: React.FC = () => {
       if (!authUser) return;
       if (onboardingLoading) return;
       const completed = onboardingSettings?.onboardingCompleted === true;
-      if (!completed && currentPath !== '/onboarding') {
+      if (!completed && currentPath !== '/onboarding' && currentPath !== '/upgrade') {
           console.log('[onboarding-route] directing new user to onboarding', { currentPath });
           updateRoute('/onboarding', '');
       }
@@ -1089,6 +1316,9 @@ const AppInner: React.FC = () => {
   const authEmailNormalized = authUser?.email ? normalizeIdentity(authUser.email) : '';
   const licenseIdNormalized = currentUser?.licenseId ? normalizeIdentity(currentUser.licenseId) : '';
   const isMaster = Boolean(authEmailNormalized && licenseIdNormalized && authEmailNormalized === licenseIdNormalized);
+  const isMasterUser =
+    authUser?.uid === MASTER_UID ||
+    (authUser?.email ? authUser.email.trim().toLowerCase() === MASTER_EMAIL : false);
   const buildLogRef = useRef(false);
   useEffect(() => {
       gateRunRef.current = null;
@@ -1425,6 +1655,8 @@ const AppInner: React.FC = () => {
         return '#14b8a6';
       case ViewState.AGENDA:
         return '#38bdf8';
+      case ViewState.MASTER:
+        return '#f59e0b';
       default:
         return '#6366f1';
     }
@@ -1585,6 +1817,15 @@ const AppInner: React.FC = () => {
         isActive: currentView === ViewState.AGENDA
       },
       {
+        id: 'master',
+        label: 'Painel de Controle',
+        shortLabel: 'Controle',
+        icon: <Shield size={28} className="text-amber-500 dark:text-amber-400" />,
+        onClick: () => setCurrentView(ViewState.MASTER),
+        isActive: currentView === ViewState.MASTER,
+        showWhen: isMasterUser
+      },
+      {
         id: 'audit',
         label: 'Auditoria',
         shortLabel: 'Auditoria',
@@ -1601,7 +1842,7 @@ const AppInner: React.FC = () => {
         isActive: isCalculatorOpen
       }
     ],
-    [currentView, setCurrentView, resolveExpenseColor, auditModalState.isOpen, isCalculatorOpen, setAuditModalState, setIsCalculatorOpen]
+    [currentView, setCurrentView, resolveExpenseColor, auditModalState.isOpen, isCalculatorOpen, setAuditModalState, setIsCalculatorOpen, isMasterUser]
   );
 
   const [viewDate, setViewDate] = useState<Date>(new Date());
@@ -1617,6 +1858,7 @@ const AppInner: React.FC = () => {
   };
   const [theme, setTheme] = useState<'dark' | 'light'>(() => resolveInitialTheme());
   const [tipsEnabled, setTipsEnabled] = useState(true);
+  const [assistantHidden, setAssistantHidden] = useState(false);
   const { registerHandlers, setHighlightTarget } = useGlobalActions();
   const onboardingCompleted = onboardingSettings?.onboardingCompleted === true;
   const viewHistoryRef = useRef<ViewState[]>([]);
@@ -1711,6 +1953,7 @@ const AppInner: React.FC = () => {
         { id: 'reports', view: ViewState.REPORTS },
         { id: 'das', view: ViewState.DAS },
         { id: 'agenda', view: ViewState.AGENDA },
+        ...(isMasterUser ? [{ id: 'master', view: ViewState.MASTER }] : []),
         { id: 'audit', audit: true }
       ];
       const mobileDockOrder: Array<{ id: string; view?: ViewState }> = [
@@ -1747,7 +1990,7 @@ const AppInner: React.FC = () => {
     };
     document.addEventListener('keydown', handleShortcut);
     return () => document.removeEventListener('keydown', handleShortcut);
-  }, [currentView, setCurrentView, auditModalState.isOpen, setAuditModalState, isMobile]);
+  }, [currentView, setCurrentView, auditModalState.isOpen, setAuditModalState, isMobile, isMasterUser]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2149,6 +2392,18 @@ const AppInner: React.FC = () => {
           console.info('[auth] ready', { uid });
           console.info('[auth] uid', { uid });
           setupUser();
+          try {
+              const pingKey = `meumei_last_active_ping:${uid}`;
+              const now = Date.now();
+              const lastPing = Number(localStorage.getItem(pingKey) || 0);
+              const SIX_HOURS = 6 * 60 * 60 * 1000;
+              if (!Number.isFinite(lastPing) || now - lastPing > SIX_HOURS) {
+                  localStorage.setItem(pingKey, String(now));
+                  void dataService.updateLastActive(uid);
+              }
+          } catch {
+              void dataService.updateLastActive(uid);
+          }
           await loadPreferencesFor(uid);
       };
 
@@ -2202,6 +2457,20 @@ const AppInner: React.FC = () => {
       }
       void checkEntitlement('auth');
   }, [authUser?.email, authUser?.uid, entitlementRetryToken, isBetaHost]);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      if (isPublicRoute) return;
+      if (!authUser) return;
+      if (!entitlementMeta?.expiresAtMs) return;
+      if (String(entitlementMeta.source || '') !== 'trial') return;
+      const daysLeft = Math.ceil((entitlementMeta.expiresAtMs - Date.now()) / DAY_MS);
+      if (daysLeft > 3 || daysLeft <= 0) return;
+      const today = new Date().toISOString().slice(0, 10);
+      if (localStorage.getItem(TRIAL_NOTICE_KEY) === today) return;
+      localStorage.setItem(TRIAL_NOTICE_KEY, today);
+      setTrialNotice({ daysLeft });
+  }, [authUser, entitlementMeta, isPublicRoute]);
 
   const licenseBlockedCopy = (reason?: LicenseAccessReason) => {
       switch (reason) {
@@ -2333,38 +2602,97 @@ const AppInner: React.FC = () => {
       const hasEntitlementError = Boolean(entitlementError);
       const errorCode = entitlementError?.code || 'unknown';
       const errorMessage = entitlementError?.message || 'Erro desconhecido';
+      const trialExpired =
+        Boolean(entitlementMeta?.expiresAtMs) &&
+        String(entitlementMeta?.source || '') === 'trial' &&
+        (entitlementMeta?.expiresAtMs || 0) <= Date.now();
       const title = hasEntitlementError
         ? 'Falha ao verificar acesso'
-        : 'Seu acesso está pendente';
+        : trialExpired
+          ? 'Seu teste expirou'
+          : 'Seu acesso está pendente';
       const description = hasEntitlementError
         ? 'Nao foi possivel validar o entitlement agora. Veja o detalhe abaixo.'
-        : 'Assim que o pagamento for confirmado, liberamos o acesso automaticamente.';
+        : trialExpired
+          ? 'Seu teste grátis terminou. Para continuar e manter seus dados, finalize sua assinatura.'
+          : 'Assim que o pagamento for confirmado, liberamos o acesso automaticamente.';
+      const handleReturnToPurchase = () => {
+          if (typeof window === 'undefined') return;
+          const url = new URL('/upgrade', landingUrl);
+          url.searchParams.set('upgrade', '1');
+          if (authUser?.email || loginEmail) {
+            url.searchParams.set('email', (authUser?.email || loginEmail || '').trim());
+          }
+          window.location.href = url.toString();
+      };
+      const pendingEmail = authUser?.email || loginEmail || '';
       return (
-          <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white px-4">
-              <div className="bg-white/5 border border-white/10 rounded-3xl p-8 max-w-md w-full space-y-4 text-center">
-                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">Aguardando liberação</p>
-                  <h1 className="text-2xl font-bold">{title}</h1>
-                  <p className="text-sm text-slate-200">
-                      {description}
-                  </p>
-                  {hasEntitlementError && (
-                      <div className="text-[11px] text-amber-200/80 border border-amber-200/20 bg-amber-400/10 rounded-xl px-3 py-2">
-                          [debug] Firestore error {errorCode}: {errorMessage}
+          <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#05060c] via-[#0b1430] to-[#1a0b2f] text-white px-4 py-10 relative overflow-hidden">
+              <div className="absolute inset-0 opacity-80 bg-[radial-gradient(circle_at_16%_18%,rgba(34,211,238,0.4),transparent_45%),radial-gradient(circle_at_82%_20%,rgba(16,185,129,0.28),transparent_50%),radial-gradient(circle_at_50%_88%,rgba(236,72,153,0.3),transparent_55%)]" />
+              <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/80" />
+              <div className="absolute -top-28 -left-24 h-80 w-80 rounded-full bg-cyan-400/20 blur-[160px]" />
+              <div className="absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-fuchsia-500/20 blur-[180px]" />
+              <div className="relative z-10 w-full max-w-xl">
+                  <div className="bg-white/8 border border-white/18 rounded-[38px] shadow-[0_30px_120px_rgba(5,10,24,0.7)] backdrop-blur-[32px] px-10 pt-12 pb-10 space-y-7 text-center">
+                      <div className="space-y-2">
+                          <h1 className="text-5xl font-semibold tracking-tight">meumei</h1>
+                          <p className="text-sm text-indigo-100/70">
+                              Controle financeiro simples, do seu jeito.
+                          </p>
+                          <h2 className="text-xl font-semibold text-white/90">Entrar na sua conta</h2>
                       </div>
-                  )}
-                  <div className="flex flex-col gap-3 pt-2">
-                      <button
-                          onClick={handleEntitlementRetry}
-                          className="w-full inline-flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold px-4 py-3 rounded-xl transition"
-                      >
-                          Tentar novamente
-                      </button>
-                      <a
-                          href={landingUrl}
-                          className="w-full inline-flex items-center justify-center gap-2 bg-white text-slate-900 font-semibold px-4 py-3 rounded-xl transition hover:bg-slate-100"
-                      >
-                          Voltar para a landing
-                      </a>
+                      <div className="rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-left text-sm text-slate-200">
+                          <div className="text-xs uppercase tracking-[0.3em] text-amber-200/80">
+                              {trialExpired ? 'Teste encerrado' : 'Aguardando liberação'}
+                          </div>
+                          <div className="mt-2 text-base font-semibold text-white/90">{title}</div>
+                          <div className="mt-1 text-sm text-slate-200/90">{description}</div>
+                      </div>
+                      {hasEntitlementError && (
+                          <div className="text-[11px] text-amber-200/80 border border-amber-200/20 bg-amber-400/10 rounded-xl px-3 py-2">
+                              [debug] Firestore error {errorCode}: {errorMessage}
+                          </div>
+                      )}
+                      <div className="space-y-4 text-left">
+                          <div className="space-y-2">
+                              <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.2em] ml-1 block">Email</label>
+                              <input
+                                  type="email"
+                                  value={pendingEmail}
+                                  readOnly
+                                  className="w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 text-sm text-white placeholder:text-slate-300/60"
+                                  placeholder="seuemail@dominio.com"
+                              />
+                          </div>
+                          <div className="space-y-2">
+                              <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.2em] ml-1 block">Senha</label>
+                              <input
+                                  type="password"
+                                  value={loginPassword ? '********' : ''}
+                                  readOnly
+                                  className="w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 text-sm text-white placeholder:text-slate-300/60"
+                                  placeholder="Sua senha"
+                              />
+                          </div>
+                      </div>
+                      <div className="flex flex-col gap-3 pt-2">
+                          <button
+                              type="button"
+                              onClick={handleReturnToPurchase}
+                              className="w-full inline-flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-400 via-indigo-500 to-fuchsia-500 hover:from-cyan-300 hover:via-indigo-400 hover:to-fuchsia-400 text-white font-semibold px-4 py-3.5 rounded-full transition shadow-[0_18px_45px_rgba(59,130,246,0.35)]"
+                          >
+                              Retornar para compra
+                          </button>
+                          {!trialExpired && (
+                              <button
+                                  type="button"
+                                  onClick={handleEntitlementRetry}
+                                  className="w-full inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 text-white font-semibold px-4 py-3 rounded-full transition"
+                              >
+                                  Verificar liberação
+                              </button>
+                          )}
+                      </div>
                   </div>
               </div>
           </div>
@@ -2994,6 +3322,12 @@ const AppInner: React.FC = () => {
   }, [canAccessSettings, currentView]);
 
   useEffect(() => {
+      if (!isMasterUser && currentView === ViewState.MASTER) {
+          setCurrentView(ViewState.DASHBOARD);
+      }
+  }, [isMasterUser, currentView]);
+
+  useEffect(() => {
       const hasQuickType = expenseTypeOptions.some((option) => option.id === quickExpenseType && option.enabled);
       if (!hasQuickType) {
           const fallback = expenseTypeOptions.find((option) => option.enabled)?.id;
@@ -3443,43 +3777,262 @@ const AppInner: React.FC = () => {
       }
   };
 
-  const handlePayInvoice = (expenseIds: string[], sourceAccountId: string, totalAmount: number) => {
+  const handlePayInvoice = (expenseIds: string[], sourceAccountId: string, totalAmount: number, paymentDate?: string) => {
       if (!currentUser?.licenseId) return;
       const cryptoEpoch = resolveCryptoEpoch();
       if (!cryptoEpoch) return;
 
-      // 1. Debit Account
-      const newAccounts = [...accounts];
-      const accIdx = newAccounts.findIndex(a => a.id === sourceAccountId);
-      if (accIdx > -1) {
-          const mutationId = `invoice:pay:${sourceAccountId}:${totalAmount}:${expenseIds.join(',')}`;
+      // 1. Mark Expenses Paid + Debit Account (per item)
+      const paidAt = paymentDate || new Date().toISOString().split('T')[0];
+      const updatedAccounts = [...accounts];
+      const changedExpenseIds = new Set(expenseIds);
+      const expenseKey = expenseIds.length > 0 ? [...expenseIds].sort().join('|') : 'none';
+      let accountsChanged = false;
+      const debitTotals = new Map<string, number>();
+      const selectedExpenses = expenses.filter(exp => changedExpenseIds.has(exp.id));
+      const resolvedTotal = roundToCents(
+          selectedExpenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0) || Number(totalAmount || 0)
+      );
+      const cardId = selectedExpenses.find(exp => exp.cardId)?.cardId;
+      const invoiceMonthKey = selectedExpenses.length > 0
+          ? `${new Date((selectedExpenses[0].dueDate || selectedExpenses[0].date) + 'T12:00:00').getFullYear()}-${String(new Date((selectedExpenses[0].dueDate || selectedExpenses[0].date) + 'T12:00:00').getMonth() + 1).padStart(2, '0')}`
+          : undefined;
+      const cardName = cardId ? creditCards.find(card => card.id === cardId)?.name : undefined;
+      const existingPayment = cardId && invoiceMonthKey
+          ? expenses.find(exp => exp.origin === 'invoice_payment' && exp.invoiceCardId === cardId && exp.invoiceMonthKey === invoiceMonthKey && exp.status === 'paid')
+          : undefined;
+      const paymentExpenseId = existingPayment?.id || `invpay_${cardId || 'card'}_${invoiceMonthKey || paidAt}_${Date.now().toString(36)}`;
+
+      console.info('[invoice] pay start', {
+          cardId: cardId || null,
+          invoiceMonthKey: invoiceMonthKey || null,
+          total: resolvedTotal,
+          accountId: sourceAccountId
+      });
+
+      const updatedExpenses = expenses.map(exp => {
+          if (!changedExpenseIds.has(exp.id)) return exp;
+          const next = {
+              ...exp,
+              status: 'paid' as const,
+              accountId: sourceAccountId,
+              paidAt,
+              invoicePaymentId: paymentExpenseId
+          };
+          if (sourceAccountId) {
+              const prev = debitTotals.get(sourceAccountId) || 0;
+              debitTotals.set(sourceAccountId, prev + Number(next.amount));
+          }
+          return next;
+      });
+
+      const shouldCreatePaymentLedger = !existingPayment && sourceAccountId && resolvedTotal > 0;
+      if (shouldCreatePaymentLedger) {
+          updatedExpenses.push({
+              id: paymentExpenseId,
+              description: `Pagamento de fatura${cardName ? ` ${cardName}` : ''}`,
+              amount: resolvedTotal,
+              category: 'Pagamento de fatura',
+              date: paidAt,
+              dueDate: paidAt,
+              paidAt,
+              paymentMethod: 'Fatura',
+              accountId: sourceAccountId,
+              status: 'paid',
+              type: 'variable',
+              notes: invoiceMonthKey ? `Fatura ${invoiceMonthKey}` : undefined,
+              origin: 'invoice_payment',
+              invoiceCardId: cardId,
+              invoiceMonthKey
+          });
+          console.info('[invoice] pay created ledger', {
+              ledgerId: paymentExpenseId,
+              cardId: cardId || null,
+              invoiceMonthKey: invoiceMonthKey || null
+          });
+      }
+
+      if (debitTotals.size === 0 && sourceAccountId && Number.isFinite(totalAmount) && totalAmount > 0) {
+          debitTotals.set(sourceAccountId, roundToCents(totalAmount));
+      }
+
+      debitTotals.forEach((amount, accountId) => {
+          const accIdx = updatedAccounts.findIndex(a => a.id === accountId);
+          if (accIdx < 0 || updatedAccounts[accIdx].locked) return;
+          const normalizedAmount = roundToCents(amount);
+          const mutationId = `invoice:pay:${accountId}:${expenseKey}:${amount}:${paidAt}`;
           const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
               source: 'app',
               action: 'invoice_pay',
-              accountId: sourceAccountId,
-              amount: totalAmount,
+              accountId,
+              entityId: accountId,
+              amount: normalizedAmount,
               status: 'paid'
           });
-          if (shouldApply) {
-              newAccounts[accIdx].currentBalance -= Number(totalAmount);
-              setAccounts(newAccounts);
-              if (!newAccounts[accIdx].locked) {
-                  dataService.upsertAccount(newAccounts[accIdx], currentUser.licenseId, cryptoEpoch);
-              }
+          if (!shouldApply) return;
+          const prevBalance = Number(updatedAccounts[accIdx].currentBalance || 0);
+          const nextBalance = roundToCents(prevBalance - normalizedAmount);
+          let nextHistory = updatedAccounts[accIdx].balanceHistory ? [...updatedAccounts[accIdx].balanceHistory] : [];
+          const historyEntry = {
+              date: paidAt,
+              value: nextBalance,
+              previousValue: prevBalance,
+              newValue: nextBalance,
+              delta: -normalizedAmount,
+              source: 'invoice_pay'
+          };
+          const existingIndex = nextHistory.findIndex(entry => entry.date === paidAt);
+          if (existingIndex >= 0) {
+              nextHistory[existingIndex] = {
+                  ...nextHistory[existingIndex],
+                  ...historyEntry
+              };
+          } else {
+              nextHistory = [...nextHistory, historyEntry];
+          }
+          updatedAccounts[accIdx] = {
+              ...updatedAccounts[accIdx],
+              currentBalance: nextBalance,
+              balanceHistory: nextHistory
+          };
+          accountsChanged = true;
+      });
+
+      console.info('[invoice] pay done', {
+          cardId: cardId || null,
+          invoiceMonthKey: invoiceMonthKey || null,
+          total: resolvedTotal,
+          accountsChanged
+      });
+      console.info('[balances] recompute start', {
+          month: viewDate ? `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}` : null
+      });
+
+      applyExpenses(updatedExpenses);
+      const changedExpenses = updatedExpenses.filter(e => changedExpenseIds.has(e.id));
+      const ledgerExpenses = updatedExpenses.filter(exp => exp.origin === 'invoice_payment' && exp.id === paymentExpenseId);
+      const expensesToPersist = [...changedExpenses, ...ledgerExpenses].filter(exp => !exp.locked);
+      dataService.upsertExpenses(expensesToPersist, currentUser.licenseId, cryptoEpoch);
+
+      if (accountsChanged) {
+          void handleUpdateAccounts(updatedAccounts);
+      }
+      console.info('[balances] ui refreshed');
+  };
+
+  const handleReopenInvoice = (expenseIds: string[]) => {
+      if (!currentUser?.licenseId) return;
+      const cryptoEpoch = resolveCryptoEpoch();
+      if (!cryptoEpoch) return;
+
+      const updatedAccounts = [...accounts];
+      const changedExpenseIds = new Set(expenseIds);
+      const expenseKey = expenseIds.length > 0 ? [...expenseIds].sort().join('|') : 'none';
+      let accountsChanged = false;
+      const refundTotals = new Map<string, number>();
+      const reopenedExpenses = expenses.filter(exp => changedExpenseIds.has(exp.id));
+      const reopenCardId = reopenedExpenses.find(exp => exp.cardId)?.cardId;
+      const reopenMonthKey = reopenedExpenses.length > 0
+          ? `${new Date((reopenedExpenses[0].dueDate || reopenedExpenses[0].date) + 'T12:00:00').getFullYear()}-${String(new Date((reopenedExpenses[0].dueDate || reopenedExpenses[0].date) + 'T12:00:00').getMonth() + 1).padStart(2, '0')}`
+          : undefined;
+      const paymentLedger = reopenCardId && reopenMonthKey
+          ? expenses.find(exp => exp.origin === 'invoice_payment' && exp.invoiceCardId === reopenCardId && exp.invoiceMonthKey === reopenMonthKey && exp.status === 'paid')
+          : undefined;
+
+      console.info('[invoice] reopen start', {
+          cardId: reopenCardId || null,
+          invoiceMonthKey: reopenMonthKey || null
+      });
+
+      const updatedExpenses = expenses.map(exp => {
+          if (!changedExpenseIds.has(exp.id)) return exp;
+          if (exp.status !== 'paid') return exp;
+          if (exp.accountId) {
+              const previous = refundTotals.get(exp.accountId) || 0;
+              refundTotals.set(exp.accountId, previous + Number(exp.amount));
+          }
+          return { ...exp, status: 'pending' as const, paidAt: undefined, invoicePaymentId: undefined };
+      });
+
+      const today = new Date().toISOString().split('T')[0];
+      if (paymentLedger && paymentLedger.accountId) {
+          const previous = refundTotals.get(paymentLedger.accountId) || 0;
+          refundTotals.set(paymentLedger.accountId, previous + Number(paymentLedger.amount));
+      }
+      refundTotals.forEach((amount, accountId) => {
+          const accIdx = updatedAccounts.findIndex(a => a.id === accountId);
+          if (accIdx < 0 || updatedAccounts[accIdx].locked) return;
+          const normalizedAmount = roundToCents(amount);
+          const mutationId = `invoice:reopen:${accountId}:${expenseKey}:${amount}:${today}`;
+          const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+              source: 'app',
+              action: 'invoice_reopen',
+              accountId,
+              entityId: accountId,
+              amount: normalizedAmount,
+              status: 'pending'
+          });
+          if (!shouldApply) return;
+          const prevBalance = Number(updatedAccounts[accIdx].currentBalance || 0);
+          const nextBalance = roundToCents(prevBalance + normalizedAmount);
+          let nextHistory = updatedAccounts[accIdx].balanceHistory ? [...updatedAccounts[accIdx].balanceHistory] : [];
+          const historyEntry = {
+              date: today,
+              value: nextBalance,
+              previousValue: prevBalance,
+              newValue: nextBalance,
+              delta: normalizedAmount,
+              source: 'invoice_reopen'
+          };
+          const existingIndex = nextHistory.findIndex(entry => entry.date === today);
+          if (existingIndex >= 0) {
+              nextHistory[existingIndex] = {
+                  ...nextHistory[existingIndex],
+                  ...historyEntry
+              };
+          } else {
+              nextHistory = [...nextHistory, historyEntry];
+          }
+          updatedAccounts[accIdx] = {
+              ...updatedAccounts[accIdx],
+              currentBalance: nextBalance,
+              balanceHistory: nextHistory
+          };
+          accountsChanged = true;
+      });
+
+      if (paymentLedger) {
+          const paymentIndex = updatedExpenses.findIndex(exp => exp.id === paymentLedger.id);
+          if (paymentIndex >= 0) {
+              updatedExpenses[paymentIndex] = {
+                  ...updatedExpenses[paymentIndex],
+                  status: 'pending',
+                  paidAt: undefined
+              };
           }
       }
 
-      // 2. Mark Expenses Paid
-      const newExpenses = expenses.map(exp => {
-          if (expenseIds.includes(exp.id)) {
-              return { ...exp, status: 'paid' as const };
-          }
-          return exp;
+      console.info('[invoice] reopen reversed', {
+          ledgerId: paymentLedger?.id || null,
+          cardId: reopenCardId || null,
+          invoiceMonthKey: reopenMonthKey || null
       });
-      applyExpenses(newExpenses);
-      
-      const changed = newExpenses.filter(e => expenseIds.includes(e.id));
-      dataService.upsertExpenses(changed.filter(exp => !exp.locked), currentUser.licenseId, cryptoEpoch);
+      console.info('[balances] recompute start', {
+          month: viewDate ? `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}` : null
+      });
+
+      applyExpenses(updatedExpenses);
+      const changedExpenses = updatedExpenses.filter(e => changedExpenseIds.has(e.id));
+      const ledgerUpdates = paymentLedger
+          ? updatedExpenses.filter(exp => exp.id === paymentLedger.id)
+          : [];
+      const expensesToPersist = [...changedExpenses, ...ledgerUpdates].filter(exp => !exp.locked);
+      dataService.upsertExpenses(expensesToPersist, currentUser.licenseId, cryptoEpoch);
+
+      if (accountsChanged) {
+          void handleUpdateAccounts(updatedAccounts);
+      }
+      console.info('[balances] ui refreshed');
   };
 
   // --- DATE LOGIC ---
@@ -3674,6 +4227,11 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 onOpenAudit={isMobile ? () => {} : () => setAuditModalState({ isOpen: true, entityTypes: null })}
                 canAccessSettings={canAccessSettings}
                 versionLabel={APP_VERSION}
+                entitlementBadge={entitlementBadge}
+                renewalInfo={renewalInfo}
+                onRenew={renewalInfo ? handleRenew : undefined}
+                assistantHidden={assistantHidden}
+                onOpenAssistant={() => setAssistantHidden(false)}
             />
             <div style={shouldOffset ? { paddingTop: 'var(--mm-mobile-top, 92px)' } : undefined}>
                 <div className={`mm-content ${compactMode ? 'mm-content--compact scrollbar-hide' : ''}`}>
@@ -3792,12 +4350,17 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
             apiKeyPrefix: firebaseDebugInfo.apiKeyPrefix
           });
           setLoginErrorCode(code);
+          const shouldSuggestRegister = betaKeyStatus === 'success' && authMode === 'login';
           switch (code) {
               case 'auth/wrong-password':
                   setLoginError('Senha incorreta. Tente novamente.');
                   break;
               case 'auth/user-not-found':
-                  setLoginError('Conta não encontrada para este e-mail.');
+                  setLoginError(
+                    shouldSuggestRegister
+                      ? 'Conta não encontrada. Crie sua conta para usar a chave beta.'
+                      : 'Conta não encontrada para este e-mail.'
+                  );
                   break;
               case 'auth/too-many-requests':
                   setLoginError('Muitas tentativas. Tente novamente mais tarde.');
@@ -3807,10 +4370,18 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                   break;
               case 'auth/invalid-credential':
               case 'auth/invalid-login-credentials':
-                  setLoginError('Credenciais inválidas. Tente novamente.');
+                  setLoginError(
+                    shouldSuggestRegister
+                      ? 'Conta não encontrada. Crie sua conta para usar a chave beta.'
+                      : 'Credenciais inválidas. Tente novamente.'
+                  );
                   break;
               default:
-                  setLoginError('Credenciais inválidas. Tente novamente.');
+                  setLoginError(
+                    shouldSuggestRegister
+                      ? 'Conta não encontrada. Crie sua conta para usar a chave beta.'
+                      : 'Credenciais inválidas. Tente novamente.'
+                  );
                   break;
           }
       } finally {
@@ -3849,7 +4420,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       const sessionId = checkoutSessionId;
       try {
           const emailKey = loginEmail.trim().toLowerCase();
-          if (!sessionId) {
+          if (!sessionId && betaKeyStatus !== 'success') {
               const entitlementOk = await canRegisterWithEntitlement(emailKey);
               if (!entitlementOk) {
                   setLoginError(ACCESS_BLOCKED_MESSAGE);
@@ -4024,21 +4595,43 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
               {checkoutVerifyLoading && (
                   <div className="text-xs text-slate-200/80">Verificando pagamento...</div>
               )}
+              {betaFlowActive && (
+                  <div className="rounded-2xl border border-emerald-300/40 bg-emerald-400/10 px-4 py-3 text-left text-sm text-emerald-100">
+                      <div className="text-xs uppercase tracking-[0.3em] text-emerald-200/80">Guia rápido do teste</div>
+                      <div className="mt-2 space-y-1 text-xs text-emerald-100/90">
+                          <div>1) Confirme o e-mail abaixo.</div>
+                          <div>2) Crie sua senha.</div>
+                          <div>3) Clique em <strong>Criar conta</strong>.</div>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => {
+                              setBetaFlowActive(false);
+                              setAuthMode('login');
+                          }}
+                          className="mt-3 text-xs font-semibold text-emerald-200 underline underline-offset-4 hover:text-emerald-100"
+                      >
+                          Já tenho conta, quero entrar
+                      </button>
+                  </div>
+              )}
 
               <form onSubmit={handleAuthSubmit} className="space-y-4">
-                  <div className="space-y-2 text-left">
-                      <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.2em] ml-1 block">Email</label>
-                      <input
-                          type="email"
-                          value={loginEmail}
-                          readOnly={isEmailLocked}
-                          onChange={(event) => {
-                              if (isEmailLocked) return;
-                              setLoginEmail(event.target.value);
-                          }}
-                          className="w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 text-sm text-white placeholder:text-slate-300/60"
-                          placeholder="seuemail@dominio.com"
-                      />
+                      <div className="space-y-2 text-left">
+                          <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-[0.2em] ml-1 block">Email</label>
+                          <input
+                              type="email"
+                              value={loginEmail}
+                              readOnly={isEmailLocked}
+                              onChange={(event) => {
+                                  if (isEmailLocked) return;
+                                  setLoginEmail(event.target.value);
+                              }}
+                              className={`w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 text-sm text-white placeholder:text-slate-300/60 ${
+                                betaFlowActive ? 'ring-2 ring-emerald-300/40' : ''
+                              }`}
+                              placeholder="seuemail@dominio.com"
+                          />
                       {isEmailLocked && (
                           <div className="text-[10px] text-emerald-200/80 mt-1">
                               E-mail confirmado no pagamento.
@@ -4052,7 +4645,9 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                               type={isPasswordVisible ? 'text' : 'password'}
                               value={loginPassword}
                               onChange={(event) => setLoginPassword(event.target.value)}
-                              className="w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 pr-10 text-sm text-white placeholder:text-slate-300/60"
+                              className={`w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 pr-10 text-sm text-white placeholder:text-slate-300/60 ${
+                                betaFlowActive ? 'ring-2 ring-emerald-300/40' : ''
+                              }`}
                               placeholder="Sua senha"
                           />
                           <button
@@ -4072,7 +4667,9 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                               type={isPasswordVisible ? 'text' : 'password'}
                               value={registerConfirmPassword}
                               onChange={(event) => setRegisterConfirmPassword(event.target.value)}
-                              className="w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 text-sm text-white placeholder:text-slate-300/60"
+                              className={`w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-2xl px-4 py-3 text-sm text-white placeholder:text-slate-300/60 ${
+                                betaFlowActive ? 'ring-2 ring-emerald-300/40' : ''
+                              }`}
                               placeholder="Confirme sua senha"
                           />
                       </div>
@@ -4108,6 +4705,44 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                           )}
                       </div>
                   )}
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left">
+                      <button
+                          type="button"
+                          onClick={() => setBetaKeyOpen((prev) => !prev)}
+                          className="w-full flex items-center justify-between text-xs font-semibold text-slate-200/80"
+                      >
+                          <span>Tenho chave beta</span>
+                          <span className="text-slate-300/60">{betaKeyOpen ? 'Ocultar' : 'Usar chave'}</span>
+                      </button>
+                      {betaKeyOpen && (
+                          <div className="mt-3 space-y-2">
+                              <input
+                                  type="text"
+                                  value={betaKeyCode}
+                                  onChange={(event) => setBetaKeyCode(event.target.value)}
+                                  className="w-full bg-white/10 border border-white/15 focus:border-cyan-200/70 focus:ring-cyan-200/40 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-300/60"
+                                  placeholder="Ex: MEUMEI-TESTE-123"
+                              />
+                              <button
+                                  type="button"
+                                  onClick={handleRedeemBetaKey}
+                                  disabled={betaKeyStatus === 'loading'}
+                                  className="w-full inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 text-white font-semibold px-3 py-2 rounded-xl text-xs transition"
+                              >
+                                  {betaKeyStatus === 'loading' ? 'Validando...' : 'Validar chave beta'}
+                              </button>
+                              {betaKeyMessage && (
+                                  <div
+                                      className={`text-[11px] ${
+                                          betaKeyStatus === 'success' ? 'text-emerald-200/90' : 'text-amber-200/90'
+                                      }`}
+                                  >
+                                      {betaKeyMessage}
+                                  </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
                   {loginError && (
                       loginError === ACCESS_BLOCKED_MESSAGE ? (
                           <button
@@ -4158,7 +4793,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                       {authMode === 'register' ? (
                           <button
                               type="button"
-                              onClick={() => setAuthMode('login')}
+                              onClick={() => {
+                                  setAuthMode('login');
+                                  setBetaFlowActive(false);
+                              }}
                               className="text-slate-300/70 hover:text-white underline underline-offset-4"
                           >
                               Já tenho conta
@@ -4166,7 +4804,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                       ) : (
                           <button
                               type="button"
-                              onClick={() => startRegisterFlow('login')}
+                              onClick={() => {
+                                  setBetaFlowActive(false);
+                                  startRegisterFlow('login');
+                              }}
                               className="text-slate-300/70 hover:text-white underline underline-offset-4"
                           >
                               Não tenho conta • Criar conta
@@ -4197,11 +4838,19 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       return <Reembolso />;
   }
 
+  if (isUpgradeRoute) {
+      return <Landing />;
+  }
+
   if (isOnboardingRoute && !authUser) {
       return renderBetaMpOnboarding();
   }
 
   if (isLandingRoute && !authUser) {
+      return <Landing />;
+  }
+
+  if (isUpgradeRoute) {
       return <Landing />;
   }
 
@@ -4225,7 +4874,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       return renderLoggedOutFallback();
   }
 
-  if (isBetaHost) {
+  if (isBetaHost && !isUpgradeRoute) {
       if (entitlementStatus === 'loading' || entitlementStatus === 'idle') {
           return renderEntitlementLoading();
       }
@@ -4294,6 +4943,8 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                     setCurrentView(ViewState.VARIABLE_EXPENSES);
                 }}
                 onOpenDas={() => setCurrentView(ViewState.DAS)}
+                assistantHidden={assistantHidden}
+                onCloseAssistant={() => setAssistantHidden(true)}
                 financialData={{
                     balance: totalBalance,
                     legacyBalance: legacyTotalBalance,
@@ -4465,6 +5116,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                  accounts={accounts}
                  viewDate={viewDate}
                  onPayInvoice={handlePayInvoice}
+                 onReopenInvoice={handleReopenInvoice}
                  onUpdateExpenses={handleUpdateExpenses}
                  onUpdateCreditCards={handleUpdateCreditCards}
                  categories={expenseCategories}
@@ -4579,6 +5231,12 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       {currentView === ViewState.COMPANY_DETAILS && renderLayout(
           <CompanyDetailsView
               company={companyInfo}
+              onBack={() => setCurrentView(ViewState.DASHBOARD)}
+          />
+      )}
+
+      {currentView === ViewState.MASTER && isMasterUser && renderLayout(
+          <MasterControlPanel
               onBack={() => setCurrentView(ViewState.DASHBOARD)}
           />
       )}
@@ -4701,6 +5359,51 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
               </div>
           </div>
       )}
+      {trialNotice && !isPublicRoute && (
+          <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 px-4 py-10">
+              <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#121214] px-5 py-4 text-white shadow-2xl">
+                  <div className="flex items-start justify-between gap-4">
+                      <div>
+                          <h3 className="text-base font-semibold">
+                              Seu teste termina em {trialNotice.daysLeft} {trialNotice.daysLeft === 1 ? 'dia' : 'dias'}
+                          </h3>
+                          <p className="mt-1 text-xs text-slate-300">
+                              Para não perder seus dados e continuar usando o Meumei, finalize sua assinatura.
+                          </p>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => setTrialNotice(null)}
+                          className="text-slate-400 hover:text-white"
+                      >
+                          Fechar
+                      </button>
+                  </div>
+                  <div className="mt-4 flex flex-col gap-2">
+                      <button
+                          type="button"
+                          onClick={() => {
+                              setTrialNotice(null);
+                              window.location.href = landingUrl;
+                          }}
+                          className="w-full rounded-xl bg-gradient-to-r from-cyan-400 via-indigo-500 to-fuchsia-500 px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(59,130,246,0.35)]"
+                      >
+                          Quero continuar
+                      </button>
+                      <button
+                          type="button"
+                          onClick={() => setTrialNotice(null)}
+                          className="w-full rounded-xl border border-white/15 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-white/10 transition"
+                      >
+                          Lembrar depois
+                      </button>
+                  </div>
+                  <p className="mt-3 text-[10px] text-slate-400">
+                      Assinatura com reembolso integral garantido em até 7 dias.
+                  </p>
+              </div>
+          </div>
+      )}
       <InstallAppModal
           isOpen={isPwaInstallOpen}
           isInstalled={isPwaInstalled}
@@ -4714,7 +5417,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       {!isMobile && (
           <DesktopQuickAccessFooter items={desktopQuickAccessItems} />
       )}
-      {isMobileLandscape && (
+      {isMobileLandscape && !isPublicRoute && (
           <div className="mobile-landscape-overlay fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
               <div className="w-full max-w-xs rounded-2xl bg-white dark:bg-[#111114] border border-white/10 dark:border-zinc-800 shadow-2xl px-5 py-4 text-center">
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white">Use em modo retrato</p>

@@ -4,13 +4,18 @@ const buildMonthKey = (date: Date) => {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 };
 
-export const filterCardExpensesForInvoices = (expenses: Expense[], cardId: string | undefined) => {
+export const filterCardExpensesForInvoices = (
+    expenses: Expense[],
+    cardId: string | undefined,
+    options?: { includePaid?: boolean }
+) => {
     if (!cardId) return [];
+    const includePaid = Boolean(options?.includePaid);
     return expenses
         .filter(exp => 
             exp.cardId === cardId &&
             exp.paymentMethod === 'Crédito' &&
-            exp.status === 'pending'
+            (includePaid ? (exp.status === 'pending' || exp.status === 'paid') : exp.status === 'pending')
         )
         .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 };

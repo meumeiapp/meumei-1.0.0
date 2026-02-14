@@ -140,3 +140,12 @@ firebase deploy --only hosting:meumeiappbeta
 
 - Helper: nova lista humanizada de Curiosidades/Dicas implementada
 - Helper v2: contextual + anti-repetição + frequência adaptativa implementado
+- Beta keys: criação, resgate e gestão via Painel de Controle implementados
+- Painel de Controle: métricas gerais + gestão de beta keys (somente master)
+
+## Faturas: impacto no caixa (2026-02-13)
+
+- Checklist:
+  - Pagar fatura debita caixa automaticamente: PENDING (deploy 2026-02-13)
+  - Reabrir fatura estorna automaticamente: PENDING (deploy 2026-02-13)
+  - Dashboard e lista de contas atualizam sem edição manual: PENDING (deploy 2026-02-13)
