@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { betaKeysService, type BetaKeyRecord } from '../services/betaKeysService';
 import { masterMetricsService, type MasterMetrics } from '../services/masterMetricsService';
+import { masterEntitlementsService, type EntitlementRecord } from '../services/masterEntitlementsService';
 
 type MasterControlPanelProps = {
   onBack: () => void;
@@ -44,6 +45,9 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({ onBack }) => {
   const [lifetimeBusyId, setLifetimeBusyId] = useState<string | null>(null);
   const [betaCreateStatus, setBetaCreateStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [betaCreateMessage, setBetaCreateMessage] = useState('');
+  const [entitlements, setEntitlements] = useState<EntitlementRecord[]>([]);
+  const [entitlementsLoading, setEntitlementsLoading] = useState(false);
+  const [entitlementsError, setEntitlementsError] = useState('');
 
   const actionButtonBase =
     'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition h-10 w-full sm:w-48 whitespace-nowrap';
@@ -99,9 +103,29 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({ onBack }) => {
     }
   };
 
+  const loadEntitlements = async () => {
+    setEntitlementsLoading(true);
+    setEntitlementsError('');
+    try {
+      const result = await masterEntitlementsService.listEntitlements();
+      if (!result.ok) {
+        setEntitlementsError(result.message || 'Não foi possível carregar acessos.');
+        setEntitlements([]);
+        return;
+      }
+      setEntitlements(result.entitlements || []);
+    } catch (error) {
+      setEntitlementsError('Não foi possível carregar acessos.');
+      setEntitlements([]);
+    } finally {
+      setEntitlementsLoading(false);
+    }
+  };
+
   useEffect(() => {
     void loadMetrics();
     void loadBetaKeys();
+    void loadEntitlements();
   }, []);
 
   const handleRevokeBetaKey = async (keyId: string) => {
@@ -182,8 +206,14 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({ onBack }) => {
         return;
       }
       setBetaCreateStatus('success');
-      setBetaCreateMessage(`Acesso vitalício liberado para ${email}.`);
+      const emailSent = result.data?.emailSent;
+      setBetaCreateMessage(
+        emailSent === false
+          ? `Acesso vitalício liberado para ${email}, mas o e-mail não pôde ser enviado.`
+          : `Acesso vitalício liberado para ${email}.`
+      );
       await loadBetaKeys();
+      await loadEntitlements();
     } catch (error) {
       setBetaCreateStatus('error');
       setBetaCreateMessage('Não foi possível liberar o acesso vitalício.');
@@ -212,6 +242,7 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({ onBack }) => {
           onClick={() => {
             void loadMetrics();
             void loadBetaKeys();
+            void loadEntitlements();
           }}
           className="inline-flex items-center gap-2 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/80 dark:bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-600 dark:text-white/70"
         >
@@ -255,6 +286,68 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({ onBack }) => {
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-6 shadow-sm">
+          <div className="flex items-start gap-4">
+            <div className="p-3 bg-emerald-100 dark:bg-emerald-900/20 rounded-xl text-emerald-600 dark:text-emerald-300">
+              <ShieldCheck size={22} />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Acessos liberados</h2>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                Usuários com acesso ativo, incluindo quem não veio por beta.
+              </p>
+            </div>
+          </div>
+          {entitlementsLoading && (
+            <div className="mt-4 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/70 dark:bg-white/5 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+              Carregando acessos...
+            </div>
+          )}
+          {entitlementsError && (
+            <div className="mt-4 rounded-xl border border-rose-200 dark:border-rose-900/40 bg-rose-50/80 dark:bg-rose-900/20 px-4 py-3 text-xs text-rose-600 dark:text-rose-300">
+              {entitlementsError}
+            </div>
+          )}
+          {!entitlementsLoading && !entitlementsError && entitlements.length === 0 && (
+            <div className="mt-4 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/70 dark:bg-white/5 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+              Nenhum acesso listado ainda.
+            </div>
+          )}
+          {!entitlementsLoading && !entitlementsError && entitlements.length > 0 && (
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {entitlements.map((entry) => {
+                const planType = (entry.planType || '').toLowerCase();
+                const isLifetime = Boolean(entry.lifetime) || planType === 'lifetime';
+                const expiryMs = entry.subscriptionCurrentPeriodEndMs ?? entry.expiresAtMs ?? null;
+                const expiryLabel = expiryMs ? formatDate(expiryMs) : 'Sem expiração';
+                const cardClass = isLifetime
+                  ? 'rounded-xl border border-emerald-200/70 dark:border-emerald-900/40 bg-emerald-50/70 dark:bg-emerald-900/20 px-4 py-3'
+                  : 'rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3';
+                return (
+                  <div key={entry.id} className={cardClass}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-zinc-900 dark:text-white">{entry.email}</p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {entry.status || '—'} • {entry.planType || '—'} • {entry.source || '—'}
+                        </p>
+                        <p className="text-[11px] text-zinc-400">
+                          Expira em {expiryLabel} • Atualizado em {formatDate(entry.updatedAtMs)}
+                        </p>
+                      </div>
+                      {isLifetime && (
+                        <span className="rounded-full border border-emerald-200 dark:border-emerald-900/40 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-200">
+                          Vitalício
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-6 shadow-sm">
@@ -310,10 +403,15 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({ onBack }) => {
                 Nenhuma chave criada ainda.
               </div>
             )}
-            {betaKeys.map((key) => (
+            {betaKeys.map((key) => {
+              const isLifetimeKey = Boolean(key.lifetimeGrantedEmail);
+              const cardClass = isLifetimeKey
+                ? 'rounded-xl border border-emerald-200/70 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/20 px-4 py-3 flex flex-col gap-3'
+                : 'rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3 flex flex-col gap-3';
+              return (
               <div
                 key={key.id}
-                className="rounded-xl border border-zinc-200/70 dark:border-white/10 bg-white/90 dark:bg-white/5 px-4 py-3 flex flex-col gap-3"
+                className={cardClass}
               >
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
@@ -405,7 +503,7 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({ onBack }) => {
                   </button>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         </section>
       </main>

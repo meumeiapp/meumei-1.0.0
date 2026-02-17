@@ -135,6 +135,30 @@ const sendTrialEmail = async (payload: { email: string; code: string; loginUrl: 
   }
 };
 
+const sendLifetimeAccessEmail = async (payload: { email: string; loginUrl: string }) => {
+  const transport = getRefundTransport();
+  if (!transport || !REFUND_FROM_EMAIL) return false;
+  const subject = 'Parabéns! Seu acesso vitalício ao meumei foi liberado';
+  const text =
+    `Olá!\n\n` +
+    `Parabéns! Seu acesso vitalício ao meumei foi liberado.\n` +
+    `Você já pode entrar normalmente com seu e-mail e senha.\n\n` +
+    `Acesse o login por aqui:\n${payload.loginUrl}\n\n` +
+    `Equipe meumei.`;
+  try {
+    await transport.sendMail({
+      from: REFUND_FROM_EMAIL,
+      to: payload.email,
+      subject,
+      text
+    });
+    return true;
+  } catch (error) {
+    console.error('[lifetime] email_error', error);
+    return false;
+  }
+};
+
 const applyCors = (req: functions.https.Request, res: functions.Response<any>) => {
   const origin = (req.headers.origin as string) || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
@@ -239,6 +263,34 @@ const serializeBetaKey = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
     revokedAtMs: toMs(data.revokedAt),
     lifetimeGrantedEmail: data.lifetimeGrantedEmail || null,
     lifetimeGrantedAtMs: toMs(data.lifetimeGrantedAt)
+  };
+};
+
+const serializeEntitlement = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
+  const data = doc.data() || {};
+  const toMs = (value: any) => {
+    if (!value) return null;
+    if (typeof value.toMillis === 'function') return value.toMillis();
+    if (typeof value.seconds === 'number') return value.seconds * 1000;
+    if (typeof value === 'number') return value;
+    if (value instanceof Date) return value.getTime();
+    return null;
+  };
+  const subscriptionRaw =
+    data.subscriptionCurrentPeriodEnd ?? data.subscriptionCurrentPeriodEndMs ?? null;
+  const subscriptionMs = toMs(subscriptionRaw);
+  const planType = String(data.planType || '');
+  return {
+    id: doc.id,
+    email: doc.id,
+    status: String(data.status || ''),
+    planType,
+    source: String(data.source || ''),
+    expiresAtMs: toMs(data.expiresAt),
+    subscriptionCurrentPeriodEndMs: subscriptionMs,
+    createdAtMs: toMs(data.createdAt),
+    updatedAtMs: toMs(data.updatedAt),
+    lifetime: planType.toLowerCase() === 'lifetime' || data.lifetime === true
   };
 };
 
@@ -780,6 +832,33 @@ export const listBetaKeys = functions
     }
   });
 
+export const listEntitlements = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    try {
+      const snap = await admin
+        .firestore()
+        .collection('entitlements')
+        .orderBy('updatedAt', 'desc')
+        .limit(80)
+        .get();
+      const entitlements = snap.docs.map(serializeEntitlement);
+      res.status(200).json({ ok: true, entitlements });
+    } catch (error) {
+      console.error('[entitlements] list_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao listar acessos.' });
+    }
+  });
+
 export const revokeBetaKey = functions
   .region('us-central1')
   .https.onRequest(async (req, res) => {
@@ -921,11 +1000,17 @@ export const grantLifetimeAccess = functions
         );
       }
 
+      const originRaw = String(body.origin || req.headers.origin || '').trim();
+      const origin = resolveSafeOrigin(originRaw);
+      const loginUrl = `${origin}/login`;
+      const emailSent = await sendLifetimeAccessEmail({ email, loginUrl });
+
       res.status(200).json({
         ok: true,
         email,
         keyId: keyId || null,
-        code: code || null
+        code: code || null,
+        emailSent
       });
     } catch (error) {
       console.error('[beta] lifetime_error', error);

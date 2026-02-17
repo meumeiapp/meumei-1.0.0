@@ -207,6 +207,7 @@ interface DashboardProps {
 }
 
 const MEI_LIMIT = 81000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const MEI_CHECKPOINTS = [0.25, 0.5, 0.75, 1];
 
 type MeiStatusLevel = 'safe' | 'attention' | 'critical' | 'over';
@@ -867,7 +868,9 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       ];
   }, [categoryTotals]);
 
-  const visibleCreditCards = isCreditCardsCollapsed ? creditCards.slice(0, 2) : creditCards;
+  const creditCardsPreviewCount = 3;
+  const visibleCreditCards = isCreditCardsCollapsed ? creditCards.slice(0, creditCardsPreviewCount) : creditCards;
+  const canExpandCreditCards = creditCards.length > creditCardsPreviewCount;
   const visibleCategoryItems = isExpenseBreakdownCollapsed ? categoryTotals.items.slice(0, 1) : categoryTotals.items;
 
   useEffect(() => {
@@ -948,6 +951,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const rawPercentage = meiLimit > 0 ? (meiRevenue / meiLimit) * 100 : 0;
   const displayPercentage = Math.min(Math.max(rawPercentage, 0), 100);
   const progressVisualPercentage = Math.min(Math.max(rawPercentage, 0), 120);
+  const progressLabelLeft = Math.min(Math.max(displayPercentage, 6), 94);
   const meiRemaining = Math.max(meiLimit - meiRevenue, 0);
   const meiExcess = Math.max(meiRevenue - meiLimit, 0);
   const meiStatus = getMeiStatus(rawPercentage);
@@ -1050,7 +1054,39 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       setOrder(merged as DashboardBlockId[]);
   };
 
-  const renderCreditCardsSection = (cardsToShow: CreditCardType[]) => (
+  const resolveCardDueDate = (card: CreditCardType) => {
+      const monthExpenses = expenses.filter(exp => {
+          if (!exp.cardId || exp.cardId !== card.id) return false;
+          if (!exp.dueDate) return false;
+          const due = new Date(exp.dueDate + 'T12:00:00');
+          return due.getMonth() === viewDate.getMonth() && due.getFullYear() === viewDate.getFullYear();
+      });
+      const dueDateFromExpenses = monthExpenses.length
+          ? monthExpenses.reduce((latest, exp) => {
+                const next = new Date(exp.dueDate + 'T12:00:00');
+                return next > latest ? next : latest;
+            }, new Date(monthExpenses[0].dueDate + 'T12:00:00'))
+          : null;
+      if (dueDateFromExpenses) return dueDateFromExpenses;
+      const fallback = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
+      if (card.dueDay < card.closingDay) {
+          fallback.setMonth(fallback.getMonth() + 1);
+      }
+      return fallback;
+  };
+
+  const resolveDueBorderColor = (dueDateObj: Date) => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const daysUntil = Math.ceil((dueDateObj.getTime() - today.getTime()) / DAY_MS);
+      if (daysUntil <= 0) return '#ef4444';
+      const ratio = Math.min(Math.max(daysUntil / 30, 0), 1);
+      if (ratio <= 0.33) return '#ef4444';
+      if (ratio <= 0.66) return '#facc15';
+      return '#22c55e';
+  };
+
+  const renderCreditCardsSection = (cardsToShow: CreditCardType[], variant: 'compact' | 'expanded' = 'compact') => (
       <section>
           <div className="bg-white dark:bg-[#151517] rounded-2xl p-3 border border-zinc-200 dark:border-zinc-800 shadow-sm h-full">
               <div className="flex items-center justify-between mb-2">
@@ -1061,75 +1097,66 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               </div>
 
               {cardsToShow.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div
+                      className={`grid gap-3 ${variant === 'expanded' ? 'grid-cols-1 md:grid-cols-3 xl:grid-cols-4' : 'grid-cols-1 md:grid-cols-3'}`}
+                  >
                       {cardsToShow.map((card) => {
                           const style = getCardStyle(card); 
                           
                           const invoiceTotal = cardTotals[card.id] ?? 0;
 
-                          const monthExpenses = expenses.filter(exp => {
-                              if (!exp.cardId || exp.cardId !== card.id) return false;
-                              if (!exp.dueDate) return false;
-                              const due = new Date(exp.dueDate + 'T12:00:00');
-                              return due.getMonth() === viewDate.getMonth() && due.getFullYear() === viewDate.getFullYear();
-                          });
-                          const dueDateFromExpenses = monthExpenses.length
-                              ? monthExpenses.reduce((latest, exp) => {
-                                    const next = new Date(exp.dueDate + 'T12:00:00');
-                                    return next > latest ? next : latest;
-                                }, new Date(monthExpenses[0].dueDate + 'T12:00:00'))
-                              : null;
-                          const dueDateObj = dueDateFromExpenses ?? (() => {
-                              const fallback = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-                              if (card.dueDay < card.closingDay) {
-                                  fallback.setMonth(fallback.getMonth() + 1);
-                              }
-                              return fallback;
-                          })();
+                          const dueDateObj = resolveCardDueDate(card);
                           const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
+                          const dueBorderColor = resolveDueBorderColor(dueDateObj);
 
                           return (
                               <div 
                                   key={card.id} 
-                                  className="rounded-2xl p-3 border border-white/5 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
-                                  style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
+                                  className="rounded-2xl p-2.5 border-2 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
+                                  style={{
+                                      backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})`,
+                                      borderColor: dueBorderColor
+                                  }}
                               >
                                   <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
                                   <div className="relative z-10 flex flex-col h-full justify-between">
                                       <div className="flex justify-between items-start">
                                           <div>
-                                              <h3 className="font-bold text-base text-white mb-0.5">{card.name}</h3>
-                                              <p className="text-xs text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
+                                              <h3 className="font-bold text-sm text-white mb-0.5">{card.name}</h3>
+                                              <p className="text-[11px] text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
                                           </div>
-                                          <div className="bg-white/20 backdrop-blur-md p-1.5 rounded-lg">
-                                              <img src={style.icon} className="w-7 h-7 opacity-90" alt="Card Brand" />
+                                          <div className="bg-white/20 backdrop-blur-md p-1 rounded-lg">
+                                              <img src={style.icon} className="w-6 h-6 opacity-90" alt="Card Brand" />
                                           </div>
                                       </div>
-                                      <div className="mt-4">
-                                          <div className="flex justify-between items-end mb-3">
+                                      <div className="mt-3">
+                                          <div className="flex justify-between items-end mb-2.5">
                                               <div>
-                                                  <p className="text-[10px] text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
-                                                  <div className="text-xl font-bold text-white">
+                                                  <p className="text-[9px] text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
+                                                  <div className="text-lg font-bold text-white">
                                                       R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                                   </div>
                                               </div>
                                               <div className="text-right">
-                                                  <p className="text-[10px] text-white/80 mb-1">Vence em</p>
-                                                  <p className="text-xs font-bold text-white bg-white/20 px-2 py-0.5 rounded-md backdrop-blur-sm">
+                                                  <p className="text-[9px] text-white/80 mb-1">Vence em</p>
+                                                  <p
+                                                      className="text-[11px] font-bold text-white bg-white/20 px-2 py-0.5 rounded-md backdrop-blur-sm border"
+                                                      style={{ borderColor: dueBorderColor }}
+                                                  >
                                                       {formattedDueDate}
                                                   </p>
                                               </div>
                                           </div>
-                                          <div className="pt-3 border-t border-white/20 flex justify-between items-center">
+                                          <div className="pt-2.5 border-t border-white/20 flex justify-between items-center">
                                               <span 
-                                                  className="text-[10px] font-semibold px-2 py-0.5 rounded text-white"
+                                                  className="text-[9px] font-semibold px-2 py-0.5 rounded text-white"
                                                   style={{ backgroundColor: style.badgeBg }}
                                               >
                                                   Fatura Aberta
                                               </span>
                                               <button 
                                                   onClick={onOpenInvoices}
-                                                  className="flex items-center gap-2 text-[11px] font-semibold text-white hover:bg-white/20 px-2 py-1 rounded-lg transition-colors"
+                                                  className="flex items-center gap-2 text-[10px] font-semibold text-white hover:bg-white/20 px-2 py-1 rounded-lg transition-colors"
                                               >
                                                   Ver Detalhes <Eye size={14} />
                                               </button>
@@ -1326,63 +1353,64 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         style={{ order: orderMap.mei_limit }}
                     >
                   <section>
-                      <div className={`bg-white dark:bg-[#151517] rounded-2xl p-5 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
+                      <div className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
                           <div className="absolute inset-y-0 right-0 w-32 opacity-5 pointer-events-none">
                               <Building2 size={120} className="w-full h-full" />
                           </div>
 
-                          <div className="relative flex flex-col gap-5">
-                              <div className="flex flex-col lg:flex-row gap-5 lg:items-start">
-                                  <div className="flex flex-1 items-start gap-4">
+                          <div className="relative flex flex-col gap-3">
+                              <div className="flex flex-col lg:flex-row gap-3 lg:items-start">
+                                  <div className="flex flex-1 items-start gap-3">
                                       <div 
-                                          className={`relative w-20 h-20 rounded-2xl border ${mascotConfig.ringClass} flex items-center justify-center shadow-xl ${mascotConfig.auraClass} transition-all duration-500`}
+                                          className={`relative w-16 h-16 rounded-2xl border ${mascotConfig.ringClass} flex items-center justify-center shadow-xl ${mascotConfig.auraClass} transition-all duration-500`}
                                           title={mascotConfig.tooltip}
                                       >
-                                          <mascotConfig.icon size={34} className={`${mascotConfig.faceClass}`} />
+                                          <mascotConfig.icon size={28} className={`${mascotConfig.faceClass}`} />
                                       </div>
                                       <div>
-                                          <div className="flex items-center gap-2 mb-2">
-                                              <div className="p-1.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
-                                                  <Building2 size={18} />
+                                          <div className="flex items-center gap-2 mb-1.5">
+                                              <div className="p-1 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
+                                                  <Building2 size={16} />
                                               </div>
-                                              <h3 className="font-bold text-zinc-900 dark:text-white">Faturamento Fiscal MEI (PJ)</h3>
+                                              <h3 className="text-base font-bold text-zinc-900 dark:text-white">Faturamento Fiscal MEI (PJ)</h3>
                                           </div>
-                                          <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-xl">
+                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xl">
                                               {meiMode === 'annual'
                                                   ? 'Acompanhe o seu faturamento anual e evite ultrapassar o limite de R$ 81.000,00 do regime MEI.'
                                                   : 'Acompanhe o seu faturamento mensal e compare com a média mensal do limite do MEI.'}
                                           </p>
-                                          <div className={`mt-3 text-sm font-semibold ${meiStatus.accentText}`}>
+                                          <div className={`mt-2 text-xs font-semibold ${meiStatus.accentText}`}>
                                               {meiStatus.label}
                                           </div>
-                                          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                                          <p className="text-xs text-zinc-600 dark:text-zinc-400">
                                               {meiStatusDescription}
                                           </p>
                                       </div>
                                   </div>
-                                  <div className={`w-full lg:w-80 rounded-2xl border ${meiStatus.calloutBorder} ${meiStatus.calloutBg} p-4 flex gap-3`}>
-                                      {React.createElement(calloutIcon, { size: 28, className: `${meiStatus.accentText} shrink-0` })}
-                                      <p className={`text-sm leading-relaxed ${meiStatus.calloutText}`}>
+                                  <div className={`w-full lg:w-72 rounded-2xl border ${meiStatus.calloutBorder} ${meiStatus.calloutBg} p-3 flex gap-2`}>
+                                      {React.createElement(calloutIcon, { size: 24, className: `${meiStatus.accentText} shrink-0` })}
+                                      <p className={`text-xs leading-relaxed ${meiStatus.calloutText}`}>
                                           {statusCalloutText}
                                       </p>
                                   </div>
                               </div>
 
-                              <div className="relative pt-6">
-                                  <div className="relative h-4 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                              <div className="relative pt-7">
+                                  <div className="relative h-3 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
                                       <div 
                                           className={`absolute inset-y-0 left-0 bg-gradient-to-r ${meiStatus.gradient} transition-all duration-700 ease-out`}
                                           style={{ width: `${progressVisualPercentage}%` }}
                                       ></div>
                                   </div>
-                                  <div 
-                                      className="absolute -top-8 flex flex-col items-center transition-all duration-500"
-                                      style={{ left: `calc(${displayPercentage}% - 28px)` }}
+                                  <div
+                                      className="absolute -top-1 flex flex-col items-center transition-all duration-500"
+                                      style={{ left: `${progressLabelLeft}%`, transform: 'translateX(-50%)' }}
                                   >
-                                      <div className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shadow ${meiStatus.badgeClass}`}>
+                                      <div className="rounded-full border border-white/40 bg-white/95 px-3 py-1 text-[11px] font-bold text-zinc-900 shadow-lg">
                                           {rawPercentage.toFixed(1)}%
                                       </div>
-                                      <div className={`w-2 h-2 mt-1 rounded-full bg-gradient-to-r ${meiStatus.gradient}`}></div>
+                                      <div className="h-2 w-2 -mt-1 rotate-45 border border-white/40 bg-white/95 shadow-md"></div>
+                                      <div className={`-mt-2 h-2 w-2 rounded-full bg-gradient-to-r ${meiStatus.gradient}`} />
                                   </div>
                                   {MEI_CHECKPOINTS.map((checkpoint) => {
                                       const percent = checkpoint * 100;
@@ -1400,40 +1428,40 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                           </div>
                                       );
                                   })}
-                                  <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-                                      <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
+                                  <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                      <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
                                           <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
                                               {meiMode === 'annual' ? 'Faturado no ano' : 'Faturado no mês'}
                                           </p>
-                                          <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiRevenue)}</p>
-                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{rawPercentage.toFixed(1)}% do limite</p>
+                                          <p className="text-lg font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiRevenue)}</p>
+                                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">{rawPercentage.toFixed(1)}% do limite</p>
                                       </div>
-                                      <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
+                                      <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
                                           <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
                                               {meiStatus.level === 'over' ? 'Excedente sobre o limite' : 'Restante até o limite'}
                                           </p>
-                                          <p className={`text-xl font-semibold mt-1 ${meiStatus.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
+                                          <p className={`text-lg font-semibold mt-1 ${meiStatus.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
                                               {formatCurrency(meiStatus.level === 'over' ? meiExcess : meiRemaining)}
                                           </p>
-                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
                                               Limite {meiScopeLabel} de {formatCurrency(meiLimit)}
                                           </p>
                                       </div>
-                                      <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
+                                      <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
                                           <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Limite MEI {meiScopeLabel}</p>
-                                          <p className="text-xl font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiLimit)}</p>
-                                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                                          <p className="text-lg font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiLimit)}</p>
+                                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
                                               {meiMode === 'annual'
                                                   ? 'Atualizado automaticamente pela legislação'
                                                   : 'Estimativa mensal com base no limite anual'}
                                           </p>
                                       </div>
                                   </div>
-                                  <div className="mt-4 grid w-full grid-cols-2 gap-3">
+                                  <div className="mt-3 grid w-full grid-cols-2 gap-2">
                                       <button
                                           type="button"
                                           onClick={() => setMeiMode('annual')}
-                                          className={`h-9 w-full rounded-xl text-sm font-semibold border transition-all shadow-sm ${
+                                          className={`h-8 w-full rounded-xl text-xs font-semibold border transition-all shadow-sm ${
                                               meiMode === 'annual'
                                                   ? 'border-indigo-200/70 bg-gradient-to-r from-indigo-100/80 to-white text-indigo-700 dark:border-indigo-500/40 dark:from-indigo-400/20 dark:to-indigo-300/10 dark:text-indigo-100'
                                                   : 'border-zinc-200/70 bg-white/90 text-zinc-600 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-700/70 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:text-zinc-100 dark:hover:border-zinc-500'
@@ -1444,7 +1472,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                       <button
                                           type="button"
                                           onClick={() => setMeiMode('monthly')}
-                                          className={`h-9 w-full rounded-xl text-sm font-semibold border transition-all shadow-sm ${
+                                          className={`h-8 w-full rounded-xl text-xs font-semibold border transition-all shadow-sm ${
                                               meiMode === 'monthly'
                                                   ? 'border-indigo-200/70 bg-gradient-to-r from-indigo-100/80 to-white text-indigo-700 dark:border-indigo-500/40 dark:from-indigo-400/20 dark:to-indigo-300/10 dark:text-indigo-100'
                                                   : 'border-zinc-200/70 bg-white/90 text-zinc-600 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-700/70 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:text-zinc-100 dark:hover:border-zinc-500'
@@ -1474,10 +1502,12 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 disabled={layoutLoading}
                 style={{ order: orderMap.credit_cards }}
                 isCollapsed={false}
-                onToggleCollapse={() => setExpandedPanel('credit_cards')}
+                onToggleCollapse={
+                    canExpandCreditCards ? () => setExpandedPanel('credit_cards') : undefined
+                }
                 renderCollapsedChildren
             >
-                  {renderCreditCardsSection(visibleCreditCards)}
+                  {renderCreditCardsSection(visibleCreditCards, 'compact')}
           </SortableBlock>
           );
       }
@@ -1658,7 +1688,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   );
 
   const renderDockSheet = (title: string, content: React.ReactNode) => (
-      <div className="fixed inset-0 z-[80]">
+      <div className="fixed inset-0 z-[80] overflow-x-hidden">
           <button
               type="button"
               className="absolute inset-0 bg-transparent"
@@ -1669,8 +1699,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               className="absolute left-1/2 -translate-x-1/2"
               style={{
                   bottom: 'var(--mm-desktop-dock-height, 84px)',
-                  width: 'var(--mm-desktop-dock-width, calc(100% - 48px))',
-                  maxWidth: 'var(--mm-desktop-dock-width, calc(100% - 48px))'
+                  width: 'min(var(--mm-desktop-dock-width, calc(100% - 48px)), calc(100% - 24px))',
+                  maxWidth: 'min(var(--mm-desktop-dock-width, calc(100% - 48px)), calc(100% - 24px))'
               }}
           >
               <div className="w-full rounded-[26px] border border-black/10 dark:border-white/20 bg-white/80 dark:bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl overflow-hidden">
@@ -1685,7 +1715,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                           <X size={14} />
                       </button>
                   </div>
-                  <div className="max-h-[calc(100vh-260px)] overflow-y-auto px-5 pb-4 pt-3">
+                  <div className="max-h-[calc(100vh-260px)] overflow-y-auto overflow-x-hidden px-5 pb-4 pt-3">
                       {content}
                   </div>
               </div>
@@ -1709,7 +1739,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
             </DndContext>
         </div>
         {expandedPanel === 'credit_cards' &&
-            renderDockSheet('Faturas dos Cartões', renderCreditCardsSection(creditCards))}
+            renderDockSheet('Faturas dos Cartões', renderCreditCardsSection(creditCards, 'expanded'))}
         {expandedPanel === 'expense_breakdown' &&
             renderDockSheet('Onde foi parar seu dinheiro?', renderExpenseBreakdownSection(categoryTotals.items))}
     </div>
@@ -1762,7 +1792,7 @@ const SortableBlock: React.FC<SortableBlockProps> = ({
                     {...listeners}
                     className="flex h-8 w-6 items-center justify-center rounded-r-xl border border-zinc-200 bg-white text-zinc-400 shadow-sm hover:text-zinc-600 dark:border-zinc-800 dark:bg-[#151517] dark:hover:text-zinc-200"
                     aria-label={`Organizar ${label}`}
-                    title="Organizar posição"
+                    title="Arrastar para reorganizar"
                 >
                     <GripVertical size={16} />
                 </button>
@@ -1773,6 +1803,7 @@ const SortableBlock: React.FC<SortableBlockProps> = ({
                         type="button"
                         onClick={onToggleCollapse}
                         aria-label={toggleLabel}
+                        title={collapsed ? 'Expandir bloco' : 'Recolher bloco'}
                         className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
                     >
                         <ChevronDown size={16} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />

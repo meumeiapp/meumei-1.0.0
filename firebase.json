@@ -87,6 +87,13 @@
           }
         },
         {
+          "source": "/api/listEntitlements",
+          "function": {
+            "functionId": "listEntitlements",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "/api/revokeBetaKey",
           "function": {
             "functionId": "revokeBetaKey",

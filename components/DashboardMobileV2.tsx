@@ -16,6 +16,7 @@ import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 import useIsMobile from '../hooks/useIsMobile';
+import { notificationsService } from '../services/notificationsService';
 
 interface FinancialData {
     balance: number;
@@ -145,6 +146,27 @@ const mapMonthAlias = (token: string) => {
   return MONTH_ALIASES[clean as keyof typeof MONTH_ALIASES] || clean;
 };
 
+const resolveCardDueDate = (card: CreditCardType, expenses: Expense[], viewDate: Date) => {
+  const monthExpenses = expenses.filter(exp => {
+    if (!exp.cardId || exp.cardId !== card.id) return false;
+    if (!exp.dueDate) return false;
+    const due = new Date(exp.dueDate + 'T12:00:00');
+    return due.getMonth() === viewDate.getMonth() && due.getFullYear() === viewDate.getFullYear();
+  });
+  const dueDateFromExpenses = monthExpenses.length
+    ? monthExpenses.reduce((latest, exp) => {
+        const next = new Date(exp.dueDate + 'T12:00:00');
+        return next > latest ? next : latest;
+      }, new Date(monthExpenses[0].dueDate + 'T12:00:00'))
+    : null;
+  if (dueDateFromExpenses) return dueDateFromExpenses;
+  const fallback = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
+  if (card.dueDay < card.closingDay) {
+    fallback.setMonth(fallback.getMonth() + 1);
+  }
+  return fallback;
+};
+
 
 interface DashboardProps {
   onOpenAccounts: () => void;
@@ -181,6 +203,7 @@ interface DashboardProps {
 }
 
 const MEI_LIMIT = 81000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const MEI_CHECKPOINTS = [0.25, 0.5, 0.75, 1];
 
 type MeiStatusLevel = 'safe' | 'attention' | 'critical' | 'over';
@@ -338,6 +361,48 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
   const resultValue = financialData.income - financialData.expenses;
   const resultTextClass = resultValue >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400';
   const handleViewMore = onOpenLaunches ?? onOpenIncomes ?? onOpenVariableExpenses;
+
+  useEffect(() => {
+    if (!isMobile) return;
+    if (typeof window === 'undefined') return;
+    if (!creditCards.length) return;
+    if (!notificationsService.getLocalEnabled()) return;
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const alertWindowDays = 5;
+
+    const sendAlerts = async () => {
+      for (const card of creditCards) {
+        const dueDateObj = resolveCardDueDate(card, expenses, viewDate);
+        if (!dueDateObj) continue;
+        const daysUntil = Math.ceil((dueDateObj.getTime() - today.getTime()) / DAY_MS);
+        if (daysUntil < 0 || daysUntil > alertWindowDays) continue;
+        const dueKey = dueDateObj.toISOString().slice(0, 10);
+        const storageKey = `meumei_invoice_due_notice_${card.id}_${dueKey}`;
+        if (localStorage.getItem(storageKey)) continue;
+        const formatted = dueDateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        const body =
+          daysUntil === 0
+            ? `A fatura do cartão ${card.name} vence hoje (${formatted}).`
+            : `A fatura do cartão ${card.name} vence em ${daysUntil} dias (${formatted}).`;
+        try {
+          await notificationsService.sendTestNotification({
+            title: 'Vencimento de fatura',
+            body,
+            url: '/app'
+          });
+          localStorage.setItem(storageKey, '1');
+        } catch (error) {
+          console.warn('[notifications] invoice_due_failed', error);
+        }
+      }
+    };
+
+    void sendAlerts();
+  }, [creditCards, expenses, isMobile, viewDate]);
   const recentTransactions = useMemo(() => {
       const toTimestamp = (value?: string) => {
           if (!value) return null;

@@ -1227,6 +1227,7 @@ const SortableBlock: React.FC<{
                     disabled={disabled}
                     className="flex h-7 w-5 items-center justify-center rounded-r-lg border border-zinc-200 bg-white text-zinc-400 shadow-sm hover:text-zinc-600 dark:border-zinc-800 dark:bg-[#151517] dark:hover:text-zinc-200"
                     aria-label={`Mover ${label}`}
+                    title="Arrastar para reorganizar"
                 >
                     <GripVertical size={14} />
                 </button>

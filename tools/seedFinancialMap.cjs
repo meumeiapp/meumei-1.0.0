@@ -43,6 +43,7 @@ const targetMovement =
 const incomeCount = readNumberArg('--incomes') || 18;
 const expenseCount = readNumberArg('--expenses') || 26;
 const yieldCount = readNumberArg('--yields') || 6;
+const monthsBack = readNumberArg('--months') || readNumberArg('--months-back') || 14;
 
 if (!licenseIdArg && !emailArg) {
   console.error(
@@ -77,6 +78,9 @@ const seedCollections = ['accounts', 'expenses', 'incomes', 'credit_cards', 'yie
 
 const nowISO = () => new Date().toISOString();
 const todayISO = () => new Date().toISOString().split('T')[0];
+const pad2 = value => String(value).padStart(2, '0');
+const buildDate = (year, monthIndex, day) =>
+  `${year}-${pad2(monthIndex + 1)}-${pad2(day)}`;
 
 const buildExpense = (licenseId, id, data, cryptoEpoch) => ({
   id,
@@ -224,31 +228,86 @@ const run = async () => {
     console.log('[seed] companyInfo ready', { name: payload.name, cnpj: payload.cnpj });
   }
 
+  const categoriesRef = userRef.collection('categories');
+  const incomeCategoriesSeed = [
+    'Serviços',
+    'Vendas',
+    'Recorrente',
+    'Marketplace',
+    'Consultoria',
+    'Assinaturas',
+    'Cursos',
+    'Comissões',
+    'Licenças',
+    'Projetos',
+    'Mentorias',
+    'Publicidade',
+    'Afiliados',
+    'Reembolso',
+    'Rendimentos'
+  ];
+  const expenseCategoriesSeed = [
+    'Aluguel',
+    'Internet',
+    'Energia',
+    'Impostos',
+    'Contabilidade',
+    'Telefone',
+    'Ferramentas',
+    'Assinaturas',
+    'Marketing',
+    'Transporte',
+    'Combustível',
+    'Logística',
+    'Embalagens',
+    'Fornecedores',
+    'Educação',
+    'Manutenção',
+    'Taxas bancárias',
+    'Viagem',
+    'Alimentação',
+    'Saúde'
+  ];
+  if (!dryRun) {
+    await Promise.all([
+      categoriesRef.doc('incomes').set({
+        type: 'incomes',
+        items: incomeCategoriesSeed.map(item => item.toUpperCase()),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true }),
+      categoriesRef.doc('expenses').set({
+        type: 'expenses',
+        items: expenseCategoriesSeed.map(item => item.toUpperCase()),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true })
+    ]);
+  }
+
   const accountsSnap = await userRef.collection('accounts').get();
   const existingAccounts = new Set(accountsSnap.docs.map(doc => doc.id));
   const seededAccounts = [
     {
       id: 'seed_account_main',
-      name: 'Conta Principal',
+      name: 'Banco do Brasil PJ',
       type: 'Conta Corrente',
-      initialBalance: 3200,
-      currentBalance: 3200,
+      initialBalance: 2800,
+      currentBalance: 5200,
       nature: 'PJ'
     },
     {
       id: 'seed_account_reserve',
-      name: 'Conta Reserva',
+      name: 'Itaú PJ',
       type: 'Conta Corrente',
-      initialBalance: 1800,
-      currentBalance: 1800,
+      initialBalance: 1500,
+      currentBalance: 2400,
       nature: 'PJ'
     },
     {
       id: 'seed_account_cash',
-      name: 'Carteira / Dinheiro',
+      name: 'Caixa Econômica PJ',
       type: 'Caixa',
-      initialBalance: 450,
-      currentBalance: 450,
+      initialBalance: 700,
+      currentBalance: 1100,
       nature: 'PJ'
     }
   ];
@@ -271,20 +330,28 @@ const run = async () => {
 
   const cardSeeds = [
     {
-      id: 'seed_card_main',
-      name: 'Cartao Seed',
+      id: 'seed_card_bb',
+      name: 'Banco do Brasil',
       brand: 'Visa',
-      closingDay: 25,
-      dueDay: 5,
-      limit: 12000
+      closingDay: 22,
+      dueDay: 2,
+      limit: 7000
     },
     {
-      id: 'seed_card_corp',
-      name: 'Cartao Corporativo',
+      id: 'seed_card_itau',
+      name: 'Itaú',
       brand: 'Mastercard',
-      closingDay: 10,
-      dueDay: 20,
-      limit: 18000
+      closingDay: 14,
+      dueDay: 24,
+      limit: 6000
+    },
+    {
+      id: 'seed_card_caixa',
+      name: 'Caixa Econômica',
+      brand: 'Elo',
+      closingDay: 8,
+      dueDay: 18,
+      limit: 5000
     }
   ];
 
@@ -304,82 +371,149 @@ const run = async () => {
 
   const random = createSeededRandom(licenseId);
   const incomeCategories = [
+    'Serviços',
     'Vendas',
-    'Servicos',
-    'Assinaturas',
+    'Recorrente',
     'Marketplace',
     'Consultoria',
-    'Treinamentos',
-    'Retainer'
+    'Assinaturas',
+    'Cursos',
+    'Comissões',
+    'Licenças',
+    'Projetos',
+    'Mentorias',
+    'Publicidade',
+    'Afiliados',
+    'Reembolso',
+    'Rendimentos'
   ];
   const incomeDescriptions = [
     'Venda online',
     'Contrato mensal',
     'Projeto fechado',
     'Recebimento recorrente',
-    'Parceria comercial'
+    'Parceria comercial',
+    'Serviço avulso',
+    'Pacote de consultoria',
+    'Licença de uso',
+    'Workshop',
+    'Assinatura premium'
   ];
   const expenseCatalog = [
     { category: 'Aluguel', type: 'fixed', description: 'Aluguel' },
     { category: 'Internet', type: 'fixed', description: 'Internet' },
     { category: 'Energia', type: 'fixed', description: 'Energia' },
-    { category: 'Folha', type: 'fixed', description: 'Folha' },
+    { category: 'Impostos', type: 'fixed', description: 'Impostos DAS' },
+    { category: 'Contabilidade', type: 'fixed', description: 'Contabilidade' },
+    { category: 'Telefone', type: 'fixed', description: 'Telefone' },
     { category: 'Ferramentas', type: 'fixed', description: 'Ferramentas SaaS' },
+    { category: 'Assinaturas', type: 'fixed', description: 'Assinaturas' },
     { category: 'Marketing', type: 'variable', description: 'Marketing' },
     { category: 'Transporte', type: 'variable', description: 'Transporte' },
-    { category: 'Estoque', type: 'variable', description: 'Reposicao estoque' },
-    { category: 'Impostos', type: 'fixed', description: 'Impostos DAS' },
-    { category: 'Pessoal', type: 'personal', description: 'Gasto pessoal' },
-    { category: 'Saude', type: 'personal', description: 'Saude' }
+    { category: 'Combustível', type: 'variable', description: 'Combustível' },
+    { category: 'Logística', type: 'variable', description: 'Logística' },
+    { category: 'Embalagens', type: 'variable', description: 'Embalagens' },
+    { category: 'Fornecedores', type: 'variable', description: 'Compra de insumos' },
+    { category: 'Educação', type: 'variable', description: 'Cursos e treinamentos' },
+    { category: 'Manutenção', type: 'variable', description: 'Manutenção' },
+    { category: 'Taxas bancárias', type: 'variable', description: 'Tarifas bancárias' },
+    { category: 'Viagem', type: 'variable', description: 'Viagem a trabalho' },
+    { category: 'Alimentação', type: 'personal', description: 'Alimentação' },
+    { category: 'Saúde', type: 'personal', description: 'Saúde' }
   ];
+
+  const resolveCardDueDate = (baseDate, card) => {
+    if (!card) return baseDate;
+    const date = new Date(`${baseDate}T12:00:00`);
+    let year = date.getFullYear();
+    let month = date.getMonth();
+    const dueDay = clamp(card.dueDay || 10, 1, 28);
+    if (date.getDate() > dueDay) {
+      month += 1;
+      if (month > 11) {
+        month = 0;
+        year += 1;
+      }
+    }
+    return buildDate(year, month, dueDay);
+  };
+
+  const today = new Date();
 
   const baseIncomes = Array.from({ length: incomeCount }).map((_, idx) => {
     const category = pick(incomeCategories, random);
     const description = pick(incomeDescriptions, random);
-    const amount = roundCurrency(randomBetween(2500, 18000, random));
+    const amount = roundCurrency(randomBetween(450, 1800, random));
     const accountId = pick(accountIds, random);
-    const date = randomDate(6, random);
+    const date = randomDate(monthsBack, random);
+    const status = new Date(`${date}T12:00:00`) > today ? 'pending' : 'received';
     return buildIncome(licenseId, `seed_income_${idx + 1}`, {
       description,
       category,
       amount,
       date,
       accountId,
-      status: 'received',
-      paymentMethod: random() > 0.6 ? 'Boleto' : 'Pix'
+      status,
+      paymentMethod: random() > 0.7 ? 'Boleto' : 'Pix'
     }, currentEpoch);
   });
 
   const baseExpenses = Array.from({ length: expenseCount }).map((_, idx) => {
     const entry = pick(expenseCatalog, random);
-    const amount = roundCurrency(randomBetween(900, 14000, random));
+    const amount = roundCurrency(randomBetween(80, 850, random));
     const accountId = pick(accountIds, random);
-    const date = randomDate(6, random);
-    const useCard = entry.type !== 'personal' && random() > 0.7;
+    const date = randomDate(monthsBack, random);
+    const useCard = random() > 0.45;
+    const cardId = useCard ? pick(cardSeeds.map(card => card.id), random) : null;
+    const card = cardId ? cardSeeds.find(item => item.id === cardId) : null;
+    const dueDate = useCard ? resolveCardDueDate(date, card) : date;
+    const status = new Date(`${dueDate}T12:00:00`) > today ? 'pending' : 'paid';
     return buildExpense(licenseId, `seed_expense_${idx + 1}`, {
       description: entry.description,
       category: entry.category,
       amount,
       date,
-      dueDate: date,
+      dueDate,
       accountId,
-      status: 'paid',
-      paymentMethod: useCard ? 'Credito' : 'Debito',
+      status,
+      paymentMethod: useCard ? 'Crédito' : (random() > 0.7 ? 'Boleto' : 'Débito'),
       type: entry.type,
-      cardId: useCard ? pick(cardSeeds.map(card => card.id), random) : null
+      cardId: cardId || null
     }, currentEpoch);
   });
 
   const baseYields = Array.from({ length: yieldCount }).map((_, idx) => {
-    const amount = roundCurrency(randomBetween(120, 1500, random));
+    const amount = roundCurrency(randomBetween(20, 180, random));
     const accountId = pick(accountIds, random);
-    const date = randomDate(6, random);
+    const date = randomDate(monthsBack, random);
     return buildYield(licenseId, `seed_yield_${idx + 1}`, {
       accountId,
       amount,
       date,
       notes: 'Rendimento CDI'
     }, currentEpoch);
+  });
+
+  const currentMonthCardExpenses = cardSeeds.flatMap(card => {
+    const list = Array.from({ length: 6 }).map((_, idx) => {
+      const entry = pick(expenseCatalog.filter(item => item.type !== 'personal'), random);
+      const amount = roundCurrency(randomBetween(120, 900, random));
+      const date = buildDate(today.getFullYear(), today.getMonth(), clamp(today.getDate() - 3 + idx, 1, 28));
+      const dueDate = resolveCardDueDate(date, card);
+      return buildExpense(licenseId, `seed_card_${card.id}_${idx + 1}`, {
+        description: entry.description,
+        category: entry.category,
+        amount,
+        date,
+        dueDate,
+        accountId: pick(accountIds, random),
+        status: new Date(`${dueDate}T12:00:00`) > today ? 'pending' : 'paid',
+        paymentMethod: 'Crédito',
+        type: entry.type,
+        cardId: card.id
+      }, currentEpoch);
+    });
+    return list;
   });
 
   const baseMovement =
@@ -398,7 +532,7 @@ const run = async () => {
     ...item,
     amount: roundCurrency(item.amount * scale)
   }));
-  const expenses = baseExpenses.map(item => ({
+  const expenses = [...baseExpenses, ...currentMonthCardExpenses].map(item => ({
     ...item,
     amount: roundCurrency(item.amount * scale)
   }));

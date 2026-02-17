@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+.font-space-grotesk {
+  font-family: "Space Grotesk", "Inter", "Segoe UI", "Roboto", "Helvetica", "Arial", sans-serif;
+}
+
+html.landing-no-page-scroll,
+body.landing-no-page-scroll {
+  overflow: hidden;
+}
+
+.landing-scroll-surface {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.landing-scroll-surface::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 
 @layer base {
   html.is-mobile,
@@ -127,7 +147,7 @@
 
 @media (max-height: 900px) {
   .mm-app-root.mm-compact .mm-content {
-    max-height: calc(100vh - var(--mm-header-height, 120px) - var(--mm-desktop-dock-height, 84px) - 16px);
+    max-height: calc(100vh - var(--mm-header-height, 120px) - var(--mm-desktop-dock-bar-offset, var(--mm-desktop-dock-height, 84px)) - 16px);
     overflow-y: auto;
     padding-bottom: 8px;
   }
@@ -189,22 +209,21 @@
   }
   .mm-app-root.mm-compact .mm-dock-inner {
     max-width: 72rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
-  .mm-app-root.mm-compact .mm-dock-inner button {
-    height: 64px;
-    width: 64px;
-  }
-  .mm-app-root.mm-compact .mm-dock-inner button .h-16 {
-    height: 56px;
-    width: 56px;
+    --mm-dock-item-size: 64px;
+    --mm-dock-icon-size: 56px;
+    --mm-dock-gap: 10px;
+    --mm-dock-bar-padding-x: 16px;
+    --mm-dock-bar-padding-y: 7px;
+    --mm-dock-bar-radius: 24px;
+    --mm-dock-outer-px: 16px;
+    --mm-dock-outer-pt: 8px;
+    --mm-dock-outer-pb: 8px;
   }
 }
 
 @media (max-height: 780px) {
   .mm-app-root.mm-compact .mm-content {
-    max-height: calc(100vh - var(--mm-header-height, 110px) - var(--mm-desktop-dock-height, 80px) - 12px);
+    max-height: calc(100vh - var(--mm-header-height, 110px) - var(--mm-desktop-dock-bar-offset, var(--mm-desktop-dock-height, 80px)) - 12px);
   }
   .mm-app-root.mm-compact .text-sm {
     font-size: 0.78rem;
@@ -418,27 +437,70 @@ html:not(.is-mobile) .text-7xl {
 
 .mm-dock-inner {
   max-width: var(--mm-page-max-width, 80rem);
+  --mm-dock-item-size: 72px;
+  --mm-dock-icon-size: 64px;
+  --mm-dock-gap: 12px;
+  --mm-dock-bar-padding-x: 20px;
+  --mm-dock-bar-padding-y: 8px;
+  --mm-dock-bar-radius: 26px;
+  --mm-dock-outer-px: 24px;
+  --mm-dock-outer-pt: 8px;
+  --mm-dock-outer-pb: 8px;
+  padding-left: var(--mm-dock-outer-px);
+  padding-right: var(--mm-dock-outer-px);
+  padding-top: var(--mm-dock-outer-pt);
+  padding-bottom: var(--mm-dock-outer-pb);
+}
+
+.mm-dock-bar {
+  gap: var(--mm-dock-gap);
+  padding: var(--mm-dock-bar-padding-y) var(--mm-dock-bar-padding-x);
+  border-radius: var(--mm-dock-bar-radius);
+}
+
+.mm-dock-inner button {
+  height: var(--mm-dock-item-size);
+  width: var(--mm-dock-item-size);
+}
+
+.mm-dock-inner button .mm-dock-icon {
+  height: var(--mm-dock-icon-size);
+  width: var(--mm-dock-icon-size);
 }
 
 @media (max-width: 1440px) {
-  .mm-dock-inner button {
-    height: 64px;
-    width: 64px;
-  }
-  .mm-dock-inner button .h-16 {
-    height: 56px;
-    width: 56px;
+  .mm-dock-inner {
+    --mm-dock-item-size: 64px;
+    --mm-dock-icon-size: 56px;
+    --mm-dock-gap: 10px;
+    --mm-dock-bar-padding-x: 18px;
+    --mm-dock-bar-padding-y: 7px;
+    --mm-dock-bar-radius: 24px;
   }
 }
 
 @media (max-width: 1366px) {
-  .mm-dock-inner button {
-    height: 60px;
-    width: 60px;
+  .mm-dock-inner {
+    --mm-dock-item-size: 60px;
+    --mm-dock-icon-size: 52px;
+    --mm-dock-gap: 9px;
+    --mm-dock-bar-padding-x: 16px;
+    --mm-dock-bar-padding-y: 7px;
+    --mm-dock-bar-radius: 24px;
   }
-  .mm-dock-inner button .h-16 {
-    height: 52px;
-    width: 52px;
+}
+
+@media (max-width: 1280px), (max-height: 820px) {
+  .mm-dock-inner {
+    --mm-dock-item-size: 56px;
+    --mm-dock-icon-size: 48px;
+    --mm-dock-gap: 8px;
+    --mm-dock-bar-padding-x: 12px;
+    --mm-dock-bar-padding-y: 6px;
+    --mm-dock-bar-radius: 22px;
+    --mm-dock-outer-px: 12px;
+    --mm-dock-outer-pt: 6px;
+    --mm-dock-outer-pb: 6px;
   }
 }
 

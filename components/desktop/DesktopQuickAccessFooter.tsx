@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 interface QuickAccessItem {
   id: string;
@@ -21,6 +21,80 @@ const DesktopQuickAccessFooter: React.FC<DesktopQuickAccessFooterProps> = ({
   const visibleItems = items.filter(item => item.showWhen !== false);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
+  const [dockDensity, setDockDensity] = useState<'default' | 'compact' | 'tight'>(() => {
+    if (typeof window === 'undefined') return 'default';
+    const viewport = window.visualViewport;
+    const width = viewport?.width || window.innerWidth;
+    const height = viewport?.height || window.innerHeight;
+    if (height <= 820 || width <= 1280) return 'tight';
+    if (height <= 900 || width <= 1366) return 'compact';
+    return 'default';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateDensity = () => {
+      const viewport = window.visualViewport;
+      const width = viewport?.width || window.innerWidth;
+      const height = viewport?.height || window.innerHeight;
+      if (height <= 820 || width <= 1280) {
+        setDockDensity('tight');
+        return;
+      }
+      if (height <= 900 || width <= 1366) {
+        setDockDensity('compact');
+        return;
+      }
+      setDockDensity('default');
+    };
+    updateDensity();
+    window.addEventListener('resize', updateDensity);
+    window.visualViewport?.addEventListener('resize', updateDensity);
+    return () => {
+      window.removeEventListener('resize', updateDensity);
+      window.visualViewport?.removeEventListener('resize', updateDensity);
+    };
+  }, []);
+
+  const dockVars = useMemo<React.CSSProperties>(() => {
+    if (dockDensity === 'tight') {
+      return {
+        '--mm-dock-item-size': '56px',
+        '--mm-dock-icon-size': '48px',
+        '--mm-dock-gap': '8px',
+        '--mm-dock-bar-padding-x': '12px',
+        '--mm-dock-bar-padding-y': '6px',
+        '--mm-dock-bar-radius': '22px',
+        '--mm-dock-outer-px': '12px',
+        '--mm-dock-outer-pt': '6px',
+        '--mm-dock-outer-pb': '6px'
+      } as React.CSSProperties;
+    }
+    if (dockDensity === 'compact') {
+      return {
+        '--mm-dock-item-size': '62px',
+        '--mm-dock-icon-size': '54px',
+        '--mm-dock-gap': '10px',
+        '--mm-dock-bar-padding-x': '16px',
+        '--mm-dock-bar-padding-y': '7px',
+        '--mm-dock-bar-radius': '24px',
+        '--mm-dock-outer-px': '16px',
+        '--mm-dock-outer-pt': '8px',
+        '--mm-dock-outer-pb': '8px'
+      } as React.CSSProperties;
+    }
+    return {
+      '--mm-dock-item-size': '72px',
+      '--mm-dock-icon-size': '64px',
+      '--mm-dock-gap': '12px',
+      '--mm-dock-bar-padding-x': '20px',
+      '--mm-dock-bar-padding-y': '8px',
+      '--mm-dock-bar-radius': '26px',
+      '--mm-dock-outer-px': '24px',
+      '--mm-dock-outer-pt': '8px',
+      '--mm-dock-outer-pb': '8px'
+    } as React.CSSProperties;
+  }, [dockDensity]);
 
   useEffect(() => {
     if (!shellRef.current) return;
@@ -56,10 +130,10 @@ const DesktopQuickAccessFooter: React.FC<DesktopQuickAccessFooterProps> = ({
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[60]">
       <div className="quick-access-shell relative w-full bg-transparent" ref={shellRef}>
-        <div className="mm-dock-inner mx-auto flex w-full max-w-7xl flex-col px-6 pb-2 pt-2">
+        <div className="mm-dock-inner mx-auto flex w-full max-w-7xl flex-col px-6 pb-2 pt-2" style={dockVars}>
           <div
             ref={barRef}
-            className="flex w-full items-center justify-center gap-3 rounded-[26px] border border-white/20 bg-white/5 px-5 py-2 shadow-[0_10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl dark:border-white/20 dark:bg-white/5"
+            className="mm-dock-bar flex w-full items-center justify-center border border-white/20 bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl dark:border-white/20 dark:bg-white/5"
           >
             {visibleItems.map(item => {
               const activeClass = item.isActive
@@ -73,11 +147,11 @@ const DesktopQuickAccessFooter: React.FC<DesktopQuickAccessFooterProps> = ({
                   (event.currentTarget as HTMLButtonElement).blur();
                   item.onClick();
                 }}
-                className={`group relative shrink-0 flex h-[72px] w-[72px] items-center justify-center rounded-2xl border transition ${activeClass}`}
+                className={`mm-dock-button group relative shrink-0 flex items-center justify-center rounded-2xl border transition ${activeClass}`}
                 aria-label={item.shortLabel || item.label}
                 title={item.shortLabel || item.label}
               >
-                <div className="h-16 w-16 rounded-xl bg-transparent flex items-center justify-center">
+                <div className="mm-dock-icon h-16 w-16 rounded-xl bg-transparent flex items-center justify-center">
                   {item.icon}
                 </div>
                 <span className="pointer-events-none absolute -top-6 whitespace-nowrap rounded-full bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-white opacity-0 shadow-md transition group-hover:opacity-100">

@@ -15,6 +15,7 @@ export default defineConfig(({ mode, command }) => {
     }
     const apiTarget = (env.VITE_API_ORIGIN || '').trim() || 'https://meumei-d88be.web.app';
     return {
+      assetsInclude: ['**/*.mov'],
       server: {
         port: 3000,
         host: '0.0.0.0',

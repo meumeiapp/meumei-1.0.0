@@ -374,7 +374,6 @@ const AppInner: React.FC = () => {
   const gateRunRef = useRef<string | null>(null);
   const authBootLogRef = useRef({ pendingLogged: false, readyUid: '' });
   const loginUiLoggedRef = useRef(false);
-  const onboardingMpLoggedRef = useRef(false);
   const metricsSnapshotRef = useRef({
       accounts: null as number | null,
       expenses: null as number | null,
@@ -1239,12 +1238,6 @@ const AppInner: React.FC = () => {
       }
   }, [authUser, currentSearch]);
 
-  const mpStatus = useMemo(() => {
-      if (!isOnboardingRoute) return null;
-      const params = new URLSearchParams(currentSearch);
-      return params.get('mp');
-  }, [currentSearch, isOnboardingRoute]);
-
   const betaPrefillRef = useRef(false);
   useEffect(() => {
       if (!isLoginRoute) {
@@ -1282,10 +1275,10 @@ const AppInner: React.FC = () => {
   }, [betaFlowActive, betaKeyCode, isLoginRoute, loginEmail]);
 
   useEffect(() => {
-      if (!isOnboardingRoute || onboardingMpLoggedRef.current) return;
-      console.info('[beta-onboarding] mp_param', { value: mpStatus || 'none' });
-      onboardingMpLoggedRef.current = true;
-  }, [isOnboardingRoute, mpStatus]);
+      if (authUser) return;
+      if (!isOnboardingRoute) return;
+      updateRoute('/login', '');
+  }, [authUser, isOnboardingRoute]);
 
   useEffect(() => {
       if (!isOnboardingRoute || !authUser) return;
@@ -2551,45 +2544,6 @@ const AppInner: React.FC = () => {
       </div>
   );
 
-  const renderBetaMpOnboarding = () => {
-      const status = (mpStatus || 'unknown').toLowerCase();
-      const copy = {
-          success: 'Pagamento confirmado. Vamos criar sua conta para liberar o acesso.',
-          pending: 'Pagamento em processamento. Você já pode criar sua conta, e liberamos o acesso assim que confirmar.',
-          failure: 'Pagamento não concluído. Você pode tentar novamente pela landing.',
-          unknown: 'Vamos criar sua conta para liberar o acesso.'
-      };
-      const message = copy[status as keyof typeof copy] || copy.unknown;
-      return (
-          <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#05060c] via-[#0b1430] to-[#1a0b2f] text-white px-4 py-12 relative overflow-hidden">
-              <div className="absolute inset-0 opacity-80 bg-[radial-gradient(circle_at_16%_18%,rgba(34,211,238,0.4),transparent_45%),radial-gradient(circle_at_82%_20%,rgba(16,185,129,0.28),transparent_50%),radial-gradient(circle_at_50%_88%,rgba(236,72,153,0.3),transparent_55%)]" />
-              <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/80" />
-              <div className="relative z-10 w-full max-w-xl">
-                  <div className="bg-white/8 border border-white/18 rounded-[32px] shadow-[0_30px_120px_rgba(5,10,24,0.7)] backdrop-blur-[32px] px-8 py-10 space-y-6 text-center">
-                      <p className="text-xs uppercase tracking-[0.3em] text-indigo-200/70">meumei beta</p>
-                      <h1 className="text-2xl font-semibold">Quase lá</h1>
-                      <p className="text-sm text-indigo-100/80">{message}</p>
-                      <div className="flex flex-col gap-3 pt-4">
-                          <button
-                              type="button"
-                              onClick={() => startRegisterFlow('onboarding')}
-                              className="w-full inline-flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-400 via-indigo-500 to-fuchsia-500 hover:from-cyan-300 hover:via-indigo-400 hover:to-fuchsia-400 text-white font-semibold px-4 py-3.5 rounded-full transition shadow-[0_18px_45px_rgba(59,130,246,0.35)]"
-                          >
-                              Criar minha conta
-                          </button>
-                          <a
-                              href={landingUrl}
-                              className="w-full inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 text-white font-semibold px-4 py-3.5 rounded-full transition"
-                          >
-                              Voltar para a landing
-                          </a>
-                      </div>
-                  </div>
-              </div>
-          </div>
-      );
-  };
-
   const renderEntitlementLoading = () => (
       <div className="flex items-center justify-center min-h-screen bg-slate-950 text-white">
           <div className="flex items-center gap-3 text-lg font-semibold">
@@ -3418,6 +3372,7 @@ const AppInner: React.FC = () => {
       applyExpenses([]);
       setIncomes([]);
       setCurrentView(ViewState.LOGIN);
+      updateRoute('/login', '');
       setLicenseResolveState('idle');
       setResolvedLicenseId(null);
       setLicenseReason(null);
@@ -4522,7 +4477,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       }
   };
 
-  const startRegisterFlow = (source: 'login' | 'onboarding') => {
+  const startRegisterFlow = (source: 'login') => {
       console.info('[beta-auth] create_account_click', { source });
       setAuthMode('register');
       setRegisterConfirmPassword('');
@@ -4550,12 +4505,34 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
         : '';
       console.info('[login] render', { emailPresent: Boolean(loginEmail) });
       return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#05060c] via-[#0b1430] to-[#1a0b2f] text-white px-4 py-10 relative overflow-hidden">
+      <div className="h-screen text-white font-sans selection:bg-teal-500/30 overflow-x-hidden overflow-y-auto landing-scroll-surface flex flex-col relative bg-gradient-to-br from-[#05060c] via-[#0b1430] to-[#1a0b2f]">
           <div className="absolute inset-0 opacity-80 bg-[radial-gradient(circle_at_16%_18%,rgba(34,211,238,0.4),transparent_45%),radial-gradient(circle_at_82%_20%,rgba(16,185,129,0.28),transparent_50%),radial-gradient(circle_at_50%_88%,rgba(236,72,153,0.3),transparent_55%)]" />
           <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/80" />
           <div className="absolute -top-28 -left-24 h-80 w-80 rounded-full bg-cyan-400/20 blur-[160px]" />
           <div className="absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-fuchsia-500/20 blur-[180px]" />
-          <div className="relative z-10 w-full max-w-xl">
+          <header className="sticky top-0 z-[60] border-b border-white/10 bg-black/70 supports-[backdrop-filter]:bg-black/40 backdrop-blur-xl h-20 min-h-20 max-h-20 flex items-center shadow-[0_10px_35px_rgba(0,0,0,0.45)]">
+              <div className="w-full max-w-[1200px] mx-auto px-6 flex items-center justify-between">
+                  <button
+                      onClick={() => updateRoute('/', '')}
+                      className="hover:opacity-90 transition flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/50 rounded-lg px-2 py-1"
+                      aria-label="Ir para o início"
+                  >
+                      <span className="text-2xl font-bold tracking-tighter text-white">meumei</span>
+                  </button>
+
+                  <nav className="hidden md:flex items-center gap-6 text-sm text-zinc-200">
+                      <button
+                          type="button"
+                          onClick={() => updateRoute('/', '')}
+                          className="inline-flex items-center rounded-full bg-gradient-to-r from-sky-500 to-fuchsia-500 px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] text-white shadow-[0_14px_34px_rgba(59,130,246,0.35)] transition hover:from-sky-400 hover:to-fuchsia-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60"
+                      >
+                          Início
+                      </button>
+                  </nav>
+              </div>
+          </header>
+          <div className="relative z-10 flex-1 flex items-center justify-center px-4 py-10">
+          <div className="w-full max-w-xl">
               <div className="bg-white/8 border border-white/18 rounded-[38px] shadow-[0_30px_120px_rgba(5,10,24,0.7)] backdrop-blur-[32px] px-10 pt-12 pb-10 space-y-7 text-center">
                   <div className="space-y-2">
                       <h1 className="text-5xl font-semibold tracking-tight">meumei</h1>
@@ -4823,6 +4800,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           </div>
       </div>
       </div>
+      </div>
       );
   };
 
@@ -4840,10 +4818,6 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
 
   if (isUpgradeRoute) {
       return <Landing />;
-  }
-
-  if (isOnboardingRoute && !authUser) {
-      return renderBetaMpOnboarding();
   }
 
   if (isLandingRoute && !authUser) {

@@ -79,7 +79,7 @@ export const betaKeysService = {
   },
 
   async grantLifetimeAccess(payload: { email: string; keyId: string; code?: string }) {
-    return request<{ ok: true; email: string; keyId?: string | null; code?: string | null }>(
+    return request<{ email: string; keyId?: string | null; code?: string | null; emailSent?: boolean }>(
       '/api/grantLifetimeAccess',
       payload,
       true
