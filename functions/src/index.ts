@@ -173,6 +173,7 @@ const applyCors = (req: functions.https.Request, res: functions.Response<any>) =
 };
 
 const BETA_KEY_COLLECTION = 'beta_keys';
+const USER_FEEDBACK_COLLECTION = 'feedback_messages';
 const TRIAL_DURATION_DAYS = 7;
 
 const parseRequestBody = (req: functions.https.Request) => {
@@ -219,6 +220,338 @@ const requireAdmin = async (req: functions.https.Request, res: functions.Respons
 const normalizeBetaEmail = (value: string) => value.trim().toLowerCase();
 const normalizeBetaCode = (value: string) => value.trim().toUpperCase();
 const isValidEmail = (value: string) => /.+@.+\..+/.test(value.trim());
+const BATCH_CHUNK_SIZE = 450;
+const BETA_KEY_FALLBACK_SCAN_LIMIT = 1500;
+const ADMIN_AUDIT_COLLECTION = 'admin_entitlement_audit';
+
+type AdminGrantPlan = 'lifetime' | 'annual' | 'monthly' | 'days';
+type AdminBulkAction = 'assign_plan' | 'revoke_access';
+
+type EntitlementSummary = {
+  exists: boolean;
+  email: string;
+  status: string;
+  planType: string;
+  source: string;
+  lifetime: boolean;
+  expiresAtMs: number | null;
+  subscriptionCurrentPeriodEndMs: number | null;
+  updatedAtMs: number | null;
+  data: FirebaseFirestore.DocumentData | null;
+};
+
+type BetaKeyMatch = {
+  id: string;
+  code: string;
+  requestedEmail: string | null;
+  lifetimeGrantedEmail: string | null;
+  source: string;
+  uses: number;
+  maxUses: number;
+  isActive: boolean;
+};
+
+type BetaKeyCleanupResult = {
+  matchedBetaKeys: number;
+  deletedBetaKeys: number;
+  betaKeyIds: string[];
+  betaKeys: BetaKeyMatch[];
+  betaKeySnapshots: Array<{ id: string; data: FirebaseFirestore.DocumentData }>;
+};
+
+const ADMIN_GRANT_PLANS = new Set<AdminGrantPlan>(['lifetime', 'annual', 'monthly', 'days']);
+const ADMIN_BULK_ACTIONS = new Set<AdminBulkAction>(['assign_plan', 'revoke_access']);
+
+const toMs = (value: any): number | null => {
+  if (!value) return null;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  if (typeof value === 'number') return value;
+  if (value instanceof Date) return value.getTime();
+  return null;
+};
+
+const normalizeTextLoose = (value: any) => String(value || '').trim().toLowerCase();
+
+const chunkArray = <T>(items: T[], size: number): T[][] => {
+  if (size <= 0) return [items];
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
+
+const deleteDocumentRefs = async (refs: FirebaseFirestore.DocumentReference[]) => {
+  if (refs.length === 0) return;
+  const db = admin.firestore();
+  const chunks = chunkArray(refs, BATCH_CHUNK_SIZE);
+  for (const chunk of chunks) {
+    const batch = db.batch();
+    chunk.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+};
+
+const serializeBetaKeyMatch = (
+  docSnap: FirebaseFirestore.DocumentSnapshot
+): BetaKeyMatch => {
+  const data = docSnap.data() || {};
+  return {
+    id: docSnap.id,
+    code: String(data.code || ''),
+    requestedEmail: data.requestedEmail ? normalizeBetaEmail(String(data.requestedEmail)) : null,
+    lifetimeGrantedEmail: data.lifetimeGrantedEmail
+      ? normalizeBetaEmail(String(data.lifetimeGrantedEmail))
+      : null,
+    source: String(data.source || ''),
+    uses: Number(data.uses || 0),
+    maxUses: Number(data.maxUses || 0),
+    isActive: data.isActive !== false
+  };
+};
+
+const getEntitlementSummary = (
+  email: string,
+  data: FirebaseFirestore.DocumentData | null,
+  exists: boolean
+): EntitlementSummary => {
+  const normalizedEmail = normalizeBetaEmail(email);
+  const source = String(data?.source || '');
+  const planType = String(data?.planType || '');
+  return {
+    exists,
+    email: normalizedEmail,
+    status: String(data?.status || ''),
+    planType,
+    source,
+    lifetime: Boolean(data?.lifetime) || planType.toLowerCase() === 'lifetime',
+    expiresAtMs: toMs(data?.expiresAt),
+    subscriptionCurrentPeriodEndMs: toMs(
+      data?.subscriptionCurrentPeriodEnd ?? data?.subscriptionCurrentPeriodEndMs ?? null
+    ),
+    updatedAtMs: toMs(data?.updatedAt),
+    data: data ? { ...data } : null
+  };
+};
+
+const getEntitlementSummaryByEmail = async (email: string): Promise<EntitlementSummary> => {
+  const normalizedEmail = normalizeBetaEmail(email);
+  const snap = await admin.firestore().collection('entitlements').doc(normalizedEmail).get();
+  const data = snap.exists ? snap.data() || null : null;
+  return getEntitlementSummary(normalizedEmail, data, snap.exists);
+};
+
+const findBetaKeysForCleanup = async (params: {
+  email?: string | null;
+  keyId?: string | null;
+  code?: string | null;
+}) => {
+  const db = admin.firestore();
+  const docsById = new Map<string, FirebaseFirestore.DocumentSnapshot>();
+  const email = normalizeBetaEmail(String(params.email || ''));
+  const keyId = String(params.keyId || '').trim();
+  const codeRaw = String(params.code || '').trim();
+  const code = codeRaw ? normalizeBetaCode(codeRaw) : '';
+
+  const addDoc = (docSnap: FirebaseFirestore.DocumentSnapshot | null | undefined) => {
+    if (!docSnap || !docSnap.exists) return;
+    docsById.set(docSnap.id, docSnap);
+  };
+
+  if (keyId) {
+    const keySnap = await db.collection(BETA_KEY_COLLECTION).doc(keyId).get();
+    addDoc(keySnap);
+  }
+
+  const queryPromises: Promise<FirebaseFirestore.QuerySnapshot>[] = [];
+  if (email && isValidEmail(email)) {
+    queryPromises.push(
+      db.collection(BETA_KEY_COLLECTION).where('requestedEmail', '==', email).limit(200).get()
+    );
+    queryPromises.push(
+      db.collection(BETA_KEY_COLLECTION).where('lifetimeGrantedEmail', '==', email).limit(200).get()
+    );
+  }
+  if (code) {
+    queryPromises.push(db.collection(BETA_KEY_COLLECTION).where('code', '==', code).limit(50).get());
+  }
+
+  const querySnaps = await Promise.all(queryPromises);
+  querySnaps.forEach((querySnap) => {
+    querySnap.docs.forEach((docSnap) => addDoc(docSnap));
+  });
+
+  // Fallback scan: cobre legados com espaços/case diferentes e garante consistência.
+  if (docsById.size === 0 && (email || keyId || code)) {
+    const scanSnap = await db.collection(BETA_KEY_COLLECTION).limit(BETA_KEY_FALLBACK_SCAN_LIMIT).get();
+    scanSnap.docs.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      const requestedEmail = normalizeTextLoose(data.requestedEmail);
+      const lifetimeGrantedEmail = normalizeTextLoose(data.lifetimeGrantedEmail);
+      const docCode = normalizeBetaCode(String(data.code || ''));
+      const matchedById = Boolean(keyId) && docSnap.id === keyId;
+      const matchedByEmail = Boolean(email) && (requestedEmail === email || lifetimeGrantedEmail === email);
+      const matchedByCode = Boolean(code) && docCode === code;
+      if (matchedById || matchedByEmail || matchedByCode) {
+        addDoc(docSnap);
+      }
+    });
+  }
+
+  const docs = Array.from(docsById.values());
+  const refs = docs.map((docSnap) => docSnap.ref);
+  const betaKeys = docs.map((docSnap) => serializeBetaKeyMatch(docSnap));
+  const betaKeySnapshots = docs.map((docSnap) => ({
+    id: docSnap.id,
+    data: { ...(docSnap.data() || {}) }
+  }));
+  return { refs, betaKeys, betaKeySnapshots };
+};
+
+const cleanupBetaKeys = async (
+  params: {
+    email?: string | null;
+    keyId?: string | null;
+    code?: string | null;
+  },
+  options?: { dryRun?: boolean }
+): Promise<BetaKeyCleanupResult> => {
+  const dryRun = options?.dryRun === true;
+  const found = await findBetaKeysForCleanup(params);
+  if (!dryRun) {
+    await deleteDocumentRefs(found.refs);
+  }
+  const matchedBetaKeys = found.refs.length;
+  return {
+    matchedBetaKeys,
+    deletedBetaKeys: dryRun ? 0 : matchedBetaKeys,
+    betaKeyIds: found.betaKeys.map((entry) => entry.id),
+    betaKeys: found.betaKeys,
+    betaKeySnapshots: found.betaKeySnapshots
+  };
+};
+
+const resolveAdminPlanWindow = (
+  plan: AdminGrantPlan,
+  durationDaysRaw: number
+): { durationDays: number | null; expiresAtMs: number | null; expiresAt: FirebaseFirestore.Timestamp | null } => {
+  const nowMs = Date.now();
+  let durationDays: number | null = null;
+  if (plan === 'annual') {
+    durationDays = 365;
+  } else if (plan === 'monthly') {
+    durationDays = 30;
+  } else if (plan === 'days') {
+    durationDays = Math.min(3650, Math.max(1, Math.floor(durationDaysRaw)));
+  }
+  const expiresAtMs = durationDays ? nowMs + durationDays * DAY_MS : null;
+  const expiresAt = expiresAtMs ? admin.firestore.Timestamp.fromMillis(expiresAtMs) : null;
+  return { durationDays, expiresAtMs, expiresAt };
+};
+
+const parseEmailList = (raw: unknown): string[] => {
+  const values: string[] = [];
+  if (Array.isArray(raw)) {
+    raw.forEach((item) => {
+      values.push(String(item || ''));
+    });
+  } else if (typeof raw === 'string') {
+    values.push(...raw.split(/[\n,; ]+/g));
+  } else if (raw !== null && raw !== undefined) {
+    values.push(String(raw));
+  }
+  const normalized = values
+    .map((item) => normalizeBetaEmail(item))
+    .filter((item) => Boolean(item) && isValidEmail(item));
+  return Array.from(new Set(normalized));
+};
+
+const writeAdminEntitlementAudit = async (payload: {
+  actionType: string;
+  targetEmail?: string | null;
+  actorUid: string;
+  actorEmail?: string | null;
+  requestedPlan?: string | null;
+  requestedDurationDays?: number | null;
+  keyId?: string | null;
+  code?: string | null;
+  beforeState?: EntitlementSummary | null;
+  afterState?: EntitlementSummary | null;
+  cleanup?: BetaKeyCleanupResult | null;
+  rollbackAvailable?: boolean;
+  rollbackOfActionId?: string | null;
+  batchId?: string | null;
+  metadata?: Record<string, unknown>;
+}) => {
+  const db = admin.firestore();
+  const ref = db.collection(ADMIN_AUDIT_COLLECTION).doc();
+  const cleanup = payload.cleanup || null;
+  const storedSnapshots = cleanup ? cleanup.betaKeySnapshots.slice(0, 20) : [];
+  await ref.set({
+    actionType: payload.actionType,
+    targetEmail: payload.targetEmail ? normalizeBetaEmail(payload.targetEmail) : null,
+    actorUid: payload.actorUid,
+    actorEmail: payload.actorEmail ? normalizeBetaEmail(payload.actorEmail) : null,
+    requestedPlan: payload.requestedPlan || null,
+    requestedDurationDays:
+      typeof payload.requestedDurationDays === 'number' ? payload.requestedDurationDays : null,
+    keyId: payload.keyId || null,
+    code: payload.code ? normalizeBetaCode(payload.code) : null,
+    beforeState: payload.beforeState || null,
+    beforeData: payload.beforeState?.data || null,
+    afterState: payload.afterState || null,
+    afterData: payload.afterState?.data || null,
+    cleanupSummary: cleanup
+      ? {
+          matchedBetaKeys: cleanup.matchedBetaKeys,
+          deletedBetaKeys: cleanup.deletedBetaKeys,
+          betaKeyIds: cleanup.betaKeyIds
+        }
+      : null,
+    restorableDeletedBetaKeys: storedSnapshots,
+    restorableDeletedBetaKeysTruncated: cleanup ? cleanup.betaKeySnapshots.length > 20 : false,
+    rollbackAvailable: payload.rollbackAvailable !== false,
+    rolledBackAt: null,
+    rolledBackBy: null,
+    rollbackOfActionId: payload.rollbackOfActionId || null,
+    batchId: payload.batchId || null,
+    metadata: payload.metadata || null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return ref.id;
+};
+
+const compactEntitlementState = (state: any) => {
+  if (!state || typeof state !== 'object') return null;
+  const { data, ...rest } = state as Record<string, unknown>;
+  return rest;
+};
+
+const serializeAuditDoc = (docSnap: FirebaseFirestore.DocumentSnapshot) => {
+  const data = docSnap.data() || {};
+  return {
+    id: docSnap.id,
+    actionType: String(data.actionType || ''),
+    targetEmail: data.targetEmail || null,
+    actorUid: data.actorUid || null,
+    actorEmail: data.actorEmail || null,
+    requestedPlan: data.requestedPlan || null,
+    requestedDurationDays:
+      typeof data.requestedDurationDays === 'number' ? data.requestedDurationDays : null,
+    keyId: data.keyId || null,
+    code: data.code || null,
+    beforeState: compactEntitlementState(data.beforeState || null),
+    afterState: compactEntitlementState(data.afterState || null),
+    cleanupSummary: data.cleanupSummary || null,
+    rollbackAvailable: data.rollbackAvailable !== false,
+    rolledBackAtMs: toMs(data.rolledBackAt),
+    rolledBackBy: data.rolledBackBy || null,
+    rollbackOfActionId: data.rollbackOfActionId || null,
+    batchId: data.batchId || null,
+    createdAtMs: toMs(data.createdAt)
+  };
+};
 
 const generateBetaCode = () => {
   const part = () => Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -268,14 +601,6 @@ const serializeBetaKey = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
 
 const serializeEntitlement = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
   const data = doc.data() || {};
-  const toMs = (value: any) => {
-    if (!value) return null;
-    if (typeof value.toMillis === 'function') return value.toMillis();
-    if (typeof value.seconds === 'number') return value.seconds * 1000;
-    if (typeof value === 'number') return value;
-    if (value instanceof Date) return value.getTime();
-    return null;
-  };
   const subscriptionRaw =
     data.subscriptionCurrentPeriodEnd ?? data.subscriptionCurrentPeriodEndMs ?? null;
   const subscriptionMs = toMs(subscriptionRaw);
@@ -290,7 +615,34 @@ const serializeEntitlement = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
     subscriptionCurrentPeriodEndMs: subscriptionMs,
     createdAtMs: toMs(data.createdAt),
     updatedAtMs: toMs(data.updatedAt),
+    manualPlanDays:
+      typeof data.manualPlanDays === 'number' && Number.isFinite(data.manualPlanDays)
+        ? Math.max(0, Math.floor(data.manualPlanDays))
+        : null,
     lifetime: planType.toLowerCase() === 'lifetime' || data.lifetime === true
+  };
+};
+
+const serializeUserFeedback = (docSnap: FirebaseFirestore.QueryDocumentSnapshot) => {
+  const data = docSnap.data() || {};
+  const ownerRef = docSnap.ref.parent?.parent || null;
+  const userId = ownerRef?.id || '';
+  const statusRaw = String(data.status || 'new').trim().toLowerCase();
+  const status = statusRaw || 'new';
+  const typeRaw = String(data.type || '').trim().toLowerCase();
+  const type = typeRaw === 'improvement' ? 'improvement' : 'bug';
+  return {
+    id: docSnap.id,
+    userId,
+    type,
+    status,
+    message: String(data.message || ''),
+    platform: data.platform || null,
+    appVersion: data.appVersion || null,
+    reporterEmail: data.reporterEmail || null,
+    companyName: data.companyName || null,
+    createdAtMs: toMs(data.createdAt) ?? (typeof data.createdAtClientMs === 'number' ? data.createdAtClientMs : null),
+    updatedAtMs: toMs(data.updatedAt)
   };
 };
 
@@ -337,6 +689,287 @@ const simpleHash = (value: string) => {
 };
 
 const clampAnswer = (value: string) => value.slice(0, MAX_RESPONSE_CHARS).trim();
+
+type ReceiptDraft = {
+  description: string;
+  amount: number | null;
+  date: string;
+  dueDate: string;
+  category: string;
+  paymentMethod: 'Débito' | 'Crédito' | 'PIX' | 'Boleto' | 'Transferência' | 'Dinheiro' | '';
+  taxStatus: 'PJ' | 'PF' | '';
+  notes: string;
+  merchant: string;
+  confidence: number;
+};
+
+const RECEIPT_ALLOWED_MIME = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif'
+]);
+
+const extractImagePayload = (raw: string) => {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return { mimeType: '', data: '' };
+  const dataUrlMatch = trimmed.match(/^data:([^;]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
+    return {
+      mimeType: String(dataUrlMatch[1] || '').toLowerCase(),
+      data: String(dataUrlMatch[2] || '').trim()
+    };
+  }
+  return { mimeType: 'image/jpeg', data: trimmed };
+};
+
+const tryParseJsonObject = (value: string) => {
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const repairJsonLike = (value: string) => {
+  let repaired = String(value || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '')
+    .trim();
+
+  // Remove trailing commas before object/array endings.
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+  // Quote object keys when model returns JS-like objects.
+  repaired = repaired.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+
+  // Convert single-quoted keys/values to JSON-compliant double quotes.
+  repaired = repaired.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'\s*:/g, (_match, key) => {
+    const safeKey = String(key || '').replace(/"/g, '\\"');
+    return `"${safeKey}":`;
+  });
+  repaired = repaired.replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, content) => {
+    const safeContent = String(content || '').replace(/"/g, '\\"');
+    return `: "${safeContent}"`;
+  });
+
+  // Normalize decimal comma in numeric literals (e.g. 105,00 -> 105.00).
+  repaired = repaired.replace(/(-?\d+),(\d{2})(?=\s*[,}\]])/g, '$1.$2');
+
+  // Quote known enum-like bare words.
+  repaired = repaired.replace(
+    /:\s*(Débito|Crédito|Credito|PIX|Boleto|Transferência|Transferencia|Dinheiro|PJ|PF)(\s*[,}])/gi,
+    (_match, label, suffix) => `: "${label}"${suffix}`
+  );
+
+  return repaired;
+};
+
+const parseLooseJsonObject = (value: string) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return null;
+  const withoutFence = trimmed
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  const candidates = [withoutFence];
+  const start = withoutFence.indexOf('{');
+  const end = withoutFence.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    candidates.push(withoutFence.slice(start, end + 1));
+  }
+
+  for (const candidate of candidates) {
+    const parsed = tryParseJsonObject(candidate);
+    if (parsed) return parsed;
+  }
+
+  for (const candidate of candidates) {
+    const repaired = repairJsonLike(candidate);
+    const parsed = tryParseJsonObject(repaired);
+    if (parsed) return parsed;
+  }
+
+  return null;
+};
+
+const parseCurrencyNumber = (value: any): number | null => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return Number(value.toFixed(2));
+  }
+  let raw = String(value || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/r\$/gi, '')
+    .replace(/[^0-9,.-]/g, '');
+  if (!raw) return null;
+
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  if (lastComma > -1 && lastDot > -1) {
+    // Keep the latest separator as decimal and drop the other as thousand separator.
+    if (lastComma > lastDot) {
+      raw = raw.replace(/\./g, '').replace(',', '.');
+    } else {
+      raw = raw.replace(/,/g, '');
+    }
+  } else if (lastComma > -1) {
+    raw = raw.replace(/\./g, '').replace(',', '.');
+  } else {
+    raw = raw.replace(/,/g, '');
+  }
+
+  raw = raw.replace(/(?!^)-/g, '');
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Number(parsed.toFixed(2));
+};
+
+const normalizeDateValue = (value: any): string => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const isoMatch = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+  const brMatch = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (brMatch) {
+    return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+  }
+  const brShortYearMatch = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{2})$/);
+  if (brShortYearMatch) {
+    const shortYear = Number(brShortYearMatch[3]);
+    const fullYear = shortYear >= 70 ? 1900 + shortYear : 2000 + shortYear;
+    return `${fullYear}-${brShortYearMatch[2]}-${brShortYearMatch[1]}`;
+  }
+  return '';
+};
+
+const normalizePaymentMethod = (
+  value: any
+): 'Débito' | 'Crédito' | 'PIX' | 'Boleto' | 'Transferência' | 'Dinheiro' | '' => {
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (!raw) return '';
+  if (raw.includes('pix')) return 'PIX';
+  if (raw.includes('credito') || raw.includes('cartao')) return 'Crédito';
+  if (raw.includes('debito')) return 'Débito';
+  if (raw.includes('boleto')) return 'Boleto';
+  if (raw.includes('transfer')) return 'Transferência';
+  if (raw.includes('dinheiro') || raw.includes('especie')) return 'Dinheiro';
+  return '';
+};
+
+const normalizeTaxStatus = (value: any): 'PJ' | 'PF' | '' => {
+  const raw = String(value || '').trim().toUpperCase();
+  if (raw === 'PJ' || raw === 'PF') return raw;
+  return '';
+};
+
+const normalizeReceiptDraft = (input: any): ReceiptDraft => {
+  const amount = parseCurrencyNumber(input?.amount);
+  const date = normalizeDateValue(input?.date);
+  const dueDateRaw = normalizeDateValue(input?.dueDate);
+  const dueDate = dueDateRaw || date;
+  const confidenceRaw = Number(input?.confidence);
+  const confidence = Number.isFinite(confidenceRaw)
+    ? Math.min(1, Math.max(0, confidenceRaw))
+    : 0.55;
+  return {
+    description: String(input?.description || input?.merchant || '')
+      .trim()
+      .slice(0, 120),
+    amount,
+    date,
+    dueDate,
+    category: String(input?.category || '').trim().slice(0, 64),
+    paymentMethod: normalizePaymentMethod(input?.paymentMethod),
+    taxStatus: normalizeTaxStatus(input?.taxStatus),
+    notes: String(input?.notes || '').trim().slice(0, 240),
+    merchant: String(input?.merchant || '').trim().slice(0, 120),
+    confidence
+  };
+};
+
+const extractResponseText = (response: any): string => {
+  const parts = response?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim();
+};
+
+const buildFallbackReceiptDraftFromText = (rawText: string): ReceiptDraft | null => {
+  const text = String(rawText || '').trim();
+  if (!text) return null;
+
+  const normalizedText = text.replace(/\s+/g, ' ').trim();
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const amountMatch =
+    text.match(/total[^0-9]{0,24}(r\$?\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})|\d+(?:[.,]\d{2}))/i) ||
+    text.match(/r\$?\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})/i) ||
+    text.match(/\b\d{1,3}(?:\.\d{3})*,\d{2}\b/);
+  const amount = parseCurrencyNumber(amountMatch?.[1] || amountMatch?.[0] || '');
+
+  const dateMatch =
+    text.match(/\b\d{4}[-/]\d{2}[-/]\d{2}\b/) ||
+    text.match(/\b\d{2}[-/]\d{2}[-/]\d{4}\b/) ||
+    text.match(/\b\d{2}[-/]\d{2}[-/]\d{2}\b/);
+  const date = normalizeDateValue(dateMatch?.[0] || '');
+
+  const merchantLine = lines.find((line) => {
+    const upper = line.toUpperCase();
+    if (line.length < 4) return false;
+    if (/^R\$\s*\d/.test(upper)) return false;
+    if (/^(TOTAL|APROVADO|OPERA[CÇ][AÃ]O|VIA CLIENTE|CNPJ|AUTORIZA[CÇ][AÃ]O)/i.test(upper)) {
+      return false;
+    }
+    return /[A-ZÀ-ÿ]{3,}/.test(line);
+  });
+
+  const description =
+    String(merchantLine || '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+      .slice(0, 120) || '';
+  const merchant = description;
+
+  const paymentMethod = normalizePaymentMethod(text);
+
+  if (!amount && !description && !date) return null;
+
+  return {
+    description,
+    amount,
+    date,
+    dueDate: date,
+    category: '',
+    paymentMethod,
+    taxStatus: '',
+    notes: normalizedText.slice(0, 240),
+    merchant,
+    confidence: 0.45
+  };
+};
 
 const resolveOrigin = (host?: string, originHeader?: string) => {
   if (originHeader) return originHeader;
@@ -692,6 +1325,133 @@ export const askMeumeiHelper = functions.region('us-central1').https.onRequest(a
     }
   });
 
+export const scanExpenseReceipt = functions.region('us-central1').https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, error: 'method_not_allowed', message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    if (!vertexAI || !PROJECT_ID) {
+      res.status(500).json({ ok: false, error: 'vertex_unavailable', message: 'IA não configurada no servidor.' });
+      return;
+    }
+
+    const body = parseRequestBody(req);
+    const imageInput = typeof body?.imageDataUrl === 'string' ? body.imageDataUrl : '';
+    const payload = extractImagePayload(imageInput);
+    const mimeType = RECEIPT_ALLOWED_MIME.has(payload.mimeType) ? payload.mimeType : 'image/jpeg';
+    const imageBase64 = payload.data;
+
+    if (!imageBase64) {
+      res.status(400).json({ ok: false, error: 'missing_image', message: 'Envie a foto do comprovante.' });
+      return;
+    }
+
+    if (imageBase64.length > 12_000_000) {
+      res.status(413).json({
+        ok: false,
+        error: 'image_too_large',
+        message: 'Imagem muito grande. Tente novamente com uma foto mais leve.'
+      });
+      return;
+    }
+
+    const prompt =
+      'Você extrai dados de comprovantes financeiros no Brasil para um app de controle financeiro.' +
+      '\nRetorne APENAS JSON puro sem markdown, no formato:' +
+      '\n{' +
+      '\n  "description": "texto curto da compra/pagamento",' +
+      '\n  "amount": 0.0,' +
+      '\n  "date": "YYYY-MM-DD",' +
+      '\n  "dueDate": "YYYY-MM-DD",' +
+      '\n  "category": "categoria curta",' +
+      '\n  "paymentMethod": "Débito|Crédito|PIX|Boleto|Transferência|Dinheiro|",' +
+      '\n  "taxStatus": "PJ|PF|",' +
+      '\n  "notes": "detalhes úteis",' +
+      '\n  "merchant": "nome do estabelecimento",' +
+      '\n  "confidence": 0.0' +
+      '\n}' +
+      '\nRegras:' +
+      '\n- Se não souber algum campo, use string vazia.' +
+      '\n- amount deve ser número com ponto decimal (sem símbolo de moeda).' +
+      '\n- date e dueDate em YYYY-MM-DD quando possível.' +
+      '\n- Não invente valores.';
+
+    try {
+      const model = vertexAI.getGenerativeModel({
+        model: VERTEX_MODEL,
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 700,
+          // Keep output structured whenever possible; parser still has fallback.
+          responseMimeType: 'application/json'
+        }
+      } as any);
+
+      const result = await model.generateContent({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType,
+                  data: imageBase64
+                }
+              }
+            ]
+          }
+        ]
+      });
+
+      const response = result?.response;
+      const text = extractResponseText(response);
+      const parsed = parseLooseJsonObject(text);
+      if (!parsed) {
+        const fallback = buildFallbackReceiptDraftFromText(text);
+        if (fallback) {
+          res.status(200).json({
+            ok: true,
+            data: fallback
+          });
+          return;
+        }
+
+        console.warn('[scanExpenseReceipt] invalid_ai_output', {
+          uid: auth.uid,
+          preview: text.slice(0, 320)
+        });
+        res.status(422).json({
+          ok: false,
+          error: 'invalid_ai_output',
+          message: 'Não conseguimos interpretar o comprovante. Tente outra foto.'
+        });
+        return;
+      }
+
+      const normalized = normalizeReceiptDraft(parsed);
+      res.status(200).json({
+        ok: true,
+        data: normalized
+      });
+    } catch (error: any) {
+      console.error('[scanExpenseReceipt] error', {
+        uid: auth.uid,
+        message: error?.message || String(error)
+      });
+      res.status(500).json({
+        ok: false,
+        error: 'scan_failed',
+        message: 'Não foi possível ler o comprovante agora. Tente novamente.'
+      });
+    }
+  });
+
 export const sendPushNotification = functions
   .region('us-central1')
   .https.onRequest(async (req, res) => {
@@ -859,6 +1619,201 @@ export const listEntitlements = functions
     }
   });
 
+export const listUserFeedback = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const rawLimit = Number(body.limit || 80);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 80;
+    const queryText = String(body.query || '').trim().toLowerCase();
+    const typeFilter = String(body.type || 'all').trim().toLowerCase();
+    const statusFilter = String(body.status || 'all').trim().toLowerCase();
+    const normalizedType =
+      typeFilter === 'bug' || typeFilter === 'improvement' ? typeFilter : 'all';
+    const normalizedStatus =
+      statusFilter === 'new' || statusFilter === 'reviewed' || statusFilter === 'resolved'
+        ? statusFilter
+        : 'all';
+
+    try {
+      const baseLimit = Math.max(limit, 120);
+      const db = admin.firestore();
+      let snap: FirebaseFirestore.QuerySnapshot;
+
+      try {
+        snap = await db
+          .collectionGroup(USER_FEEDBACK_COLLECTION)
+          .orderBy('createdAt', 'desc')
+          .limit(baseLimit)
+          .get();
+      } catch (error: any) {
+        const rawCode = String(error?.code ?? '').toLowerCase();
+        const isFailedPrecondition =
+          error?.code === 9 ||
+          rawCode.includes('failed-precondition') ||
+          rawCode.includes('failed_precondition');
+
+        if (!isFailedPrecondition) {
+          throw error;
+        }
+
+        console.warn('[feedback] list_fallback_without_order', {
+          code: error?.code ?? null,
+          message: String(error?.message || '').slice(0, 220)
+        });
+
+        // Fallback for environments still lacking the collection-group index.
+        // We fetch a larger window and sort in memory by creation timestamp.
+        snap = await db
+          .collectionGroup(USER_FEEDBACK_COLLECTION)
+          .limit(Math.max(baseLimit, 300))
+          .get();
+      }
+
+      const allItems = snap.docs
+        .map(serializeUserFeedback)
+        .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      const filtered = allItems
+        .filter((item) => {
+          if (normalizedType !== 'all' && item.type !== normalizedType) return false;
+          if (normalizedStatus !== 'all' && item.status !== normalizedStatus) return false;
+          if (!queryText) return true;
+          const haystack = [
+            item.message,
+            item.reporterEmail,
+            item.companyName,
+            item.userId,
+            item.id,
+            item.platform,
+            item.appVersion
+          ]
+            .map((value) => String(value || '').toLowerCase())
+            .join(' ');
+          return haystack.includes(queryText);
+        })
+        .slice(0, limit);
+
+      res.status(200).json({
+        ok: true,
+        items: filtered,
+        total: filtered.length
+      });
+    } catch (error) {
+      console.error('[feedback] list_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao carregar feedbacks.' });
+    }
+  });
+
+export const updateUserFeedbackStatus = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const userId = String(body.userId || '').trim();
+    const feedbackId = String(body.feedbackId || '').trim();
+    const rawStatus = String(body.status || '')
+      .trim()
+      .toLowerCase();
+    const nextStatus =
+      rawStatus === 'reviewed' || rawStatus === 'resolved' || rawStatus === 'new'
+        ? rawStatus
+        : null;
+
+    if (!userId || !feedbackId || userId.includes('/') || feedbackId.includes('/')) {
+      res.status(400).json({ ok: false, message: 'Feedback inválido.' });
+      return;
+    }
+    if (!nextStatus) {
+      res.status(400).json({ ok: false, message: 'Status inválido.' });
+      return;
+    }
+
+    try {
+      const ref = admin
+        .firestore()
+        .collection('users')
+        .doc(userId)
+        .collection(USER_FEEDBACK_COLLECTION)
+        .doc(feedbackId);
+      const snap = await ref.get();
+      if (!snap.exists) {
+        res.status(404).json({ ok: false, message: 'Mensagem não encontrada.' });
+        return;
+      }
+
+      await ref.set(
+        {
+          status: nextStatus,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error('[feedback] status_update_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao atualizar o status.' });
+    }
+  });
+
+export const deleteUserFeedback = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const userId = String(body.userId || '').trim();
+    const feedbackId = String(body.feedbackId || '').trim();
+
+    if (!userId || !feedbackId || userId.includes('/') || feedbackId.includes('/')) {
+      res.status(400).json({ ok: false, message: 'Feedback inválido.' });
+      return;
+    }
+
+    try {
+      const ref = admin
+        .firestore()
+        .collection('users')
+        .doc(userId)
+        .collection(USER_FEEDBACK_COLLECTION)
+        .doc(feedbackId);
+      const snap = await ref.get();
+      if (!snap.exists) {
+        res.status(404).json({ ok: false, message: 'Mensagem não encontrada.' });
+        return;
+      }
+
+      await ref.delete();
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error('[feedback] delete_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao excluir a mensagem.' });
+    }
+  });
+
 export const revokeBetaKey = functions
   .region('us-central1')
   .https.onRequest(async (req, res) => {
@@ -918,8 +1873,117 @@ export const deleteBetaKey = functions
     }
 
     try {
-      await admin.firestore().collection(BETA_KEY_COLLECTION).doc(keyId).delete();
-      res.status(200).json({ ok: true });
+      const db = admin.firestore();
+      const keyRef = db.collection(BETA_KEY_COLLECTION).doc(keyId);
+      const keySnap = await keyRef.get();
+      if (!keySnap.exists) {
+        res.status(404).json({ ok: false, message: 'Chave não encontrada.' });
+        return;
+      }
+
+      const keyData = keySnap.data() || {};
+      const keyCode = normalizeBetaCode(String(keyData.code || ''));
+      const relatedEmails = new Set<string>();
+      const requestedEmail = normalizeBetaEmail(String(keyData.requestedEmail || ''));
+      const lifetimeGrantedEmail = normalizeBetaEmail(String(keyData.lifetimeGrantedEmail || ''));
+      if (requestedEmail && isValidEmail(requestedEmail)) {
+        relatedEmails.add(requestedEmail);
+      }
+      if (lifetimeGrantedEmail && isValidEmail(lifetimeGrantedEmail)) {
+        relatedEmails.add(lifetimeGrantedEmail);
+      }
+
+      const entitlementSnapById = new Map<string, FirebaseFirestore.DocumentSnapshot>();
+      const [byKeySnap, byCodeSnap] = await Promise.all([
+        db.collection('entitlements').where('betaKeyId', '==', keyId).get(),
+        keyCode ? db.collection('entitlements').where('betaCode', '==', keyCode).get() : null
+      ]);
+      byKeySnap.docs.forEach((docSnap) => entitlementSnapById.set(docSnap.id, docSnap));
+      byCodeSnap?.docs.forEach((docSnap) => entitlementSnapById.set(docSnap.id, docSnap));
+
+      if (relatedEmails.size > 0) {
+        const emailSnaps = await Promise.all(
+          Array.from(relatedEmails).map((email) => db.collection('entitlements').doc(email).get())
+        );
+        emailSnaps.forEach((docSnap) => {
+          if (docSnap.exists) {
+            entitlementSnapById.set(docSnap.id, docSnap);
+          }
+        });
+      }
+
+      type BatchOp =
+        | { kind: 'delete'; ref: FirebaseFirestore.DocumentReference }
+        | {
+            kind: 'set';
+            ref: FirebaseFirestore.DocumentReference;
+            data: Record<string, unknown>;
+          };
+
+      const operations: BatchOp[] = [{ kind: 'delete', ref: keyRef }];
+      const betaSourceAllowlist = new Set(['beta', 'trial', 'beta_admin']);
+      const betaPlanAllowlist = new Set(['beta', 'trial', 'lifetime']);
+      let deletedEntitlements = 0;
+      let detachedEntitlements = 0;
+
+      entitlementSnapById.forEach((docSnap) => {
+        if (!docSnap.exists) return;
+        const data = docSnap.data() || {};
+        const source = String(data.source || '').trim().toLowerCase();
+        const planType = String(data.planType || '').trim().toLowerCase();
+        const entitlementKeyId = String(data.betaKeyId || '').trim();
+        const entitlementCode = normalizeBetaCode(String(data.betaCode || ''));
+        const entitlementEmail = String(docSnap.id || '').trim().toLowerCase();
+
+        const linkedByKey = entitlementKeyId === keyId;
+        const linkedByCode = Boolean(keyCode) && entitlementCode === keyCode;
+        const linkedByEmail = relatedEmails.has(entitlementEmail);
+        const linkedToDeletedKey = linkedByKey || linkedByCode || linkedByEmail;
+        if (!linkedToDeletedKey) return;
+
+        const isStripeEntitlement =
+          source.startsWith('stripe') || planType === 'annual' || planType === 'monthly';
+        const isBetaEntitlement =
+          betaSourceAllowlist.has(source) || betaPlanAllowlist.has(planType);
+
+        if (!isStripeEntitlement && (isBetaEntitlement || linkedByKey || linkedByCode)) {
+          operations.push({ kind: 'delete', ref: docSnap.ref });
+          deletedEntitlements += 1;
+          return;
+        }
+
+        if (linkedByKey || linkedByCode) {
+          operations.push({
+            kind: 'set',
+            ref: docSnap.ref,
+            data: {
+              betaKeyId: admin.firestore.FieldValue.delete(),
+              betaCode: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }
+          });
+          detachedEntitlements += 1;
+        }
+      });
+
+      for (let start = 0; start < operations.length; start += BATCH_CHUNK_SIZE) {
+        const batch = db.batch();
+        const chunk = operations.slice(start, start + BATCH_CHUNK_SIZE);
+        chunk.forEach((op) => {
+          if (op.kind === 'delete') {
+            batch.delete(op.ref);
+            return;
+          }
+          batch.set(op.ref, op.data, { merge: true });
+        });
+        await batch.commit();
+      }
+
+      res.status(200).json({
+        ok: true,
+        deletedEntitlements,
+        detachedEntitlements
+      });
     } catch (error) {
       console.error('[beta] delete_error', error);
       res.status(500).json({ ok: false, message: 'Falha ao excluir a chave.' });
@@ -950,18 +2014,17 @@ export const grantLifetimeAccess = functions
 
     const email = normalizeBetaEmail(emailRaw);
     let code = codeRaw ? normalizeBetaCode(codeRaw) : '';
-    let keyRef: FirebaseFirestore.DocumentReference | null = null;
-    let keyData: FirebaseFirestore.DocumentData | null = null;
 
     try {
+      const beforeState = await getEntitlementSummaryByEmail(email);
       if (keyId) {
-        keyRef = admin.firestore().collection(BETA_KEY_COLLECTION).doc(keyId);
+        const keyRef = admin.firestore().collection(BETA_KEY_COLLECTION).doc(keyId);
         const keySnap = await keyRef.get();
         if (!keySnap.exists) {
           res.status(404).json({ ok: false, message: 'Chave não encontrada.' });
           return;
         }
-        keyData = keySnap.data() || null;
+        const keyData = keySnap.data() || null;
         if (keyData?.code) {
           code = normalizeBetaCode(String(keyData.code));
         }
@@ -973,13 +2036,18 @@ export const grantLifetimeAccess = functions
       const entitlementPayload: Record<string, any> = {
         status: 'active',
         planType: 'lifetime',
-        source: 'beta_admin',
+        source: 'admin_manual',
         lifetime: true,
         expiresAt: null,
-        betaKeyId: keyId || null,
-        betaCode: code || null,
+        betaKeyId: admin.firestore.FieldValue.delete(),
+        betaCode: admin.firestore.FieldValue.delete(),
+        trialDays: admin.firestore.FieldValue.delete(),
+        trialStartAt: admin.firestore.FieldValue.delete(),
+        manualPlanDays: admin.firestore.FieldValue.delete(),
         lifetimeGrantedBy: auth.uid,
         lifetimeGrantedAt: now,
+        lastManualGrantBy: auth.uid,
+        lastManualGrantAt: now,
         updatedAt: now
       };
       if (!entitlementSnap.exists) {
@@ -987,18 +2055,20 @@ export const grantLifetimeAccess = functions
       }
 
       await entitlementRef.set(entitlementPayload, { merge: true });
-
-      if (keyRef) {
-        await keyRef.set(
-          {
-            lifetimeGrantedEmail: email,
-            lifetimeGrantedAt: now,
-            lifetimeGrantedBy: auth.uid,
-            updatedAt: now
-          },
-          { merge: true }
-        );
-      }
+      const cleanup = await cleanupBetaKeys({ email, keyId, code });
+      const afterState = await getEntitlementSummaryByEmail(email);
+      const auditId = await writeAdminEntitlementAudit({
+        actionType: 'assign_plan',
+        targetEmail: email,
+        actorUid: auth.uid,
+        actorEmail: auth.email,
+        requestedPlan: 'lifetime',
+        keyId: keyId || null,
+        code: code || null,
+        beforeState,
+        afterState,
+        cleanup
+      });
 
       const originRaw = String(body.origin || req.headers.origin || '').trim();
       const origin = resolveSafeOrigin(originRaw);
@@ -1010,11 +2080,794 @@ export const grantLifetimeAccess = functions
         email,
         keyId: keyId || null,
         code: code || null,
+        matchedBetaKeys: cleanup.matchedBetaKeys,
+        deletedBetaKeys: cleanup.deletedBetaKeys,
+        betaKeyIds: cleanup.betaKeyIds,
+        auditId,
         emailSent
       });
     } catch (error) {
       console.error('[beta] lifetime_error', error);
       res.status(500).json({ ok: false, message: 'Falha ao liberar acesso vitalício.' });
+    }
+  });
+
+export const assignEntitlementPlan = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const emailRaw = String(body.email || '').trim();
+    const planRaw = String(body.plan || '').trim().toLowerCase();
+    const keyId = String(body.keyId || '').trim();
+    const codeRaw = String(body.code || '').trim();
+    const durationDaysRaw = Number(body.durationDays);
+
+    if (!emailRaw || !isValidEmail(emailRaw)) {
+      res.status(400).json({ ok: false, message: 'Informe um e-mail válido.' });
+      return;
+    }
+    if (!ADMIN_GRANT_PLANS.has(planRaw as AdminGrantPlan)) {
+      res.status(400).json({ ok: false, message: 'Plano inválido.' });
+      return;
+    }
+
+    const email = normalizeBetaEmail(emailRaw);
+    const plan = planRaw as AdminGrantPlan;
+    if (plan === 'days' && (!Number.isFinite(durationDaysRaw) || durationDaysRaw <= 0)) {
+      res.status(400).json({ ok: false, message: 'Informe um número de dias válido.' });
+      return;
+    }
+    const { durationDays, expiresAtMs, expiresAt } = resolveAdminPlanWindow(plan, durationDaysRaw);
+    const code = codeRaw ? normalizeBetaCode(codeRaw) : '';
+
+    try {
+      const beforeState = await getEntitlementSummaryByEmail(email);
+      const entitlementRef = admin.firestore().collection('entitlements').doc(email);
+      const entitlementSnap = await entitlementRef.get();
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const planType = plan === 'days' ? 'custom_days' : plan;
+      const isLifetime = plan === 'lifetime';
+      const entitlementPayload: Record<string, any> = {
+        status: 'active',
+        planType,
+        source: 'admin_manual',
+        lifetime: isLifetime,
+        expiresAt: isLifetime ? null : expiresAt,
+        betaKeyId: admin.firestore.FieldValue.delete(),
+        betaCode: admin.firestore.FieldValue.delete(),
+        trialDays: admin.firestore.FieldValue.delete(),
+        trialStartAt: admin.firestore.FieldValue.delete(),
+        manualPlanDays: plan === 'days' ? durationDays : admin.firestore.FieldValue.delete(),
+        lastManualGrantBy: auth.uid,
+        lastManualGrantAt: now,
+        updatedAt: now
+      };
+      if (!isLifetime) {
+        entitlementPayload.lifetimeGrantedBy = admin.firestore.FieldValue.delete();
+        entitlementPayload.lifetimeGrantedAt = admin.firestore.FieldValue.delete();
+      }
+      if (!entitlementSnap.exists) {
+        entitlementPayload.createdAt = now;
+      }
+
+      await entitlementRef.set(entitlementPayload, { merge: true });
+      const cleanup = await cleanupBetaKeys({ email, keyId, code });
+      let emailSent: boolean | null = null;
+      if (plan === 'lifetime') {
+        const originRaw = String(body.origin || req.headers.origin || '').trim();
+        const origin = resolveSafeOrigin(originRaw);
+        const loginUrl = `${origin}/login`;
+        emailSent = await sendLifetimeAccessEmail({ email, loginUrl });
+      }
+      const afterState = await getEntitlementSummaryByEmail(email);
+      const auditId = await writeAdminEntitlementAudit({
+        actionType: 'assign_plan',
+        targetEmail: email,
+        actorUid: auth.uid,
+        actorEmail: auth.email,
+        requestedPlan: planType,
+        requestedDurationDays: durationDays,
+        keyId: keyId || null,
+        code: code || null,
+        beforeState,
+        afterState,
+        cleanup
+      });
+
+      res.status(200).json({
+        ok: true,
+        email,
+        planType,
+        durationDays,
+        expiresAtMs,
+        matchedBetaKeys: cleanup.matchedBetaKeys,
+        deletedBetaKeys: cleanup.deletedBetaKeys,
+        betaKeyIds: cleanup.betaKeyIds,
+        auditId,
+        emailSent
+      });
+    } catch (error) {
+      console.error('[entitlement] assign_plan_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao atualizar o plano.' });
+    }
+  });
+
+export const previewEntitlementPlan = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const emailRaw = String(body.email || '').trim();
+    const planRaw = String(body.plan || '').trim().toLowerCase();
+    const keyId = String(body.keyId || '').trim();
+    const codeRaw = String(body.code || '').trim();
+    const durationDaysRaw = Number(body.durationDays);
+
+    if (!emailRaw || !isValidEmail(emailRaw)) {
+      res.status(400).json({ ok: false, message: 'Informe um e-mail válido.' });
+      return;
+    }
+    if (!ADMIN_GRANT_PLANS.has(planRaw as AdminGrantPlan)) {
+      res.status(400).json({ ok: false, message: 'Plano inválido.' });
+      return;
+    }
+
+    const email = normalizeBetaEmail(emailRaw);
+    const plan = planRaw as AdminGrantPlan;
+    if (plan === 'days' && (!Number.isFinite(durationDaysRaw) || durationDaysRaw <= 0)) {
+      res.status(400).json({ ok: false, message: 'Informe um número de dias válido.' });
+      return;
+    }
+
+    const { durationDays, expiresAtMs } = resolveAdminPlanWindow(plan, durationDaysRaw);
+    const planType = plan === 'days' ? 'custom_days' : plan;
+    const code = codeRaw ? normalizeBetaCode(codeRaw) : '';
+
+    try {
+      const beforeState = await getEntitlementSummaryByEmail(email);
+      const cleanupPreview = await cleanupBetaKeys({ email, keyId, code }, { dryRun: true });
+
+      res.status(200).json({
+        ok: true,
+        preview: {
+          email,
+          planType,
+          durationDays,
+          expiresAtMs,
+          beforeState: compactEntitlementState(beforeState),
+          afterState: {
+            email,
+            status: 'active',
+            planType,
+            source: 'admin_manual',
+            lifetime: plan === 'lifetime',
+            expiresAtMs
+          },
+          cleanup: {
+            matchedBetaKeys: cleanupPreview.matchedBetaKeys,
+            betaKeyIds: cleanupPreview.betaKeyIds,
+            betaKeys: cleanupPreview.betaKeys
+          }
+        }
+      });
+    } catch (error) {
+      console.error('[entitlement] preview_plan_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao simular o plano.' });
+    }
+  });
+
+export const bulkManageEntitlements = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const actionRaw = String(body.action || 'assign_plan').trim().toLowerCase();
+    const action = actionRaw as AdminBulkAction;
+    if (!ADMIN_BULK_ACTIONS.has(action)) {
+      res.status(400).json({ ok: false, message: 'Ação em lote inválida.' });
+      return;
+    }
+    const emails = parseEmailList(body.emails ?? body.emailsText ?? body.emailList);
+    if (emails.length === 0) {
+      res.status(400).json({ ok: false, message: 'Informe pelo menos um e-mail válido.' });
+      return;
+    }
+    if (emails.length > 200) {
+      res.status(400).json({ ok: false, message: 'Limite de 200 e-mails por operação.' });
+      return;
+    }
+
+    const dryRun = body.dryRun === true;
+    const planRaw = String(body.plan || 'lifetime').trim().toLowerCase();
+    const plan = planRaw as AdminGrantPlan;
+    const durationDaysRaw = Number(body.durationDays);
+    if (action === 'assign_plan' && !ADMIN_GRANT_PLANS.has(plan)) {
+      res.status(400).json({ ok: false, message: 'Plano inválido.' });
+      return;
+    }
+    if (action === 'assign_plan' && plan === 'days' && (!Number.isFinite(durationDaysRaw) || durationDaysRaw <= 0)) {
+      res.status(400).json({ ok: false, message: 'Informe um número de dias válido.' });
+      return;
+    }
+
+    const sendLifetimeEmail = body.sendLifetimeEmail === true;
+    const batchId = admin.firestore().collection(ADMIN_AUDIT_COLLECTION).doc().id;
+    const results: Array<Record<string, unknown>> = [];
+    let successCount = 0;
+    let failCount = 0;
+    let totalMatchedBetaKeys = 0;
+    let totalDeletedBetaKeys = 0;
+
+    for (const email of emails) {
+      try {
+        const beforeState = await getEntitlementSummaryByEmail(email);
+        if (action === 'assign_plan') {
+          const { durationDays, expiresAtMs, expiresAt } = resolveAdminPlanWindow(plan, durationDaysRaw);
+          const planType = plan === 'days' ? 'custom_days' : plan;
+          const isLifetime = plan === 'lifetime';
+          const cleanup = await cleanupBetaKeys({ email }, { dryRun });
+          totalMatchedBetaKeys += cleanup.matchedBetaKeys;
+          totalDeletedBetaKeys += cleanup.deletedBetaKeys;
+
+          const now = admin.firestore.FieldValue.serverTimestamp();
+          if (!dryRun) {
+            const entitlementRef = admin.firestore().collection('entitlements').doc(email);
+            const snap = await entitlementRef.get();
+            const payload: Record<string, any> = {
+              status: 'active',
+              planType,
+              source: 'admin_manual',
+              lifetime: isLifetime,
+              expiresAt: isLifetime ? null : expiresAt,
+              betaKeyId: admin.firestore.FieldValue.delete(),
+              betaCode: admin.firestore.FieldValue.delete(),
+              trialDays: admin.firestore.FieldValue.delete(),
+              trialStartAt: admin.firestore.FieldValue.delete(),
+              manualPlanDays: plan === 'days' ? durationDays : admin.firestore.FieldValue.delete(),
+              lastManualGrantBy: auth.uid,
+              lastManualGrantAt: now,
+              updatedAt: now
+            };
+            if (!isLifetime) {
+              payload.lifetimeGrantedBy = admin.firestore.FieldValue.delete();
+              payload.lifetimeGrantedAt = admin.firestore.FieldValue.delete();
+            }
+            if (!snap.exists) {
+              payload.createdAt = now;
+            }
+            await entitlementRef.set(payload, { merge: true });
+          }
+
+          const afterState = dryRun
+            ? {
+                ...beforeState,
+                status: 'active',
+                planType,
+                source: 'admin_manual',
+                lifetime: isLifetime,
+                expiresAtMs: isLifetime ? null : expiresAtMs
+              }
+            : await getEntitlementSummaryByEmail(email);
+
+          let emailSent: boolean | null = null;
+          if (!dryRun && plan === 'lifetime' && sendLifetimeEmail) {
+            const originRaw = String(body.origin || req.headers.origin || '').trim();
+            const origin = resolveSafeOrigin(originRaw);
+            const loginUrl = `${origin}/login`;
+            emailSent = await sendLifetimeAccessEmail({ email, loginUrl });
+          }
+
+          let auditId: string | null = null;
+          if (!dryRun) {
+            auditId = await writeAdminEntitlementAudit({
+              actionType: 'assign_plan',
+              targetEmail: email,
+              actorUid: auth.uid,
+              actorEmail: auth.email,
+              requestedPlan: planType,
+              requestedDurationDays: durationDays,
+              beforeState,
+              afterState: afterState as EntitlementSummary,
+              cleanup,
+              batchId
+            });
+          }
+
+          successCount += 1;
+          results.push({
+            ok: true,
+            email,
+            action,
+            dryRun,
+            planType,
+            durationDays,
+            expiresAtMs: isLifetime ? null : expiresAtMs,
+            matchedBetaKeys: cleanup.matchedBetaKeys,
+            deletedBetaKeys: cleanup.deletedBetaKeys,
+            betaKeyIds: cleanup.betaKeyIds,
+            auditId,
+            emailSent
+          });
+          continue;
+        }
+
+        const cleanup = await cleanupBetaKeys({ email }, { dryRun });
+        totalMatchedBetaKeys += cleanup.matchedBetaKeys;
+        totalDeletedBetaKeys += cleanup.deletedBetaKeys;
+
+        if (!dryRun) {
+          const entitlementRef = admin.firestore().collection('entitlements').doc(email);
+          const snap = await entitlementRef.get();
+          const now = admin.firestore.FieldValue.serverTimestamp();
+          const payload: Record<string, any> = {
+            status: 'inactive',
+            source: 'admin_manual',
+            lifetime: false,
+            expiresAt: admin.firestore.Timestamp.now(),
+            betaKeyId: admin.firestore.FieldValue.delete(),
+            betaCode: admin.firestore.FieldValue.delete(),
+            trialDays: admin.firestore.FieldValue.delete(),
+            trialStartAt: admin.firestore.FieldValue.delete(),
+            manualPlanDays: admin.firestore.FieldValue.delete(),
+            revokedBy: auth.uid,
+            revokedAt: now,
+            updatedAt: now
+          };
+          if (!snap.exists) {
+            payload.createdAt = now;
+          }
+          await entitlementRef.set(payload, { merge: true });
+        }
+
+        const afterState = dryRun
+          ? { ...beforeState, status: 'inactive', source: 'admin_manual', lifetime: false }
+          : await getEntitlementSummaryByEmail(email);
+
+        let auditId: string | null = null;
+        if (!dryRun) {
+          auditId = await writeAdminEntitlementAudit({
+            actionType: 'revoke_access',
+            targetEmail: email,
+            actorUid: auth.uid,
+            actorEmail: auth.email,
+            beforeState,
+            afterState: afterState as EntitlementSummary,
+            cleanup,
+            batchId
+          });
+        }
+
+        successCount += 1;
+        results.push({
+          ok: true,
+          email,
+          action,
+          dryRun,
+          matchedBetaKeys: cleanup.matchedBetaKeys,
+          deletedBetaKeys: cleanup.deletedBetaKeys,
+          betaKeyIds: cleanup.betaKeyIds,
+          auditId
+        });
+      } catch (error: any) {
+        failCount += 1;
+        results.push({
+          ok: false,
+          email,
+          action,
+          message: error?.message || 'Falha na operação.'
+        });
+      }
+    }
+
+    if (!dryRun) {
+      await writeAdminEntitlementAudit({
+        actionType: action === 'assign_plan' ? 'bulk_assign_plan' : 'bulk_revoke_access',
+        actorUid: auth.uid,
+        actorEmail: auth.email,
+        requestedPlan: action === 'assign_plan' ? plan : null,
+        requestedDurationDays:
+          action === 'assign_plan' && plan === 'days'
+            ? Math.floor(durationDaysRaw)
+            : null,
+        rollbackAvailable: false,
+        batchId,
+        metadata: {
+          total: emails.length,
+          successCount,
+          failCount,
+          totalMatchedBetaKeys,
+          totalDeletedBetaKeys
+        }
+      });
+    }
+
+    res.status(200).json({
+      ok: true,
+      dryRun,
+      action,
+      batchId: dryRun ? null : batchId,
+      total: emails.length,
+      successCount,
+      failCount,
+      totalMatchedBetaKeys,
+      totalDeletedBetaKeys,
+      results
+    });
+  });
+
+export const listEntitlementAdminAudit = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const emailRaw = String(body.email || '').trim();
+    const email = emailRaw ? normalizeBetaEmail(emailRaw) : '';
+    const limitRaw = Number(body.limit || 40);
+    const limit = Math.max(1, Math.min(200, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 40));
+
+    try {
+      const db = admin.firestore();
+      let docs: FirebaseFirestore.DocumentSnapshot[] = [];
+      if (email && isValidEmail(email)) {
+        const snap = await db.collection(ADMIN_AUDIT_COLLECTION).where('targetEmail', '==', email).limit(200).get();
+        docs = snap.docs.sort((a, b) => (toMs(b.get('createdAt')) || 0) - (toMs(a.get('createdAt')) || 0)).slice(0, limit);
+      } else {
+        const snap = await db.collection(ADMIN_AUDIT_COLLECTION).orderBy('createdAt', 'desc').limit(limit).get();
+        docs = snap.docs;
+      }
+      res.status(200).json({
+        ok: true,
+        items: docs.map((docSnap) => serializeAuditDoc(docSnap))
+      });
+    } catch (error) {
+      console.error('[entitlement] audit_list_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao listar auditoria.' });
+    }
+  });
+
+export const rollbackLastEntitlementAction = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const actionIdRaw = String(body.actionId || '').trim();
+    const emailRaw = String(body.email || '').trim();
+    const email = emailRaw ? normalizeBetaEmail(emailRaw) : '';
+    if (!actionIdRaw && (!email || !isValidEmail(email))) {
+      res.status(400).json({ ok: false, message: 'Informe o actionId ou um e-mail válido.' });
+      return;
+    }
+
+    try {
+      const db = admin.firestore();
+      let auditSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+      if (actionIdRaw) {
+        const direct = await db.collection(ADMIN_AUDIT_COLLECTION).doc(actionIdRaw).get();
+        if (direct.exists) {
+          auditSnap = direct;
+        }
+      } else {
+        const snap = await db.collection(ADMIN_AUDIT_COLLECTION).where('targetEmail', '==', email).limit(200).get();
+        const candidates = snap.docs
+          .filter((docSnap) => {
+            const data = docSnap.data() || {};
+            const rollbackAvailable = data.rollbackAvailable !== false;
+            const rolledBackAt = data.rolledBackAt;
+            const actionType = String(data.actionType || '');
+            return rollbackAvailable && !rolledBackAt && actionType !== 'rollback';
+          })
+          .sort((a, b) => (toMs(b.get('createdAt')) || 0) - (toMs(a.get('createdAt')) || 0));
+        auditSnap = candidates[0] || null;
+      }
+
+      if (!auditSnap || !auditSnap.exists) {
+        res.status(404).json({ ok: false, message: 'Nenhuma ação reversível encontrada.' });
+        return;
+      }
+      const auditData = auditSnap.data() || {};
+      if (auditData.rolledBackAt) {
+        res.status(409).json({ ok: false, message: 'Esta ação já foi revertida.' });
+        return;
+      }
+
+      const targetEmail = normalizeBetaEmail(String(auditData.targetEmail || email || ''));
+      if (!targetEmail || !isValidEmail(targetEmail)) {
+        res.status(400).json({ ok: false, message: 'A ação não possui targetEmail válido.' });
+        return;
+      }
+
+      const beforeRollbackState = await getEntitlementSummaryByEmail(targetEmail);
+      const entitlementRef = db.collection('entitlements').doc(targetEmail);
+      const beforeState = auditData.beforeState || null;
+      const beforeData = auditData.beforeData || null;
+      if (beforeState?.exists && beforeData) {
+        await entitlementRef.set(beforeData, { merge: false });
+      } else {
+        await entitlementRef.delete().catch(() => undefined);
+      }
+
+      const keySnapshots = Array.isArray(auditData.restorableDeletedBetaKeys)
+        ? (auditData.restorableDeletedBetaKeys as Array<{ id?: string; data?: FirebaseFirestore.DocumentData }>)
+        : [];
+      const restoreChunks = chunkArray(keySnapshots, BATCH_CHUNK_SIZE);
+      for (const chunk of restoreChunks) {
+        const batch = db.batch();
+        chunk.forEach((entry) => {
+          const id = String(entry?.id || '').trim();
+          if (!id || !entry?.data || typeof entry.data !== 'object') return;
+          batch.set(db.collection(BETA_KEY_COLLECTION).doc(id), entry.data, { merge: false });
+        });
+        await batch.commit();
+      }
+
+      await auditSnap.ref.set(
+        {
+          rolledBackAt: admin.firestore.FieldValue.serverTimestamp(),
+          rolledBackBy: auth.uid,
+          rollbackAvailable: false
+        },
+        { merge: true }
+      );
+
+      const afterRollbackState = await getEntitlementSummaryByEmail(targetEmail);
+      const rollbackAuditId = await writeAdminEntitlementAudit({
+        actionType: 'rollback',
+        targetEmail,
+        actorUid: auth.uid,
+        actorEmail: auth.email,
+        beforeState: beforeRollbackState,
+        afterState: afterRollbackState,
+        cleanup: {
+          matchedBetaKeys: keySnapshots.length,
+          deletedBetaKeys: 0,
+          betaKeyIds: keySnapshots
+            .map((entry) => String(entry?.id || '').trim())
+            .filter((entry) => Boolean(entry)),
+          betaKeys: [],
+          betaKeySnapshots: []
+        },
+        rollbackAvailable: false,
+        rollbackOfActionId: auditSnap.id
+      });
+
+      res.status(200).json({
+        ok: true,
+        targetEmail,
+        rolledBackActionId: auditSnap.id,
+        rollbackAuditId,
+        restoredBetaKeys: keySnapshots.length,
+        beforeState: compactEntitlementState(beforeRollbackState),
+        afterState: compactEntitlementState(afterRollbackState)
+      });
+    } catch (error) {
+      console.error('[entitlement] rollback_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao executar rollback.' });
+    }
+  });
+
+export const searchAdminRecords = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const queryRaw = String(body.query || '').trim();
+    if (!queryRaw) {
+      res.status(400).json({ ok: false, message: 'Informe um termo de busca.' });
+      return;
+    }
+
+    const queryLower = normalizeTextLoose(queryRaw);
+    const queryUpper = normalizeBetaCode(queryRaw);
+    const asEmail = isValidEmail(queryLower) ? queryLower : '';
+    const db = admin.firestore();
+
+    try {
+      const usersByIdPromise = db.collection('users').doc(queryRaw).get();
+      const usersByEmailPromise = asEmail
+        ? db.collection('users').where('emailNormalized', '==', asEmail).limit(10).get()
+        : db.collection('users').where('email', '==', queryRaw).limit(10).get();
+
+      const entitlementsByEmailPromise = asEmail
+        ? db.collection('entitlements').doc(asEmail).get()
+        : Promise.resolve(null);
+
+      const [betaByCode, betaById, betaByRequestedEmail, betaByLifetimeEmail] = await Promise.all([
+        db.collection(BETA_KEY_COLLECTION).where('code', '==', queryUpper).limit(20).get(),
+        db.collection(BETA_KEY_COLLECTION).doc(queryRaw).get(),
+        asEmail
+          ? db.collection(BETA_KEY_COLLECTION).where('requestedEmail', '==', asEmail).limit(20).get()
+          : Promise.resolve(null),
+        asEmail
+          ? db.collection(BETA_KEY_COLLECTION).where('lifetimeGrantedEmail', '==', asEmail).limit(20).get()
+          : Promise.resolve(null)
+      ]);
+
+      const [usersById, usersByEmail, entitlementByEmail] = await Promise.all([
+        usersByIdPromise,
+        usersByEmailPromise,
+        entitlementsByEmailPromise
+      ]);
+
+      const entitlementFieldQueries = await Promise.all([
+        db.collection('entitlements').where('stripeCustomerId', '==', queryRaw).limit(10).get(),
+        db.collection('entitlements').where('stripeSubscriptionId', '==', queryRaw).limit(10).get(),
+        db.collection('entitlements').where('stripePaymentIntentId', '==', queryRaw).limit(10).get(),
+        db.collection('entitlements').where('stripeCheckoutSessionId', '==', queryRaw).limit(10).get()
+      ]);
+
+      const userMatchesById = new Map<string, Record<string, unknown>>();
+      const addUser = (docSnap: FirebaseFirestore.DocumentSnapshot | null) => {
+        if (!docSnap || !docSnap.exists) return;
+        const data = docSnap.data() || {};
+        userMatchesById.set(docSnap.id, {
+          uid: docSnap.id,
+          email: data.email || null,
+          emailNormalized: data.emailNormalized || null,
+          licenseId: data.licenseId || null,
+          tenantId: data.tenantId || null,
+          lastActiveAtMs: toMs(data.lastActiveAt)
+        });
+      };
+      addUser(usersById);
+      usersByEmail.docs.forEach((docSnap) => addUser(docSnap));
+
+      const entitlementMatchesById = new Map<string, Record<string, unknown>>();
+      const addEntitlement = (docSnap: FirebaseFirestore.DocumentSnapshot | null) => {
+        if (!docSnap || !docSnap.exists) return;
+        const data = docSnap.data() || {};
+        const summary = getEntitlementSummary(String(docSnap.id || ''), data, true);
+        entitlementMatchesById.set(docSnap.id, {
+          email: docSnap.id,
+          ...compactEntitlementState(summary),
+          stripeCustomerId: data.stripeCustomerId || null,
+          stripeSubscriptionId: data.stripeSubscriptionId || null,
+          stripePaymentIntentId: data.stripePaymentIntentId || null,
+          stripeCheckoutSessionId: data.stripeCheckoutSessionId || null
+        });
+      };
+      addEntitlement(entitlementByEmail);
+      entitlementFieldQueries.forEach((snap) => snap.docs.forEach((docSnap) => addEntitlement(docSnap)));
+
+      const betaMatchesById = new Map<string, BetaKeyMatch>();
+      const addBeta = (docSnap: FirebaseFirestore.DocumentSnapshot | null) => {
+        if (!docSnap || !docSnap.exists) return;
+        betaMatchesById.set(docSnap.id, serializeBetaKeyMatch(docSnap));
+      };
+      addBeta(betaById);
+      betaByCode.docs.forEach((docSnap) => addBeta(docSnap));
+      betaByRequestedEmail?.docs.forEach((docSnap) => addBeta(docSnap));
+      betaByLifetimeEmail?.docs.forEach((docSnap) => addBeta(docSnap));
+
+      const auditMatches: Array<Record<string, unknown>> = [];
+      if (asEmail) {
+        const auditSnap = await db
+          .collection(ADMIN_AUDIT_COLLECTION)
+          .where('targetEmail', '==', asEmail)
+          .limit(20)
+          .get();
+        auditMatches.push(...auditSnap.docs.map((docSnap) => serializeAuditDoc(docSnap)));
+      }
+
+      // Fallback parcial por contains para uma visão única mais útil.
+      if (
+        userMatchesById.size === 0 &&
+        entitlementMatchesById.size === 0 &&
+        betaMatchesById.size === 0 &&
+        auditMatches.length === 0
+      ) {
+        const [usersScan, entScan, betaScan] = await Promise.all([
+          db.collection('users').limit(250).get(),
+          db.collection('entitlements').limit(250).get(),
+          db.collection(BETA_KEY_COLLECTION).limit(250).get()
+        ]);
+        usersScan.docs.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          const haystack = [
+            docSnap.id,
+            String(data.email || ''),
+            String(data.emailNormalized || ''),
+            String(data.licenseId || ''),
+            String(data.tenantId || '')
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (haystack.includes(queryLower)) {
+            addUser(docSnap);
+          }
+        });
+        entScan.docs.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          const haystack = [
+            docSnap.id,
+            String(data.status || ''),
+            String(data.planType || ''),
+            String(data.source || ''),
+            String(data.stripeCustomerId || ''),
+            String(data.stripeSubscriptionId || ''),
+            String(data.stripePaymentIntentId || ''),
+            String(data.stripeCheckoutSessionId || '')
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (haystack.includes(queryLower)) {
+            addEntitlement(docSnap);
+          }
+        });
+        betaScan.docs.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          const haystack = [
+            docSnap.id,
+            String(data.code || ''),
+            String(data.requestedEmail || ''),
+            String(data.lifetimeGrantedEmail || '')
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (haystack.includes(queryLower)) {
+            addBeta(docSnap);
+          }
+        });
+      }
+
+      res.status(200).json({
+        ok: true,
+        query: queryRaw,
+        result: {
+          users: Array.from(userMatchesById.values()),
+          entitlements: Array.from(entitlementMatchesById.values()),
+          betaKeys: Array.from(betaMatchesById.values()),
+          audit: auditMatches
+        }
+      });
+    } catch (error) {
+      console.error('[entitlement] search_admin_records_error', error);
+      res.status(500).json({ ok: false, message: 'Falha na busca administrativa.' });
     }
   });
 

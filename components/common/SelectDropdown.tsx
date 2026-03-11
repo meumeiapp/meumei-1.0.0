@@ -30,7 +30,6 @@ const SelectDropdown: React.FC<SelectDropdownProps> = ({
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const pointerSelectRef = useRef(false);
   const [listStyle, setListStyle] = useState<React.CSSProperties>({});
 
   useEffect(() => {
@@ -109,23 +108,13 @@ const SelectDropdown: React.FC<SelectDropdownProps> = ({
                 ref={listRef}
                 className={`rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] shadow-lg overflow-y-auto ${listClassName}`}
                 role="listbox"
-                style={listStyle}
+                style={{ ...listStyle, touchAction: 'pan-y' }}
               >
                 {options.map(option => (
                   <button
                     key={option.value}
                     type="button"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      pointerSelectRef.current = true;
-                      onChange(option.value);
-                      setOpen(false);
-                    }}
                     onClick={(event) => {
-                      if (pointerSelectRef.current) {
-                        pointerSelectRef.current = false;
-                        return;
-                      }
                       event.preventDefault();
                       onChange(option.value);
                       setOpen(false);

@@ -7,6 +7,7 @@ interface QuickAccessItem {
   icon: React.ReactNode;
   onClick: () => void;
   showWhen?: boolean;
+  isActive?: boolean;
 }
 
 interface MobileQuickAccessFooterProps {
@@ -67,12 +68,24 @@ const MobileQuickAccessFooter: React.FC<MobileQuickAccessFooterProps> = ({
                 }
                 item.onClick();
               }}
-              className="flex h-[60px] w-full flex-col items-center justify-center gap-1 rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] text-[8px] font-semibold text-zinc-700 dark:text-zinc-200 shadow-sm"
+              className={`flex h-[60px] w-full flex-col items-center justify-center gap-1 rounded-xl border text-[10px] font-semibold shadow-sm transition-all ${
+                item.isActive
+                  ? 'border-indigo-400/70 bg-gradient-to-b from-indigo-500/30 to-indigo-500/10 text-white shadow-[0_10px_24px_rgba(79,70,229,0.35)]'
+                  : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] text-zinc-700 dark:text-zinc-200'
+              }`}
             >
-              <div className="h-6 w-6 rounded-none bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+              <div
+                className={`h-6 w-6 rounded-[10px] flex items-center justify-center transition-all ${
+                  item.isActive
+                    ? 'bg-indigo-500/30 ring-1 ring-indigo-300/60'
+                    : 'bg-zinc-100 dark:bg-zinc-800'
+                }`}
+              >
                 {item.icon}
               </div>
-              <span className="leading-tight text-center">{item.shortLabel || item.label}</span>
+              <span className={`leading-tight text-center ${item.isActive ? 'text-white' : ''}`}>
+                {item.shortLabel || item.label}
+              </span>
             </button>
           ))}
         </div>

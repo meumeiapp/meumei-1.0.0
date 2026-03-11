@@ -94,16 +94,17 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
   const hasNature = Boolean(nature);
   const hasTag = Boolean(tagSelected);
   const canSave = hasName && hasBrand && hasLimit && hasClosing && hasDue && hasNature && hasTag;
-  const labelClass = isMobile ? 'text-[11px] uppercase tracking-wide font-light text-white/70' : modalLabelClass;
+  const labelClass = isMobile ? 'text-[10px] uppercase tracking-[0.12em] font-semibold text-white/65' : modalLabelClass;
   const fieldClass = isMobile
-    ? 'w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 !text-[11px] !leading-[15px] font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40 placeholder:font-light placeholder:text-zinc-400'
+    ? 'w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500'
     : 'w-full rounded-lg border bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2';
   const selectFieldClass = isMobile
-    ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 !text-[11px] !leading-[15px] font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40 placeholder:font-light placeholder:text-zinc-400'
+    ? 'rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500'
     : 'rounded-lg border bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2';
   const groupSpacing = isMobile ? 'space-y-2' : 'space-y-3';
   const gridGap = isMobile ? 'gap-2' : 'gap-3 sm:gap-6';
   const gridGapTight = isMobile ? 'gap-2' : 'gap-3 sm:gap-5';
+  const modalBodyClass = isMobile ? 'px-3 py-2.5 space-y-2' : 'px-4 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6';
 
   const handleSave = () => {
     if (!canSave) {
@@ -139,7 +140,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
   );
 
   const modalBody = (
-      <div className="px-4 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
+      <div className={modalBodyClass}>
             <div className={groupSpacing}>
               <label htmlFor={fieldId('name')} className={labelClass}>
                 Nome do Cartão / Instituição
@@ -172,7 +173,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
                       showErrors && !hasBrand ? 'border-red-500' : 'border-zinc-200 dark:border-zinc-800'
                     }`}
                     listClassName="max-h-56"
-                    placeholderClassName="text-sm font-light"
+                    placeholderClassName="text-[11px] font-normal text-zinc-400"
                   />
                 </div>
                 <div className={groupSpacing}>
@@ -183,7 +184,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
                     id={fieldId('limit')}
                     name="limit"
                     type="number" 
-                    placeholder="Ex: R$0,00"
+                    placeholder="Ex.: R$ 0,00"
                     value={limit}
                     onChange={(e) => setLimit(e.target.value)}
                     className={`${fieldClass} ${
@@ -259,7 +260,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
                       showErrors && !hasNature ? 'border-red-500' : 'border-zinc-200 dark:border-zinc-800'
                     }`}
                     listClassName="max-h-40"
-                    placeholderClassName="text-sm font-light"
+                    placeholderClassName="text-[11px] font-normal text-zinc-400"
                   />
                   {formError && !nature && (
                     <p className="text-sm text-red-400">{formError}</p>
@@ -271,7 +272,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
             <div className={groupSpacing}>
               <label className={labelClass}>Cor da tag</label>
               <div
-                className={`flex flex-wrap gap-2 ${isMobile ? 'rounded-none' : 'rounded-lg'} ${
+                className={`flex flex-wrap gap-2 ${isMobile ? 'rounded-xl' : 'rounded-lg'} ${
                   showErrors && !hasTag ? 'ring-2 ring-red-500' : ''
                 }`}
               >
@@ -283,10 +284,10 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
                       setCardColor(color);
                       setTagSelected(true);
                     }}
-                    className={`h-7 w-7 rounded-none border ${cardColor === color ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.2)]' : 'border-white/20'}`}
+                    className={`h-7 w-7 rounded-full border ${cardColor === color ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.2)]' : 'border-white/20'}`}
                     aria-label={`Selecionar cor ${color}`}
                   >
-                    <span className="block h-full w-full rounded-none" style={{ backgroundColor: color }} />
+                    <span className="block h-full w-full rounded-full" style={{ backgroundColor: color }} />
                   </button>
                 ))}
               </div>
@@ -302,13 +303,13 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
         <div className="grid grid-cols-2 gap-3 w-full">
           <button
             onClick={onClose}
-            className="rounded-none border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+            className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
           >
             Cancelar
           </button>
           <button
             onClick={handleSave}
-            className={`rounded-none border border-indigo-500/40 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition ${!canSave ? 'opacity-60 cursor-not-allowed' : ''}`}
+            className={`rounded-xl border border-indigo-500/40 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition ${!canSave ? 'opacity-60 cursor-not-allowed' : ''}`}
             disabled={!canSave}
           >
             {primaryLabel === 'Salvar alterações' ? 'Salvar' : primaryLabel}
@@ -336,7 +337,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
   if (variant === 'dock') {
     if (!isOpen) return null;
     return (
-      <div className="fixed inset-0 z-[1300]">
+      <div className="fixed inset-0 z-[1300]" data-modal-root="true">
         <button
           type="button"
           onClick={onClose}
@@ -352,12 +353,12 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
         >
           {isMobile ? (
             <>
-              <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+              <div className="px-3 pt-2.5 pb-2.5 bg-[#0b0b10] border-b border-white/10">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <CreditCard size={16} className="text-white" />
-                      <p className="text-sm font-semibold text-white truncate">
+                      <p className="text-[15px] font-semibold text-white truncate">
                         {initialData ? 'Editar cartão de crédito' : 'Novo cartão de crédito'}
                       </p>
                     </div>
@@ -368,7 +369,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
                   <button
                     type="button"
                     onClick={onClose}
-                    className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                    className="h-8 w-8 rounded-xl bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                     aria-label="Fechar cartão"
                   >
                     <X size={16} />

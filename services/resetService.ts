@@ -111,6 +111,7 @@ const resetUserTree = async (
     'accounts',
     'expenses',
     'incomes',
+    'transfers',
     'invoices',
     'yields',
     'credit_cards',

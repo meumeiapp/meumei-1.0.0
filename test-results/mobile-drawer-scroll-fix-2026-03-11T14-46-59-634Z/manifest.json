@@ -1,0 +1,168 @@
+{
+  "baseUrl": "http://127.0.0.1:4173",
+  "loginEmail": "qa.screenshots.bot@example.com",
+  "generatedAt": "2026-03-11T14:46:59.635Z",
+  "outDir": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z",
+  "captures": [
+    {
+      "fileName": "01-dashboard-mobile.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/01-dashboard-mobile.png",
+      "note": "Dashboard mobile (emulacao iPhone)"
+    },
+    {
+      "fileName": "10-income-form-mobile.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/10-income-form-mobile.png",
+      "note": "Formulario Nova Entrada em mobile"
+    },
+    {
+      "fileName": "11-income-category-open-before.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/11-income-category-open-before.png",
+      "note": "Entrada/Categoria aberto antes do gesto"
+    },
+    {
+      "fileName": "12-income-category-open-after.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/12-income-category-open-after.png",
+      "note": "Entrada/Categoria após gesto de arraste/rolagem"
+    },
+    {
+      "fileName": "13-income-payment-open-before.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/13-income-payment-open-before.png",
+      "note": "Entrada/Forma de Pagamento aberto antes do gesto"
+    },
+    {
+      "fileName": "14-income-payment-open-after.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/14-income-payment-open-after.png",
+      "note": "Entrada/Forma de Pagamento após gesto de arraste/rolagem"
+    },
+    {
+      "fileName": "20-expense-form-mobile.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/20-expense-form-mobile.png",
+      "note": "Formulario Nova Despesa em mobile"
+    },
+    {
+      "fileName": "21-expense-category-open-before.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/21-expense-category-open-before.png",
+      "note": "Saida/Categoria aberto antes do gesto"
+    },
+    {
+      "fileName": "22-expense-category-open-after.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/22-expense-category-open-after.png",
+      "note": "Saida/Categoria após gesto de arraste/rolagem"
+    },
+    {
+      "fileName": "23-expense-payment-open-before.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/23-expense-payment-open-before.png",
+      "note": "Saida/Forma de Pagamento aberto antes do gesto"
+    },
+    {
+      "fileName": "24-expense-payment-open-after.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/24-expense-payment-open-after.png",
+      "note": "Saida/Forma de Pagamento após gesto de arraste/rolagem"
+    },
+    {
+      "fileName": "30-dashboard-final-mobile.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-drawer-scroll-fix-2026-03-11T14-46-59-634Z/30-dashboard-final-mobile.png",
+      "note": "Dashboard mobile apos testes"
+    }
+  ],
+  "checks": [
+    {
+      "name": "Entrada/Categoria: dropdown permanece aberto no pointer down",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Entrada/Categoria: arraste nao seleciona opcao",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Entrada/Forma de Pagamento: dropdown permanece aberto no pointer down",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Entrada/Forma de Pagamento: arraste nao seleciona opcao",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Entrada/Forma de Pagamento: lista rolou",
+      "pass": true,
+      "details": {
+        "scrollTop": 4,
+        "scrollHeight": 156,
+        "clientHeight": 152
+      }
+    },
+    {
+      "name": "Saida/Categoria: dropdown permanece aberto no pointer down",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Saida/Categoria: arraste nao seleciona opcao",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Saida/Forma de Pagamento: dropdown permanece aberto no pointer down",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Saida/Forma de Pagamento: arraste nao seleciona opcao",
+      "pass": true,
+      "details": {
+        "selectedBefore": "Selecione",
+        "selectedAfter": "Selecione"
+      }
+    },
+    {
+      "name": "Saida/Forma de Pagamento: lista rolou",
+      "pass": true,
+      "details": {
+        "scrollTop": 4,
+        "scrollHeight": 156,
+        "clientHeight": 152
+      }
+    }
+  ],
+  "skips": [
+    {
+      "name": "Entrada/Categoria: lista rolou",
+      "reason": "lista sem overflow suficiente para rolagem"
+    },
+    {
+      "name": "Saida/Categoria: lista rolou",
+      "reason": "lista sem overflow suficiente para rolagem"
+    }
+  ],
+  "summary": {
+    "totalChecks": 10,
+    "failedChecks": 0,
+    "passedChecks": 10,
+    "skipCount": 2
+  }
+}

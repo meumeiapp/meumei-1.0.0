@@ -97,6 +97,7 @@ export enum ViewState {
   YIELDS = 'YIELDS',
   INVOICES = 'INVOICES',
   REPORTS = 'REPORTS',
+  AUDIT = 'AUDIT',
   MASTER = 'MASTER'
 }
 
@@ -216,4 +217,22 @@ export interface Income {
   installmentNumber?: number;
   totalInstallments?: number;
   installmentGroupId?: string;
+}
+
+export type TransferStatus = 'pending' | 'completed' | 'canceled';
+
+export interface Transfer {
+  id: string;
+  fromAccountId: string;
+  toAccountId: string;
+  amount: number;
+  amountEncrypted?: string;
+  date: string;
+  status: TransferStatus;
+  notes?: string;
+  createdBy?: string;
+  licenseId?: string;
+  cryptoEpoch?: number;
+  locked?: boolean;
+  lockedReason?: LockedReason;
 }

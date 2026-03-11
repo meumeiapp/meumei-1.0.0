@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-03-11T17:35:58.400Z",
+  "baseUrl": "http://127.0.0.1:4173",
+  "loginEmail": "qa.screenshots.bot@example.com",
+  "captures": [
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/audit-command-center-2026-03-11T17-35-52-474Z/audit-command-center-top.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/audit-command-center-2026-03-11T17-35-52-474Z/audit-command-center-list.png"
+  ]
+}

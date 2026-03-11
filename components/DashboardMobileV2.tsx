@@ -2,9 +2,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Calendar,
   AlertTriangle,
   CheckCircle2,
+  Eye,
+  EyeOff,
   Smile,
   Target,
   Flame,
@@ -357,9 +361,42 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
   const canManageExpenses = true;
   const incomeAccent = '#22c55e';
   const expenseAccent = '#FF0000';
+  const [isBalanceVisible, setIsBalanceVisible] = useState(false);
+  const [isResultHelpOpen, setIsResultHelpOpen] = useState(false);
+  const [isResultCardExpanded, setIsResultCardExpanded] = useState(false);
+  const [resultMode, setResultMode] = useState<'real' | 'projected'>('real');
+  const isBalanceRevealed = canViewBalances && isBalanceVisible;
+  const hiddenCurrency = 'R$ ••••••';
+  const hiddenCurrencyCompact = 'R$ •••••';
+  const hideDashboardValues = !isBalanceRevealed;
   const isMobile = useIsMobile();
-  const resultValue = financialData.income - financialData.expenses;
-  const resultTextClass = resultValue >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400';
+  const paidExpenses = Math.max(0, Number((financialData.expenses - financialData.pendingExpenses).toFixed(2)));
+  const pendingApplied = resultMode === 'projected' ? financialData.pendingExpenses : 0;
+  const effectiveExpenses = paidExpenses + pendingApplied;
+  const resultValue = financialData.income - effectiveExpenses;
+  const resultTitle = resultMode === 'real' ? 'Quanto sobra hoje' : 'Quanto deve sobrar';
+  const resultFormulaLabel = resultMode === 'real' ? 'Entrou - Já saiu' : 'Entrou - (Já saiu + Pendente)';
+  const resultTextClass = hideDashboardValues
+    ? 'text-zinc-900 dark:text-white'
+    : resultValue >= 0
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : 'text-rose-500 dark:text-rose-400';
+  const resultSupportText =
+    hideDashboardValues
+      ? 'Valor oculto'
+      : resultValue > 0
+        ? `Você guardou ${formatCurrencyCompact(Math.abs(resultValue))}`
+        : resultValue < 0
+          ? `Faltaram ${formatCurrencyCompact(Math.abs(resultValue))}`
+          : 'Fechou no zero';
+  const resultSupportClass =
+    hideDashboardValues
+      ? 'text-zinc-500 dark:text-zinc-400'
+      : resultValue > 0
+        ? 'text-emerald-600 dark:text-emerald-400'
+        : resultValue < 0
+          ? 'text-rose-500 dark:text-rose-400'
+          : 'text-zinc-500 dark:text-zinc-400';
   const handleViewMore = onOpenLaunches ?? onOpenIncomes ?? onOpenVariableExpenses;
 
   useEffect(() => {
@@ -703,7 +740,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
   const meiCheckpoint = Math.floor(rawPercentage / 10) * 10;
   const showMeiAlert = canViewMeiLimit && rawPercentage >= 10;
   const showHealthAlert = true;
-  const meiAlertText = `Limite MEI ${meiCheckpoint.toFixed(0)}% usado`;
+  const meiAlertText = hideDashboardValues ? 'Limite MEI •••% usado' : `Limite MEI ${meiCheckpoint.toFixed(0)}% usado`;
   const healthPercent = Math.round(healthScore * 100);
   const shouldRotateAlerts = showMeiAlert && showHealthAlert;
   const [alertMode, setAlertMode] = useState<'mei' | 'health'>(showMeiAlert ? 'mei' : 'health');
@@ -767,7 +804,9 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                                           )}
                                           {typeof item.amount === 'number' && (
                                               <p className="text-xs font-bold text-white">
-                                                  {item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                  {hideDashboardValues
+                                                    ? hiddenCurrencyCompact
+                                                    : item.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                               </p>
                                           )}
                                           {item.entity === 'expense' ? (
@@ -796,49 +835,143 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       ) : null;
 
   return (
-    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+    <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+      <div
+        className="h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))] overflow-y-auto"
+        style={{ paddingTop: 'var(--mm-mobile-top, 0px)' }}
+      >
         <div className="px-4 pt-0 pb-[calc(env(safe-area-inset-bottom)+88px)]">
-                <div className="flex flex-col gap-[5px]">
-                    <div className="-mx-4 rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-6 text-center">
-                        <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-400">Seu dinheiro agora</p>
-                        <p className={`mt-2 text-4xl font-bold ${financialData.balance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-white'}`}>
-                            {formatCurrency(financialData.balance)}
+                <div className="flex flex-col gap-2 mm-mobile-header-stack">
+                    <div className="-mx-4 rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-6 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                            <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-400">Seu dinheiro agora</p>
+                            <button
+                                type="button"
+                                onClick={() => setIsBalanceVisible(prev => !prev)}
+                                aria-label={isBalanceRevealed ? 'Ocultar saldo' : 'Mostrar saldo'}
+                                aria-pressed={isBalanceRevealed}
+                                className="inline-flex items-center justify-center rounded-full p-1 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                            >
+                                {isBalanceRevealed ? <Eye size={16} /> : <EyeOff size={16} />}
+                            </button>
+                        </div>
+                        <p className={`mt-2 text-4xl font-bold ${isBalanceRevealed && financialData.balance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-white'}`}>
+                            {isBalanceRevealed ? formatCurrency(financialData.balance) : hiddenCurrency}
                         </p>
                     </div>
 
-                    <div className="-mx-4 rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-3 text-sm">
-                        <div className="flex items-center justify-between border-b border-zinc-200/70 dark:border-zinc-800/70 pb-2">
-                            <span className="text-zinc-500 dark:text-zinc-400">Resultado</span>
-                            <span className={`font-semibold ${resultTextClass}`}>
-                                {formatCurrencyCompact(resultValue)}
-                            </span>
+                    <div className="-mx-4 rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-3 text-sm">
+                        <div className="flex items-start justify-between gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setIsResultCardExpanded(prev => !prev)}
+                                aria-expanded={isResultCardExpanded}
+                                className="min-w-0 flex-1 text-left"
+                            >
+                                <span className="block text-zinc-500 dark:text-zinc-400">{resultTitle}</span>
+                                <span className="block text-[11px] text-zinc-400 dark:text-zinc-500">
+                                    {isResultCardExpanded ? resultFormulaLabel : 'Toque para ver detalhes'}
+                                </span>
+                            </button>
+                            <div className="shrink-0 flex items-center gap-2">
+                                <span className={`text-[18px] leading-none font-bold ${resultTextClass}`}>
+                                    {hideDashboardValues ? hiddenCurrencyCompact : formatCurrencyCompact(resultValue)}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsResultCardExpanded(prev => !prev)}
+                                    aria-label={isResultCardExpanded ? 'Recolher detalhes do resultado' : 'Expandir detalhes do resultado'}
+                                    aria-expanded={isResultCardExpanded}
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-zinc-300/90 bg-zinc-100/90 text-zinc-600 transition hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                >
+                                    {isResultCardExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </button>
+                            </div>
                         </div>
-                        <div className="mt-2 flex items-center justify-between">
-                            <span className="text-zinc-500 dark:text-zinc-400">Entradas</span>
-                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                                {formatCurrencyCompact(financialData.income)}
-                            </span>
-                        </div>
-                        <div className="mt-2 flex items-center justify-between">
-                            <span className="text-zinc-500 dark:text-zinc-400">Saídas</span>
-                            <span className="font-semibold text-rose-500 dark:text-rose-400">
-                                {formatCurrencyCompact(financialData.expenses)}
-                            </span>
-                        </div>
+
+                        {isResultCardExpanded && (
+                            <>
+                                <div className="mt-2 rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-100/70 dark:bg-zinc-900/40 p-1">
+                                    <div className="grid grid-cols-2 gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setResultMode('real')}
+                                            className={`rounded-lg px-2 py-1.5 text-[11px] font-semibold transition ${
+                                                resultMode === 'real'
+                                                    ? 'bg-emerald-600 text-white shadow-sm'
+                                                    : 'text-zinc-500 dark:text-zinc-400'
+                                            }`}
+                                        >
+                                            Hoje
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setResultMode('projected')}
+                                            className={`rounded-lg px-2 py-1.5 text-[11px] font-semibold transition ${
+                                                resultMode === 'projected'
+                                                    ? 'bg-indigo-600 text-white shadow-sm'
+                                                    : 'text-zinc-500 dark:text-zinc-400'
+                                            }`}
+                                        >
+                                            Previsto
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="mt-2 flex items-center justify-between rounded-lg bg-zinc-100/80 dark:bg-zinc-900/40 px-2.5 py-2">
+                                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Resumo</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className={`text-[11px] font-semibold ${resultSupportClass}`}>
+                                            {resultSupportText}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsResultHelpOpen(true)}
+                                            aria-label="Explicar cálculo do resumo"
+                                            aria-expanded={isResultHelpOpen}
+                                            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-zinc-300/90 bg-zinc-100/90 text-[11px] font-semibold text-zinc-600 transition hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                        >
+                                            ?
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="mt-2 rounded-lg border border-zinc-200/70 dark:border-zinc-800/70 divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
+                                    <div className="flex items-center justify-between px-2.5 py-2">
+                                        <span className="text-zinc-500 dark:text-zinc-400">Dinheiro que entrou</span>
+                                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                            {hideDashboardValues ? hiddenCurrencyCompact : formatCurrencyCompact(financialData.income)}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between px-2.5 py-2">
+                                        <span className="text-zinc-500 dark:text-zinc-400">Já saiu (pago)</span>
+                                        <span className="font-semibold text-rose-500 dark:text-rose-400">
+                                            {hideDashboardValues ? hiddenCurrencyCompact : formatCurrencyCompact(paidExpenses)}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between px-2.5 py-2">
+                                        <span className="text-zinc-500 dark:text-zinc-400">Ainda vai sair (pendente)</span>
+                                        <span className="font-semibold text-amber-600 dark:text-amber-400">
+                                            {hideDashboardValues ? hiddenCurrencyCompact : formatCurrencyCompact(financialData.pendingExpenses)}
+                                        </span>
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-[5px] -mx-4 px-4 mt-[5px]">
+                    <div className="grid grid-cols-2 gap-2 -mx-4 px-4 mt-[5px]">
                         <button
                             type="button"
                             onClick={onOpenIncomes}
-                            className="h-14 rounded-none bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-base shadow-lg shadow-emerald-900/25"
+                            className="h-11 mm-mobile-primary-cta rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[15px] shadow-lg shadow-emerald-900/25"
                         >
                             + Entrada
                         </button>
                         <button
                             type="button"
                             onClick={onOpenExpenseAll ?? onOpenVariableExpenses}
-                            className="h-14 rounded-none bg-[#FF0000] hover:bg-red-600 text-white font-semibold text-base shadow-lg shadow-red-900/25"
+                            className="h-11 mm-mobile-primary-cta rounded-xl bg-[#FF0000] hover:bg-red-600 text-white font-semibold text-[15px] shadow-lg shadow-red-900/25"
                         >
                             – Saída
                         </button>
@@ -846,7 +979,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
 
                     {(showMeiAlert || showHealthAlert) && (
                         <div
-                            className={`-mx-4 mt-[5px] rounded-none border px-4 py-3 flex items-center justify-between gap-2 text-xs ${
+                            className={`-mx-4 mt-[5px] rounded-xl border px-4 py-3 flex items-center justify-between gap-2 text-xs ${
                                 alertMode === 'mei'
                                     ? 'border-amber-200/70 dark:border-amber-900/40 bg-amber-50/80 dark:bg-amber-900/10 text-amber-700 dark:text-amber-200'
                                     : 'border-emerald-200/70 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/10 text-emerald-700 dark:text-emerald-200'
@@ -863,16 +996,16 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                                 <>
                                     <div className="flex items-center gap-2">
                                         <CheckCircle2 size={14} />
-                                        <span>Saúde da empresa {healthPercent}%</span>
+                                        <span>{hideDashboardValues ? 'Saúde da empresa •••%' : `Saúde da empresa ${healthPercent}%`}</span>
                                     </div>
                                 </>
                             )}
                         </div>
                     )}
 
-                    <div className="-mx-4 mt-[5px] rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-3">
+                    <div className="-mx-4 mt-[5px] rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-3">
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] uppercase tracking-[0.25em] text-zinc-400">Últimos lançamentos</span>
+                            <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400">Últimos lançamentos</span>
                         </div>
                         {recentTransactions.length === 0 ? (
                             <p className="text-xs text-zinc-500">Sem lançamentos recentes.</p>
@@ -895,7 +1028,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                                                 </p>
                                             </div>
                                             <span className={`text-sm font-semibold ${isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-                                                {isIncome ? '+' : '-'} {formatCurrencyCompact(item.amount)}
+                                                {hideDashboardValues ? hiddenCurrencyCompact : `${isIncome ? '+' : '-'} ${formatCurrencyCompact(item.amount)}`}
                                             </span>
                                         </div>
                                     );
@@ -909,13 +1042,91 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                             type="button"
                             onClick={handleViewMore}
                             disabled={!handleViewMore}
-                            className="h-12 w-full rounded-none border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="h-11 w-full rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Ver mais
                         </button>
                     </div>
                 </div>
         </div>
+      </div>
+      {isResultHelpOpen && (
+        <div className="fixed inset-0 z-[1450]">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setIsResultHelpOpen(false)}
+            aria-label="Fechar explicação do cálculo"
+          />
+          <div
+            className="absolute left-0 right-0 rounded-t-3xl border border-zinc-200/60 dark:border-zinc-700/60 bg-white dark:bg-[#111114] px-4 pt-4 pb-4 shadow-2xl"
+            style={{ bottom: 'var(--mm-mobile-dock-height, 68px)' }}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-zinc-900 dark:text-white">Como esse valor foi calculado</p>
+              <button
+                type="button"
+                onClick={() => setIsResultHelpOpen(false)}
+                className="text-xs font-semibold text-zinc-500 dark:text-zinc-400"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setResultMode('real')}
+                className={`rounded-xl border px-2 py-1.5 text-[11px] font-semibold transition ${
+                  resultMode === 'real'
+                    ? 'border-emerald-500/70 bg-emerald-600 text-white'
+                    : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'
+                }`}
+              >
+                Hoje
+              </button>
+              <button
+                type="button"
+                onClick={() => setResultMode('projected')}
+                className={`rounded-xl border px-2 py-1.5 text-[11px] font-semibold transition ${
+                  resultMode === 'projected'
+                    ? 'border-indigo-500/70 bg-indigo-600 text-white'
+                    : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'
+                }`}
+              >
+                Previsto
+              </button>
+            </div>
+
+            <p className="mt-2 text-[12px] text-zinc-500 dark:text-zinc-400">
+              {resultMode === 'real'
+                ? 'Modo Hoje: considera só o que já foi pago.'
+                : 'Modo Previsto: considera o pago + o pendente do mês.'}
+            </p>
+
+            <div className="mt-3 rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-50/90 dark:bg-zinc-900/30 p-3">
+              <div className="grid grid-cols-[1fr_auto] gap-y-2 text-sm">
+                <span className="text-zinc-600 dark:text-zinc-300">Dinheiro que entrou</span>
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">{hideDashboardValues ? hiddenCurrency : formatCurrency(financialData.income)}</span>
+                <span className="text-zinc-600 dark:text-zinc-300">Menos já saiu (pago)</span>
+                <span className="font-semibold text-rose-500 dark:text-rose-400">{hideDashboardValues ? hiddenCurrency : `- ${formatCurrency(paidExpenses)}`}</span>
+                <span className="text-zinc-600 dark:text-zinc-300">
+                  {resultMode === 'projected' ? 'Menos ainda vai sair (pendente)' : 'Ainda vai sair (pendente, não descontado)'}
+                </span>
+                <span className={`font-semibold ${resultMode === 'projected' ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                  {hideDashboardValues
+                    ? hiddenCurrency
+                    : resultMode === 'projected'
+                      ? `- ${formatCurrency(financialData.pendingExpenses)}`
+                      : formatCurrency(financialData.pendingExpenses)}
+                </span>
+                <span className="text-zinc-900 dark:text-white font-semibold">{resultTitle}</span>
+                <span className={`font-bold ${resultTextClass}`}>{hideDashboardValues ? hiddenCurrency : formatCurrency(resultValue)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

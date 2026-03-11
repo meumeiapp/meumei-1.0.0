@@ -957,22 +957,38 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
       canvas: {
         width: canvasWidth,
         height: canvasHeight
+      },
+      content: {
+        width: contentWidth,
+        height: contentHeight
       }
     };
   }, [edges, hoveredNodeId, isMobile, mapSize.height, mapSize.width, nodes]);
 
   useEffect(() => {
     if (!layout || !autoCenter) return;
+    const contentWidth = Math.max(layout.content.width, 1);
+    const contentHeight = Math.max(layout.content.height, 1);
+    const fitWidth = (mapSize.width - (isMobile ? 72 : 120)) / contentWidth;
+    const fitHeight = (mapSize.height - (isMobile ? 72 : 120)) / contentHeight;
+    const rawScale = Number.isFinite(fitWidth) && Number.isFinite(fitHeight)
+      ? Math.min(fitWidth, fitHeight)
+      : 1;
+    const targetScale = clamp(
+      rawScale,
+      isMobile ? 0.7 : 0.55,
+      isMobile ? 1.05 : 1.38
+    );
     const next = {
       x: Math.round((mapSize.width - layout.canvas.width) / 2),
       y: Math.round((mapSize.height - layout.canvas.height) / 2),
-      scale: 1
+      scale: Number(targetScale.toFixed(3))
     };
     const current = viewportRef.current;
     if (current.x === next.x && current.y === next.y && current.scale === next.scale) return;
     viewportRef.current = next;
     setViewport(next);
-  }, [autoCenter, layout, mapSize.height, mapSize.width]);
+  }, [autoCenter, isMobile, layout, mapSize.height, mapSize.width]);
 
   const details = useMemo(() => {
     if (!activeNode) return null;
@@ -1103,25 +1119,22 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   ) : null;
 
   return (
-    <div className="flex flex-col h-full gap-4">
-      <div className="flex items-start justify-start">
-        <div>
-          <h2 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-white`}>Mapa Financeiro</h2>
-          <p className={`${isMobile ? 'text-[11px]' : 'text-sm'} text-slate-400`}>
-            Receita comprometida{' '}
-            <span className="text-white font-semibold">{commitmentPercent.toFixed(1)}%</span>
-          </p>
-        </div>
+    <div className="flex flex-1 min-h-0 flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className={`${isMobile ? 'text-sm' : 'text-base'} font-semibold text-white`}>Mapa Financeiro</h2>
+        <p className={`${isMobile ? 'text-[10px]' : 'text-xs'} text-slate-400 whitespace-nowrap`}>
+          Comprometimento: <span className="text-white font-semibold">{commitmentPercent.toFixed(1)}%</span>
+        </p>
       </div>
 
       <div
-        className={`relative ${isOverlayFullscreen ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0'}`}
+        className={`relative ${isOverlayFullscreen ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0 flex flex-col'}`}
         style={{
           paddingTop: isOverlayFullscreen ? 'env(safe-area-inset-top)' : undefined,
           paddingBottom: isOverlayFullscreen ? 'env(safe-area-inset-bottom)' : undefined
         }}
       >
-        <div className="flex gap-4 items-stretch h-full min-h-0">
+        <div className="flex gap-4 items-stretch flex-1 min-h-0">
           <div
             ref={containerRef}
             onPointerDown={handlePointerDown}
@@ -1133,7 +1146,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
             className={`mm-map-surface relative border border-white/10 overflow-hidden flex-1 select-none ${
               isFullscreen
                 ? 'rounded-none h-full w-full box-border'
-                : 'rounded-3xl h-full min-h-[420px] md:min-h-[520px]'
+                : 'rounded-3xl w-full flex-1 min-h-[420px]'
             }`}
             style={{
               background:

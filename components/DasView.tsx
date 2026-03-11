@@ -69,7 +69,7 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
   if (isMobile) {
     const cnpjStatus = cnpj ? 'OK' : 'Pendente';
     const mobileHeader = (
-      <div className="space-y-2">
+      <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable">
         <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
           <button
             type="button"
@@ -87,13 +87,13 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
             <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">CNPJ</p>
             <p className={`text-[12px] font-semibold ${cnpj ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
               {cnpjStatus}
             </p>
           </div>
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
             <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">PGMEI</p>
             <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">Pronto</p>
           </div>
@@ -103,7 +103,8 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
           <button
             type="button"
             onClick={handleOpenPgmei}
-            className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-teal-600 dark:hover:text-teal-300 hover:border-teal-200 dark:hover:border-teal-700 transition"
+            data-tour-anchor="das-open"
+            className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-teal-600 dark:hover:text-teal-300 hover:border-teal-200 dark:hover:border-teal-700 transition"
           >
             <ExternalLink size={14} />
             Abrir PGMEI
@@ -112,7 +113,7 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
             <button
               type="button"
               onClick={handleCopy}
-              className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+              className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
             >
               {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
               {copied ? 'Copiado' : 'Copiar CNPJ'}
@@ -123,7 +124,7 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
     );
 
     return (
-      <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+      <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
         <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
           {headerFill.height > 0 && (
             <div
@@ -136,13 +137,13 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
               ref={subHeaderRef}
               className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
             >
-              <div className="px-4 pb-3 pt-2">
+              <div className="mm-mobile-subheader-pad">
                 {mobileHeader}
               </div>
             </div>
           </div>
           <div
-            className="h-full overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+88px)]"
+            className="h-full overflow-y-auto mm-mobile-content-pad pb-[calc(env(safe-area-inset-bottom)+88px)]"
             style={{
               paddingTop: subHeaderHeight
                 ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px)`
@@ -150,7 +151,7 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
             }}
           >
             <div className="space-y-0">
-              <MobileFullWidthSection contentClassName="px-4 py-4">
+              <MobileFullWidthSection contentClassName="mm-mobile-section-pad">
                 <div className="space-y-3 text-sm text-zinc-500 dark:text-zinc-400">
                   <p className="text-xs font-semibold uppercase tracking-[0.3em] text-zinc-400">Passo a passo</p>
                   <div className="flex items-center justify-between gap-3">
@@ -161,6 +162,7 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
                     <button
                       type="button"
                       onClick={handleOpenPgmei}
+                      data-tour-anchor="das-open"
                       className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-full bg-teal-600 text-white hover:bg-teal-500"
                     >
                       Abrir PGMEI
@@ -170,7 +172,7 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
               </MobileFullWidthSection>
 
               <MobileFullWidthSection
-                contentClassName="px-4 py-4"
+                contentClassName="mm-mobile-section-pad"
                 withDivider={false}
                 backgroundClassName="bg-zinc-50 dark:bg-zinc-900/40"
               >
@@ -213,18 +215,11 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
 
   const cnpjStatus = cnpj ? 'OK' : 'Pendente';
   const desktopSummarySection = (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 relative z-10">
-      <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+    <div className="w-full px-4 sm:px-6 pt-6 relative z-10">
+      <div className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
         <div className="space-y-2">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-            <button
-              type="button"
-              onClick={onBack}
-              className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-              aria-label="Voltar para o início"
-            >
-              <Home size={16} />
-            </button>
+            <div className="h-8 w-8" aria-hidden="true" />
             <div className="min-w-0 text-center">
               <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Emissão DAS</p>
               <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">PGMEI</p>
@@ -247,12 +242,14 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2">
+          <div className="flex items-center justify-center pt-0.5">
             <button
               type="button"
               onClick={handleOpenPgmei}
-              className="w-full rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-teal-900/20 transition active:scale-[0.98]"
+              data-tour-anchor="das-open"
+              className="mm-btn-base mm-btn-primary mm-btn-primary-teal min-w-[220px] px-5"
             >
+              <ExternalLink size={15} />
               Abrir PGMEI
             </button>
           </div>
@@ -262,10 +259,10 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
   );
 
   return (
-    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20">
+    <div className="h-full min-h-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter flex flex-col overflow-hidden">
       {desktopSummarySection}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] pb-12 space-y-6">
-        <div className="bg-white dark:bg-[#151517] rounded-3xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6 sm:p-8 space-y-6">
+      <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 mt-[var(--mm-content-gap)] flex-1 min-h-0 pb-0">
+        <div className="bg-white dark:bg-[#151517] rounded-3xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6 sm:p-8 h-full min-h-0 flex flex-col">
           <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 flex flex-col gap-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">CNPJ</div>
             {cnpj ? (
@@ -296,13 +293,13 @@ const DasView: React.FC<DasViewProps> = ({ onBack, company, onOpenCompany }) => 
             )}
           </div>
 
-          <div className="grid gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+          <div className="grid gap-3 text-sm text-zinc-500 dark:text-zinc-400 mt-6">
             <div>1) Copie o CNPJ acima.</div>
             <div>2) Abra o PGMEI e cole o CNPJ para continuar.</div>
             <div>3) Selecione o ano-calendário e gere a guia DAS.</div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 };

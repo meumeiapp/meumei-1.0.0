@@ -24,7 +24,8 @@ import {
   Lightbulb,
   Sprout,
   Keyboard,
-  Bell
+  Bell,
+  Bug
 } from 'lucide-react';
 import { CompanyInfo } from '../types';
 import { debugLog } from '../utils/debug';
@@ -44,6 +45,7 @@ type ConfigErrorState = {
 type SettingsSectionId =
   | 'company'
   | 'install'
+  | 'feedback'
   | 'notifications'
   | 'tips'
   | 'shortcuts'
@@ -140,6 +142,7 @@ const SettingsSection: React.FC<{
 interface SettingsProps {
   onBack: () => void;
   userId?: string;
+  isMasterUser?: boolean;
   companyInfo: CompanyInfo;
   onUpdateCompany: (info: CompanyInfo) => Promise<void> | void;
   onSystemReset?: () => Promise<{ deletedDocsCount: number } | null> | void;
@@ -147,18 +150,21 @@ interface SettingsProps {
   isAppInstalled?: boolean;
   tipsEnabled?: boolean;
   onUpdateTipsEnabled?: (enabled: boolean) => void;
+  appVersion?: string;
 }
 
 const Settings: React.FC<SettingsProps> = ({ 
     onBack, 
     userId,
+    isMasterUser = false,
     companyInfo, 
     onUpdateCompany,
     onSystemReset,
     onOpenInstall,
     isAppInstalled,
     tipsEnabled,
-    onUpdateTipsEnabled
+    onUpdateTipsEnabled,
+    appVersion
 }) => {
   
   // Local state for editing company info
@@ -208,6 +214,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [collapsedSections, setCollapsedSections] = useState<Partial<Record<SettingsSectionId, boolean>>>(() => ({
       company: true,
       install: true,
+      feedback: true,
       notifications: true,
       tips: true,
       shortcuts: true,
@@ -222,13 +229,18 @@ const Settings: React.FC<SettingsProps> = ({
   const [notificationsBusy, setNotificationsBusy] = useState(false);
   const [notificationsError, setNotificationsError] = useState('');
   const [testNotificationStatus, setTestNotificationStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [feedbackType, setFeedbackType] = useState<'bug' | 'improvement'>('bug');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<{
+      tone: 'idle' | 'success' | 'error';
+      message: string;
+  }>({ tone: 'idle', message: '' });
   const resolvedTipsEnabled = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
   const actionButtonBase =
       'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition h-10 w-full sm:w-48 whitespace-nowrap';
   const shortcutGroups = useMemo(() => {
-      const quickAccessLabel = isMobile
-          ? 'Navegar pelos botões do Acesso Rápido (do Início até Relatórios, em ciclo).'
-          : 'Navegar pelos botões do Acesso Rápido (do Início até Auditoria, em ciclo).';
+      const quickAccessLabel = 'Navegar pelos botões do Acesso Rápido (do Início até Agenda, em ciclo).';
 
       return [
           {
@@ -561,8 +573,59 @@ useEffect(() => {
     }
   };
 
+  const handleSubmitFeedback = async () => {
+      const trimmed = feedbackMessage.trim();
+      if (!userId) {
+          setFeedbackStatus({
+              tone: 'error',
+              message: 'Usuário não identificado. Entre novamente para enviar.'
+          });
+          return;
+      }
+      if (!trimmed) {
+          setFeedbackStatus({
+              tone: 'error',
+              message: 'Descreva o bug ou melhoria antes de enviar.'
+          });
+          return;
+      }
+
+      setFeedbackBusy(true);
+      setFeedbackStatus({ tone: 'idle', message: '' });
+      try {
+          const feedbackId = await dataService.submitUserFeedback(userId, {
+              type: feedbackType,
+              message: trimmed,
+              platform: isMobile ? 'mobile' : 'desktop',
+              appVersion: appVersion || '',
+              reporterEmail: firebaseUser?.email || null,
+              companyName: companyInfo.name || null
+          });
+          if (!feedbackId) {
+              setFeedbackStatus({
+                  tone: 'error',
+                  message: 'Não foi possível enviar agora. Tente novamente.'
+              });
+              return;
+          }
+          setFeedbackMessage('');
+          setFeedbackStatus({
+              tone: 'success',
+              message: 'Mensagem enviada ao painel de controle.'
+          });
+      } catch (error: any) {
+          setFeedbackStatus({
+              tone: 'error',
+              message: error?.message || 'Falha ao enviar mensagem.'
+          });
+      } finally {
+          setFeedbackBusy(false);
+      }
+  };
+
   // --- System Reset Handlers ---
   const handleConfirmReset = async () => {
+    if (isMobile) return;
     const confirmation = resetConfirmText.trim().toUpperCase();
     const ready = resetKeyTurned && resetTermsAccepted && resetArmed && confirmation === 'RESET';
     if (!ready) {
@@ -594,6 +657,7 @@ useEffect(() => {
   };
 
   const openResetModal = () => {
+    if (isMobile) return;
     setResetConfirmText('');
     setResetError('');
     setResetKeyTurned(false);
@@ -938,6 +1002,96 @@ useEffect(() => {
                         </div>
                     </SettingsSection>
 
+                    {!isMasterUser && (
+                    <SettingsSection
+                        label="Reportar bug ou melhoria"
+                        collapsed={isMobile ? false : isSectionCollapsed('feedback')}
+                        onToggle={() => toggleSection('feedback')}
+                        collapsible={!isMobile}
+                    >
+                        <div className="flex items-start gap-4">
+                            <div className="p-3 bg-sky-100 dark:bg-sky-900/20 rounded-xl text-sky-600 dark:text-sky-300">
+                                {feedbackType === 'bug' ? <Bug size={22} /> : <Lightbulb size={22} />}
+                            </div>
+                            <div className="flex-1">
+                                <h2 className="text-lg font-bold text-zinc-900 dark:text-white">
+                                    Reportar bug ou melhoria
+                                </h2>
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                    Sua mensagem será analisada pela nossa equipe.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setFeedbackType('bug')}
+                                className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition ${
+                                    feedbackType === 'bug'
+                                        ? 'border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-300'
+                                        : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300'
+                                }`}
+                            >
+                                Bug
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setFeedbackType('improvement')}
+                                className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition ${
+                                    feedbackType === 'improvement'
+                                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-300'
+                                        : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300'
+                                }`}
+                            >
+                                Melhoria
+                            </button>
+                            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                Até 2000 caracteres
+                            </span>
+                        </div>
+                        <div className="mt-3">
+                            <textarea
+                                value={feedbackMessage}
+                                onChange={(event) => setFeedbackMessage(event.target.value.slice(0, 2000))}
+                                placeholder={
+                                    feedbackType === 'bug'
+                                        ? 'Descreva o problema, onde aconteceu e como reproduzir.'
+                                        : 'Descreva a melhoria e o impacto esperado.'
+                                }
+                                className="w-full min-h-[120px] resize-y rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-[#1a1a1a] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50"
+                            />
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                    {feedbackMessage.length}/2000
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={handleSubmitFeedback}
+                                    disabled={feedbackBusy}
+                                    className={`${actionButtonBase} ${
+                                        feedbackType === 'bug'
+                                            ? 'bg-rose-600 text-white hover:bg-rose-500'
+                                            : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                                    } ${feedbackBusy ? 'cursor-not-allowed opacity-70' : ''}`}
+                                >
+                                    {feedbackBusy ? 'Enviando...' : 'Enviar mensagem'}
+                                </button>
+                            </div>
+                            {feedbackStatus.message && (
+                                <div
+                                    className={`mt-3 rounded-lg border px-3 py-2 text-[11px] ${
+                                        feedbackStatus.tone === 'success'
+                                            ? 'border-emerald-200 dark:border-emerald-900/40 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                                            : 'border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-300'
+                                    }`}
+                                >
+                                    {feedbackStatus.message}
+                                </div>
+                            )}
+                        </div>
+                    </SettingsSection>
+                    )}
+
                     {isMobile && (
                         <SettingsSection
                             label="Notificações"
@@ -1139,50 +1293,52 @@ useEffect(() => {
                     </SettingsSection>
                     )}
 
-                    <div className="grid grid-cols-1 gap-6">
-                        <SettingsSection
-                            label="Zona de Perigo"
-                            collapsed={isSectionCollapsed('danger')}
-                            onToggle={() => toggleSection('danger')}
-                            className="border-red-100 dark:border-red-900/30 flex flex-col"
-                            collapsible
-                        >
-                            <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
-                            <div className="relative z-10 space-y-3 flex-1">
-                                <div className="inline-flex items-center gap-2 rounded-full bg-red-600/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-300">
-                                    <AlertTriangle size={12} />
-                                    Ação Irreversível
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <div className="p-2.5 bg-red-100 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400">
-                                        <AlertTriangle size={20} />
+                    {!isMobile && (
+                        <div className="grid grid-cols-1 gap-6">
+                            <SettingsSection
+                                label="Zona de Perigo"
+                                collapsed={isSectionCollapsed('danger')}
+                                onToggle={() => toggleSection('danger')}
+                                className="border-red-100 dark:border-red-900/30 flex flex-col"
+                                collapsible
+                            >
+                                <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
+                                <div className="relative z-10 space-y-3 flex-1">
+                                    <div className="inline-flex items-center gap-2 rounded-full bg-red-600/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-300">
+                                        <AlertTriangle size={12} />
+                                        Ação Irreversível
                                     </div>
-                                    <h2 className="text-base font-bold text-red-700 dark:text-red-400">Zona de Perigo</h2>
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-2.5 bg-red-100 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400">
+                                            <AlertTriangle size={20} />
+                                        </div>
+                                        <h2 className="text-base font-bold text-red-700 dark:text-red-400">Zona de Perigo</h2>
+                                    </div>
+                                    <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                                        Essa ação apagará <strong>TODOS</strong> os dados do sistema e não poderá ser desfeita.
+                                    </p>
+                                    <p className="text-xs font-semibold text-red-600 dark:text-red-300">
+                                        Só continue se tiver certeza absoluta e estiver preparado para perder todas as informações.
+                                    </p>
                                 </div>
-                                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                                    Essa ação apagará <strong>TODOS</strong> os dados do sistema e não poderá ser desfeita.
-                                </p>
-                                <p className="text-xs font-semibold text-red-600 dark:text-red-300">
-                                    Só continue se tiver certeza absoluta e estiver preparado para perder todas as informações.
-                                </p>
-                            </div>
-                            <div className="relative z-10 flex justify-end mt-4">
-                                <button 
-                                    onClick={openResetModal}
-                                    className={`${actionButtonBase} bg-red-600 text-white hover:bg-red-500`}
-                                >
-                                    <Trash2 size={16} /> Resetar Sistema
-                                </button>
-                            </div>
-                        </SettingsSection>
-                    </div>
+                                <div className="relative z-10 flex justify-end mt-4">
+                                    <button
+                                        onClick={openResetModal}
+                                        className={`${actionButtonBase} bg-red-600 text-white hover:bg-red-500`}
+                                    >
+                                        <Trash2 size={16} /> Resetar Sistema
+                                    </button>
+                                </div>
+                            </SettingsSection>
+                        </div>
+                    )}
                 </div>
         </div>
 
       </main>
 
       {/* --- SYSTEM RESET SECURITY MODAL --- */}
-      {isResetModalOpen && (
+      {!isMobile && isResetModalOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-red-950/80 backdrop-blur-md animate-in fade-in zoom-in-95 duration-300">
              <div className="w-full max-w-md bg-[#1a1a1a] rounded-2xl shadow-2xl border border-red-900/50 p-0 overflow-hidden">
                 {/* ... existing reset content ... */}
@@ -1295,7 +1451,7 @@ useEffect(() => {
         </div>
       )}
 
-      {resetPhase !== 'idle' && (
+      {!isMobile && resetPhase !== 'idle' && (
         <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center text-white">
             {resetPhase === 'countdown' && (
                 <div className="flex h-full w-full flex-col items-center justify-center bg-black">

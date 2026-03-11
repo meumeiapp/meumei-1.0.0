@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import Dashboard from './components/Dashboard';
 import Settings from './components/Settings';
 import AccountsView from './components/AccountsView';
@@ -19,13 +19,15 @@ import AuditLogModal from './components/AuditLogModal';
 import MasterControlPanel from './components/MasterControlPanel';
 import FaturasErrorBoundary from './components/FaturasErrorBoundary';
 import InstallAppModal from './components/InstallAppModal';
+import TourDecisionModal from './components/TourDecisionModal';
 import MobileQuickAccessFooter from './components/mobile/MobileQuickAccessFooter';
 import DesktopQuickAccessFooter from './components/desktop/DesktopQuickAccessFooter';
+import DesktopFirstAccessTour from './components/DesktopFirstAccessTour';
 import Landing from './Pages/Landing';
 import Termos from './Pages/Termos';
 import Privacidade from './Pages/Privacidade';
 import Reembolso from './Pages/Reembolso';
-import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference, ExpenseType, ExpenseTypeOption, AgendaItem } from './types';
+import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference, ExpenseType, ExpenseTypeOption, AgendaItem, Transfer } from './types';
 import { COMPANY_DATA, DEFAULT_COMPANY_INFO, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_TYPES, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_EXPENSE_TYPES } from './constants';
 import { dataService } from './services/dataService';
 import { seedDevAnnualCoverage, seedDevUserData } from './services/devSeedService';
@@ -41,6 +43,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { auth, db, firebaseDebugInfo } from './services/firebase';
 import { preferencesService } from './services/preferencesService';
 import { betaKeysService } from './services/betaKeysService';
+import { masterFeedbackService } from './services/masterFeedbackService';
 import {
   ArrowUpCircle,
   ArrowDownUp,
@@ -81,6 +84,56 @@ import { BUILD_ID } from './utils/buildInfo';
 
 const roundToCents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
+const normalizeText = (value?: string | null) => String(value || '').trim();
+
+const hasExpenseCoreChanges = (previous: Expense, next: Expense) => {
+  const numberDiff = (a: number, b: number) => Math.abs(roundToCents(a) - roundToCents(b)) > 0.009;
+  if (numberDiff(Number(previous.amount || 0), Number(next.amount || 0))) return true;
+  if (normalizeText(previous.description) !== normalizeText(next.description)) return true;
+  if (normalizeText(previous.category) !== normalizeText(next.category)) return true;
+  if (normalizeText(previous.date) !== normalizeText(next.date)) return true;
+  if (normalizeText(previous.dueDate) !== normalizeText(next.dueDate)) return true;
+  if (normalizeText(previous.paymentMethod) !== normalizeText(next.paymentMethod)) return true;
+  if (normalizeText(previous.accountId) !== normalizeText(next.accountId)) return true;
+  if (normalizeText(previous.cardId) !== normalizeText(next.cardId)) return true;
+  if (normalizeText(previous.status) !== normalizeText(next.status)) return true;
+  if (normalizeText(previous.type) !== normalizeText(next.type)) return true;
+  if (normalizeText(previous.notes) !== normalizeText(next.notes)) return true;
+  return false;
+};
+
+const hasIncomeCoreChanges = (previous: Income, next: Income) => {
+  const numberDiff = (a: number, b: number) => Math.abs(roundToCents(a) - roundToCents(b)) > 0.009;
+  if (numberDiff(Number(previous.amount || 0), Number(next.amount || 0))) return true;
+  if (normalizeText(previous.description) !== normalizeText(next.description)) return true;
+  if (normalizeText(previous.category) !== normalizeText(next.category)) return true;
+  if (normalizeText(previous.date) !== normalizeText(next.date)) return true;
+  if (normalizeText(previous.competenceDate) !== normalizeText(next.competenceDate)) return true;
+  if (normalizeText(previous.paymentMethod) !== normalizeText(next.paymentMethod)) return true;
+  if (normalizeText(previous.accountId) !== normalizeText(next.accountId)) return true;
+  if (normalizeText(previous.status) !== normalizeText(next.status)) return true;
+  if (normalizeText(previous.notes) !== normalizeText(next.notes)) return true;
+  return false;
+};
+
+interface LayoutOffenderEntry {
+  selector: string;
+  clientHeight: number;
+  scrollHeight: number;
+}
+
+interface LayoutMetricsSnapshot {
+  viewportWidth: number;
+  viewportHeight: number;
+  headerHeight: number;
+  dockHeight: number;
+  subheaderHeight: number;
+  contentAvailableHeight: number;
+  mainClientHeight: number;
+  mainScrollHeight: number;
+  offenders: LayoutOffenderEntry[];
+}
+
 const PURCHASE_URL = 'https://meumeiapp.web.app/';
 const BETA_LANDING_URL = 'https://meumei-d88be.web.app';
 const MASTER_UID = 'ZbrLdQuqn4MlOK16MjBOr6GZM3l1';
@@ -90,6 +143,12 @@ const LIFETIME_UIDS = new Set([
   '9nenft1OJpadIE8064wHq4KEefq2'
 ]);
 const RESOLVE_TIMEOUT_MS = 12_000;
+const LEGACY_ACCOUNT_TYPES_STORAGE_KEY = 'meumei_account_types';
+const getScopedAccountTypesStorageKey = (uid: string) => `meumei_account_types:${uid}`;
+const FIRST_ACCESS_INSTALL_DECISION_PREFIX = 'meumei_first_access_install_decision_v1';
+const FIRST_ACCESS_TOUR_DECISION_PREFIX = 'meumei_first_access_tour_decision_v1';
+const getScopedFirstAccessKey = (prefix: string, scopeId?: string | null) =>
+  `${prefix}:${String(scopeId || 'default').trim() || 'default'}`;
 
 const ReportsBarsIcon: React.FC<{ size?: number }> = ({ size = 28 }) => (
   <svg
@@ -284,12 +343,29 @@ const AppInner: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(ViewState.DASHBOARD);
   const [onboardingSettings, setOnboardingSettings] = useState<OnboardingSettings | null>(null);
   const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const firstAccessScopeId = useMemo(() => {
+      const uid = authUser?.uid?.trim();
+      if (uid) return uid;
+      const email = authUser?.email?.trim().toLowerCase();
+      return email || null;
+  }, [authUser?.email, authUser?.uid]);
+  const [installDecisionCompleted, setInstallDecisionCompleted] = useState(false);
+  const [tourDecision, setTourDecision] = useState<'pending' | 'accepted' | 'declined'>('pending');
+  const [isTourDecisionOpen, setIsTourDecisionOpen] = useState(false);
+  const [tourRestartToken, setTourRestartToken] = useState(0);
   const [currentPath, setCurrentPath] = useState(
       typeof window !== 'undefined' ? window.location.pathname : '/'
   );
   const [currentSearch, setCurrentSearch] = useState(
       typeof window !== 'undefined' ? window.location.search : ''
   );
+  const [layoutMetrics, setLayoutMetrics] = useState<LayoutMetricsSnapshot | null>(null);
+  const debugLayoutEnabled = useMemo(() => {
+      const params = new URLSearchParams(currentSearch || '');
+      const queryEnabled = params.get('debugLayout') === '1';
+      const envEnabled = import.meta.env.VITE_DEBUG_LAYOUT === 'true';
+      return queryEnabled || envEnabled;
+  }, [currentSearch]);
   const [entitlementStatus, setEntitlementStatus] = useState<'idle' | 'loading' | 'active' | 'none' | 'error'>('idle');
   const [entitlementRetryToken, setEntitlementRetryToken] = useState(0);
   const [entitlementError, setEntitlementError] = useState<{ code?: string; message?: string } | null>(null);
@@ -311,6 +387,8 @@ const AppInner: React.FC = () => {
     | 'error'
   >('idle');
   const [installBannerVisible, setInstallBannerVisible] = useState(false);
+  const [bugNotificationCount, setBugNotificationCount] = useState(0);
+  const [masterInitialMode, setMasterInitialMode] = useState<'feedback' | null>(null);
 
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const [pwaInstalledFlag, setPwaInstalledFlag] = useState(false);
@@ -348,18 +426,290 @@ const AppInner: React.FC = () => {
       return window.location.origin;
   }, [isBetaHost]);
     // Onboarding should be available on all hosts (production and beta).
-    const isOnboardingRoute = currentPath === '/onboarding';
+  const isOnboardingRoute = currentPath === '/onboarding';
   const isLandingRoute = currentPath === '/';
   const isUpgradeRoute = currentPath === '/upgrade';
   const isLoginRoute = currentPath === '/login';
   const isTermsRoute = currentPath === '/termos';
   const isPrivacyRoute = currentPath === '/privacidade';
   const isRefundRoute = currentPath === '/reembolso';
-  const isPublicRoute = isLandingRoute || isUpgradeRoute || isLoginRoute || isOnboardingRoute || isTermsRoute || isPrivacyRoute || isRefundRoute;
+  const isPublicRoute = isLandingRoute || isUpgradeRoute || isLoginRoute || isTermsRoute || isPrivacyRoute || isRefundRoute;
+  const shouldUseAppShellLayout =
+      !isLandingRoute &&
+      !isUpgradeRoute &&
+      !isLoginRoute &&
+      !isTermsRoute &&
+      !isPrivacyRoute &&
+      !isRefundRoute;
+  const appRootRef = useRef<HTMLDivElement | null>(null);
+  const mainContentRef = useRef<HTMLDivElement | null>(null);
+  const mobileSwipeGestureRef = useRef<{
+      startX: number;
+      startY: number;
+      lastX: number;
+      lastY: number;
+      startedAt: number;
+      isHorizontal: boolean;
+  } | null>(null);
+  const mobileSwipeVisualResetTimerRef = useRef<number | null>(null);
+  const [mobileSwipeVisualOffset, setMobileSwipeVisualOffset] = useState(0);
+  const [mobileSwipeVisualTransitionMs, setMobileSwipeVisualTransitionMs] = useState(0);
+  const [mobileSwipeVisualActive, setMobileSwipeVisualActive] = useState(false);
+  const layoutMetricsSignatureRef = useRef('');
   useEffect(() => {
       if (typeof document === 'undefined') return;
-      document.body.dataset.appShell = isPublicRoute ? 'false' : 'true';
-  }, [isPublicRoute]);
+      document.body.dataset.appShell = shouldUseAppShellLayout ? 'true' : 'false';
+  }, [shouldUseAppShellLayout]);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const root = document.documentElement;
+      const mainNode = mainContentRef.current;
+      if (isMobile || !mainNode || !shouldUseAppShellLayout) {
+          if (mainNode) {
+              mainNode.style.overflowY = '';
+              mainNode.removeAttribute('data-mm-scroll-needed');
+          }
+          root.style.setProperty('--mm-ui-scale', '1');
+          setLayoutMetrics(null);
+          return;
+      }
+
+      const describeNode = (node: Element) => {
+          const idPart = node.id ? `#${node.id}` : '';
+          const classPart =
+              node instanceof HTMLElement && node.className
+                  ? `.${node.className.split(/\s+/).filter(Boolean).slice(0, 3).join('.')}`
+                  : '';
+          return `${node.tagName.toLowerCase()}${idPart}${classPart}`;
+      };
+
+      const findVisibleSubheader = () => {
+          const mainNode = mainContentRef.current;
+          if (!mainNode) return null;
+          const nodes = Array.from(mainNode.querySelectorAll('.mm-subheader')) as HTMLElement[];
+          return (
+              nodes.find(node => {
+                  const rect = node.getBoundingClientRect();
+              return rect.height > 0 && rect.width > 0;
+          }) || null
+      );
+      };
+
+      const buildSelector = (node: HTMLElement) => {
+          const anchor = node.getAttribute('data-tour-anchor');
+          if (anchor) return `[data-tour-anchor="${anchor}"]`;
+          const modalRoot = node.getAttribute('data-modal-root');
+          if (modalRoot !== null) return '[data-modal-root]';
+          const dockItem = node.getAttribute('data-dock-item-id');
+          if (dockItem) return `[data-dock-item-id="${dockItem}"]`;
+          return describeNode(node);
+      };
+
+      const collectLayoutOffenders = (mainNode: HTMLElement | null) => {
+          if (!mainNode) return [] as LayoutOffenderEntry[];
+          return Array.from(mainNode.querySelectorAll('*'))
+              .filter(node => node instanceof HTMLElement)
+              .map(node => node as HTMLElement)
+              .filter(node => node !== mainNode)
+              .filter(node => node.clientHeight > 0 && node.scrollHeight - node.clientHeight > 4)
+              .slice(0, 10)
+              .map(node => ({
+                  selector: buildSelector(node),
+                  clientHeight: Math.round(node.clientHeight),
+                  scrollHeight: Math.round(node.scrollHeight)
+              }));
+      };
+
+      const updateMetrics = () => {
+          const viewportWidth = Math.round(window.innerWidth);
+          const viewportHeight = Math.round(window.innerHeight);
+          const headerNode = document.querySelector('[data-mm-global-header="true"]') as HTMLElement | null;
+          const dockNode = document.querySelector('[data-mm-desktop-dock-shell="true"]') as HTMLElement | null;
+          const subheaderNode = findVisibleSubheader();
+          const mainNode = mainContentRef.current;
+
+          // Mantém escala 1 no shell desktop para evitar recorte visual global
+          // causado por zoom < 1 no #root.
+          const uiScale = 1;
+          root.style.setProperty('--mm-ui-scale', uiScale.toFixed(3));
+
+          const headerRect = headerNode?.getBoundingClientRect() || null;
+          const monthSelectorNode = headerNode?.querySelector('#month-selector-bar') as HTMLElement | null;
+          const monthSelectorRect = monthSelectorNode?.getBoundingClientRect() || null;
+          const headerVisualBottom = Math.max(
+              headerRect?.bottom || 0,
+              monthSelectorRect?.bottom || 0
+          );
+          const headerVisualTop = headerRect?.top || 0;
+          // O seletor de mês é absoluto e pode ultrapassar o rodapé do header.
+          // Consideramos esse overhang na altura visual para evitar conteúdo "por trás".
+          const headerHeightVisual = Math.max(0, Math.round(headerVisualBottom - headerVisualTop));
+          const dockBarNode = dockNode?.querySelector('.mm-dock-bar') as HTMLElement | null;
+          const dockBarOffsetVisual = dockBarNode
+              ? Math.round(window.innerHeight - dockBarNode.getBoundingClientRect().top)
+              : Math.round(
+                    Number.parseFloat(root.style.getPropertyValue('--mm-desktop-dock-bar-offset')) || 0
+                );
+          const dockShellHeightVisual = Math.round(
+              dockNode?.getBoundingClientRect().height ||
+              Number.parseFloat(root.style.getPropertyValue('--mm-dock-shell-height')) ||
+              Number.parseFloat(root.style.getPropertyValue('--mm-desktop-dock-height')) ||
+              0
+          );
+          const dockShellTopVisual = Math.round(
+              dockNode?.getBoundingClientRect().top || viewportHeight
+          );
+          const dockHeightVisual = Math.max(0, dockBarOffsetVisual, dockShellHeightVisual);
+          const subheaderHeightVisual = Math.max(0, Math.round(subheaderNode?.getBoundingClientRect().height || 0));
+          const mainTopVisual = Math.round(
+              mainNode?.getBoundingClientRect().top || headerVisualBottom
+          );
+
+          const headerHeight = Math.max(0, headerHeightVisual);
+          const dockHeight = Math.max(0, dockHeightVisual);
+          const subheaderHeight = Math.max(0, subheaderHeightVisual);
+          const cssScaleFactor = uiScale > 0 ? 1 / uiScale : 1;
+          const viewportHeightCss = Math.max(0, Math.round(viewportHeight * cssScaleFactor));
+          const headerHeightCss = Math.max(0, Math.round(headerHeight * cssScaleFactor));
+          const dockHeightCss = Math.max(0, Math.round(dockHeight * cssScaleFactor));
+          const subheaderHeightCss = Math.max(0, Math.round(subheaderHeight * cssScaleFactor));
+          // A altura útil deve terminar exatamente no topo visual do shell da dock.
+          // Isso evita "corte" entre conteúdo e dock em qualquer resolução.
+          const contentAvailableHeightVisual = Math.max(
+              0,
+              dockShellTopVisual - mainTopVisual
+          );
+          const contentAvailableHeight = Math.max(
+              0,
+              Math.round(contentAvailableHeightVisual * cssScaleFactor)
+          );
+          const contentScrollHeight = contentAvailableHeight;
+          const mainClientHeight = Math.max(0, Math.round(mainNode?.clientHeight || 0));
+          const mainScrollHeight = Math.max(0, Math.round(mainNode?.scrollHeight || 0));
+          const mainComputedStyle = mainNode ? window.getComputedStyle(mainNode) : null;
+          const mainPaddingBottom = Math.max(0, Math.round(Number.parseFloat(mainComputedStyle?.paddingBottom || '0') || 0));
+          const mainPaddingTop = Math.max(0, Math.round(Number.parseFloat(mainComputedStyle?.paddingTop || '0') || 0));
+          const mainContentHeight = Math.max(0, mainScrollHeight - mainPaddingBottom - mainPaddingTop);
+          const visibleContentHeight = Math.max(
+              0,
+              mainClientHeight - mainPaddingTop - mainPaddingBottom
+          );
+          const offenders = collectLayoutOffenders(mainNode);
+          // Usa overflow real como fonte principal para evitar falso negativo em telas menores.
+          const hasRealOverflow = mainScrollHeight - mainClientHeight > 1;
+          const scrollNeeded = hasRealOverflow || mainContentHeight - visibleContentHeight > 2;
+          // Folga mínima apenas para não "colar" no limite inferior.
+          const dockReserveVisual = 6;
+          const dockReserve = Math.max(4, Math.round(dockReserveVisual * cssScaleFactor));
+
+          if (mainNode) {
+              if (mainNode.style.overflowY !== 'auto') {
+                  mainNode.style.overflowY = 'auto';
+              }
+              mainNode.setAttribute('data-mm-scroll-needed', scrollNeeded ? 'true' : 'false');
+          }
+
+          root.style.setProperty('--mm-header-height', `${headerHeightCss}px`);
+          root.style.setProperty('--mm-dock-height', `${dockHeightCss}px`);
+          root.style.setProperty('--mm-desktop-dock-height', `${dockHeightCss}px`);
+          root.style.setProperty('--mm-subheader-height', `${subheaderHeightCss}px`);
+          root.style.setProperty('--mm-content-available-height', `${contentAvailableHeight}px`);
+          root.style.setProperty('--mm-content-scroll-height', `${contentScrollHeight}px`);
+          root.style.setProperty('--mm-content-dock-clearance', `${dockReserve}px`);
+          appRootRef.current?.style.setProperty('--mm-content-available-height', `${contentAvailableHeight}px`);
+          appRootRef.current?.style.setProperty('--mm-content-scroll-height', `${contentScrollHeight}px`);
+          appRootRef.current?.style.setProperty('--mm-content-dock-clearance', `${dockReserve}px`);
+          appRootRef.current?.style.setProperty('--mm-dock-height', `${dockHeightCss}px`);
+          const signature = [
+              viewportWidth,
+              viewportHeight,
+              uiScale,
+              headerHeight,
+              dockHeight,
+              subheaderHeight,
+              contentAvailableHeight,
+              mainClientHeight,
+              mainScrollHeight,
+              mainContentHeight,
+              visibleContentHeight,
+              scrollNeeded ? 1 : 0,
+              offenders.map(offender => `${offender.selector}:${offender.clientHeight}/${offender.scrollHeight}`).join('|')
+          ].join(':');
+          if (layoutMetricsSignatureRef.current === signature) return;
+          layoutMetricsSignatureRef.current = signature;
+
+          setLayoutMetrics({
+              viewportWidth,
+              viewportHeight,
+              headerHeight,
+              dockHeight,
+              subheaderHeight,
+              contentAvailableHeight,
+              mainClientHeight,
+              mainScrollHeight,
+              offenders
+          });
+
+          console.info(`[layout] viewport ${viewportWidth}x${viewportHeight} scale=${uiScale.toFixed(3)}`);
+          console.info(`[layout] header=${headerHeight} dock=${dockHeight} subheader=${subheaderHeight}`);
+          console.info(`[layout] contentAvail=${contentAvailableHeight} visible=${visibleContentHeight}`);
+          console.info(
+              `[layout] main client=${mainClientHeight} scroll=${mainScrollHeight} content=${mainContentHeight} needScroll=${scrollNeeded}`
+          );
+          console.info(
+              `[layout] offenders: ${
+                  offenders.length
+                      ? offenders
+                            .map(offender => `${offender.selector}(${offender.clientHeight}/${offender.scrollHeight})`)
+                            .join(' | ')
+                      : 'none'
+              }`
+          );
+      };
+
+      updateMetrics();
+
+      const onResize = () => window.requestAnimationFrame(updateMetrics);
+      window.addEventListener('resize', onResize);
+      window.visualViewport?.addEventListener('resize', onResize);
+
+      const resizeObserver =
+          typeof ResizeObserver !== 'undefined'
+              ? new ResizeObserver(() => window.requestAnimationFrame(updateMetrics))
+              : null;
+      const headerNode = document.querySelector('[data-mm-global-header="true"]') as HTMLElement | null;
+      const dockNode = document.querySelector('[data-mm-desktop-dock-shell="true"]') as HTMLElement | null;
+      if (headerNode) resizeObserver?.observe(headerNode);
+      if (dockNode) resizeObserver?.observe(dockNode);
+      if (mainContentRef.current) resizeObserver?.observe(mainContentRef.current);
+      const subheaderNode = findVisibleSubheader();
+      if (subheaderNode) resizeObserver?.observe(subheaderNode);
+
+      const mutationObserver =
+          typeof MutationObserver !== 'undefined'
+              ? new MutationObserver(() => window.requestAnimationFrame(updateMetrics))
+              : null;
+      if (mainContentRef.current && mutationObserver) {
+          mutationObserver.observe(mainContentRef.current, {
+              childList: true,
+              subtree: true,
+              attributes: true
+          });
+      }
+
+      return () => {
+          window.removeEventListener('resize', onResize);
+          window.visualViewport?.removeEventListener('resize', onResize);
+          resizeObserver?.disconnect();
+          mutationObserver?.disconnect();
+          const mainNode = mainContentRef.current;
+          if (mainNode) {
+              mainNode.style.overflowY = '';
+              mainNode.removeAttribute('data-mm-scroll-needed');
+          }
+      };
+  }, [currentView, isCompactHeight, isMobile, shouldUseAppShellLayout]);
   const [cryptoStatus, setCryptoStatus] = useState<'ready' | 'missing' | 'error'>('ready');
   const cryptoGuardLogged = useRef(false);
   const checkoutTriggeredRef = useRef(false);
@@ -384,6 +734,7 @@ const AppInner: React.FC = () => {
       accounts: null as null | (() => void),
       expenses: null as null | (() => void),
       incomes: null as null | (() => void),
+      transfers: null as null | (() => void),
       creditCards: null as null | (() => void),
       yields: null as null | (() => void),
       agenda: null as null | (() => void)
@@ -471,7 +822,6 @@ const AppInner: React.FC = () => {
   const PWA_INSTALL_FLAG_KEY = 'pwa_installed';
   const PWA_DISMISSED_AT_KEY = 'pwa_install_dismissed_at';
   const PWA_LEGACY_DISMISS_KEY = 'pwa_install_dismissed_v1';
-  const PWA_POST_ONBOARDING_KEY = 'pwa_install_post_onboarding_shown';
   const PWA_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
   const DAY_MS = 24 * 60 * 60 * 1000;
   const TRIAL_NOTICE_KEY = 'meumei_trial_notice_last_shown';
@@ -542,24 +892,71 @@ const AppInner: React.FC = () => {
     }
   };
 
-  const readPostOnboardingShown = () => {
+  const setDismissedNow = () => {
     try {
-      return localStorage.getItem(PWA_POST_ONBOARDING_KEY) === '1';
+      localStorage.setItem(PWA_DISMISSED_AT_KEY, String(Date.now()));
+    } catch {}
+  };
+
+  const readFirstAccessInstallDecision = (scopeId?: string | null) => {
+    try {
+      return localStorage.getItem(getScopedFirstAccessKey(FIRST_ACCESS_INSTALL_DECISION_PREFIX, scopeId)) === '1';
     } catch {
       return false;
     }
   };
 
-  const setPostOnboardingShown = () => {
+  const persistFirstAccessInstallDecision = (scopeId?: string | null) => {
     try {
-      localStorage.setItem(PWA_POST_ONBOARDING_KEY, '1');
-    } catch {}
+      localStorage.setItem(getScopedFirstAccessKey(FIRST_ACCESS_INSTALL_DECISION_PREFIX, scopeId), '1');
+    } catch {
+      // no-op
+    }
   };
 
-  const setDismissedNow = () => {
+  const readFirstAccessTourDecision = (scopeId?: string | null) => {
     try {
-      localStorage.setItem(PWA_DISMISSED_AT_KEY, String(Date.now()));
-    } catch {}
+      const raw = localStorage.getItem(getScopedFirstAccessKey(FIRST_ACCESS_TOUR_DECISION_PREFIX, scopeId));
+      if (raw === 'accepted' || raw === 'declined') return raw;
+      return 'pending';
+    } catch {
+      return 'pending';
+    }
+  };
+
+  const persistFirstAccessTourDecision = (
+    value: 'accepted' | 'declined',
+    scopeId?: string | null
+  ) => {
+    try {
+      localStorage.setItem(getScopedFirstAccessKey(FIRST_ACCESS_TOUR_DECISION_PREFIX, scopeId), value);
+    } catch {
+      // no-op
+    }
+  };
+
+  const completeInstallDecisionStep = (reason: string) => {
+    if (installDecisionCompleted) return;
+    setInstallDecisionCompleted(true);
+    persistFirstAccessInstallDecision(firstAccessScopeId);
+    console.log('[first-access]', {
+      step: 'install',
+      status: 'completed',
+      reason,
+      scopeId: firstAccessScopeId || 'default'
+    });
+  };
+
+  const applyTourDecision = (value: 'accepted' | 'declined', reason: string) => {
+    setTourDecision(value);
+    persistFirstAccessTourDecision(value, firstAccessScopeId);
+    setIsTourDecisionOpen(false);
+    console.log('[first-access]', {
+      step: 'tour_decision',
+      status: value,
+      reason,
+      scopeId: firstAccessScopeId || 'default'
+    });
   };
 
   const updateFlowState = (
@@ -1312,6 +1709,46 @@ const AppInner: React.FC = () => {
   const isMasterUser =
     authUser?.uid === MASTER_UID ||
     (authUser?.email ? authUser.email.trim().toLowerCase() === MASTER_EMAIL : false);
+
+  useEffect(() => {
+    if (!authUser || !isMasterUser) {
+      setBugNotificationCount(0);
+      return;
+    }
+    let cancelled = false;
+    const loadBugNotifications = async () => {
+      try {
+        const result = await masterFeedbackService.listUserFeedback({
+          status: 'new',
+          type: 'all',
+          limit: 200
+        });
+        if (!cancelled && result.ok) {
+          const total = typeof result.total === 'number' ? result.total : result.items?.length || 0;
+          setBugNotificationCount(Math.max(0, total));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('[feedback] header_badge_load_failed', error);
+        }
+      }
+    };
+
+    void loadBugNotifications();
+    const intervalId = window.setInterval(() => {
+      void loadBugNotifications();
+    }, 30_000);
+    const onFocus = () => {
+      void loadBugNotifications();
+    };
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [authUser, isMasterUser]);
   const buildLogRef = useRef(false);
   useEffect(() => {
       gateRunRef.current = null;
@@ -1459,6 +1896,7 @@ const AppInner: React.FC = () => {
   };
 
   const handleInstallBannerPrimary = async () => {
+    completeInstallDecisionStep('banner_primary');
     const promptEvent = deferredPromptRef.current;
     if (!promptEvent) {
       setInstallHelpOpen(true);
@@ -1486,9 +1924,29 @@ const AppInner: React.FC = () => {
   };
 
   const handleInstallBannerDismiss = () => {
+    completeInstallDecisionStep('banner_dismiss');
     setDismissedNow();
     setInstallBannerVisible(false);
     console.log('[pwa] install_banner_hidden', { reason: 'dismissed' });
+  };
+
+  const handleInstallStepInstall = async () => {
+    completeInstallDecisionStep('modal_install');
+    if (pwaInstallMode !== 'installable') {
+      closePwaModal();
+      return;
+    }
+    try {
+      await triggerInstall();
+    } catch (error) {
+      console.error('[pwa] install_modal_error', error);
+      closePwaModal();
+    }
+  };
+
+  const handleInstallStepClose = () => {
+    completeInstallDecisionStep('modal_skip');
+    closePwaModal();
   };
 
   useEffect(() => {
@@ -1508,9 +1966,11 @@ const AppInner: React.FC = () => {
 
   // DATA STATE
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const accountsRef = useRef<Account[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [expensesRevision, setExpensesRevision] = useState(0);
   const [incomes, setIncomes] = useState<Income[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [yields, setYields] = useState<YieldRecord[]>([]);
   const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
@@ -1521,8 +1981,13 @@ const AppInner: React.FC = () => {
     isOpen: boolean;
     entityTypes?: AuditEntityType[] | null;
   }>({ isOpen: false, entityTypes: null });
+  const openAuditPanel = useCallback((entityTypes: AuditEntityType[] | null = null) => {
+    setAuditModalState({ isOpen: true, entityTypes });
+    setCurrentView(ViewState.AUDIT);
+  }, [setCurrentView]);
   const [licenseMeta, setLicenseMeta] = useState<LicenseRecord | null>(null);
   const [licenseCryptoEpoch, setLicenseCryptoEpoch] = useState<number | null>(null);
+  const balanceRepairInFlightRef = useRef(false);
 
   const applyExpenses = (next: Expense[] | ((prev: Expense[]) => Expense[])) => {
     setExpenses(prev => {
@@ -1531,18 +1996,80 @@ const AppInner: React.FC = () => {
     });
     setExpensesRevision(prev => prev + 1);
   };
+
+  const applyAccounts = useCallback((next: Account[] | ((prev: Account[]) => Account[])) => {
+    setAccounts(prev => {
+      const resolved = typeof next === 'function' ? next(prev) : next;
+      const normalized = [...resolved];
+      accountsRef.current = normalized;
+      return normalized;
+    });
+  }, []);
+
+  useEffect(() => {
+    accountsRef.current = accounts;
+  }, [accounts]);
   
-  // Local Settings (kept in LS for simplicity as they are preference-based)
-  const [accountTypes, setAccountTypes] = useState<string[]>(() => {
-    try {
-        const saved = localStorage.getItem('meumei_account_types');
-        const parsed = saved ? JSON.parse(saved) : [];
-        const merged = [...DEFAULT_ACCOUNT_TYPES, ...(Array.isArray(parsed) ? parsed : [])];
-        return Array.from(new Set(merged.map((item) => String(item).trim())))
-            .filter(Boolean)
-            .slice(0, 20);
-    } catch { return DEFAULT_ACCOUNT_TYPES.slice(0, 20); }
-  });
+  const normalizeAccountTypes = (raw?: unknown): string[] => {
+    if (!Array.isArray(raw)) return [];
+    const result: string[] = [];
+    const seen = new Set<string>();
+    raw.forEach((item) => {
+      const value = String(item ?? '').trim();
+      if (!value) return;
+      const key = value.toLowerCase();
+      if (seen.has(key)) return;
+      if (result.length >= 20) return;
+      seen.add(key);
+      result.push(value);
+    });
+    return result;
+  };
+
+  const isLegacyDefaultAccountTypes = (items: string[]): boolean => {
+    const defaultTypes = normalizeAccountTypes(DEFAULT_ACCOUNT_TYPES);
+    if (items.length !== defaultTypes.length) return false;
+    const currentSignature = [...items].map((item) => item.toLowerCase()).sort().join('|');
+    const defaultSignature = [...defaultTypes].map((item) => item.toLowerCase()).sort().join('|');
+    return currentSignature === defaultSignature;
+  };
+
+  // Local settings per user (novos usuários iniciam vazio)
+  const [accountTypes, setAccountTypes] = useState<string[]>([]);
+  const accountTypesRef = useRef<string[]>([]);
+  const tourAccountTypesSnapshotRef = useRef<string[] | null>(null);
+
+  useEffect(() => {
+    accountTypesRef.current = accountTypes;
+  }, [accountTypes]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleTourStarted = () => {
+      if (tourAccountTypesSnapshotRef.current !== null) return;
+      tourAccountTypesSnapshotRef.current = [...accountTypesRef.current];
+    };
+
+    const restoreTourAccountTypes = () => {
+      if (tourAccountTypesSnapshotRef.current === null) return;
+      const snapshot = [...tourAccountTypesSnapshotRef.current];
+      tourAccountTypesSnapshotRef.current = null;
+      setAccountTypes(snapshot);
+    };
+
+    window.addEventListener('mm:first-access-tour-started', handleTourStarted as EventListener);
+    window.addEventListener('mm:first-access-tour-clear-data', restoreTourAccountTypes as EventListener);
+    window.addEventListener('mm:first-access-tour-ended', restoreTourAccountTypes as EventListener);
+    window.addEventListener('mm:first-access-tour-restart', restoreTourAccountTypes as EventListener);
+
+    return () => {
+      window.removeEventListener('mm:first-access-tour-started', handleTourStarted as EventListener);
+      window.removeEventListener('mm:first-access-tour-clear-data', restoreTourAccountTypes as EventListener);
+      window.removeEventListener('mm:first-access-tour-ended', restoreTourAccountTypes as EventListener);
+      window.removeEventListener('mm:first-access-tour-restart', restoreTourAccountTypes as EventListener);
+    };
+  }, []);
 
   const [expenseCategories, setExpenseCategories] = useState<string[]>(DEFAULT_EXPENSE_CATEGORIES);
   const [incomeCategories, setIncomeCategories] = useState<string[]>(DEFAULT_INCOME_CATEGORIES);
@@ -1644,6 +2171,8 @@ const AppInner: React.FC = () => {
         return '#f43f5e';
       case ViewState.REPORTS:
         return '#64748b';
+      case ViewState.AUDIT:
+        return '#94a3b8';
       case ViewState.DAS:
         return '#14b8a6';
       case ViewState.AGENDA:
@@ -1662,6 +2191,78 @@ const AppInner: React.FC = () => {
     root.style.setProperty('--mm-view-accent-strong', viewAccent);
   }, [viewAccent]);
 
+  const desktopDockNavigationOrder = useMemo<ViewState[]>(
+    () => [
+      ViewState.DASHBOARD,
+      ViewState.ACCOUNTS,
+      ViewState.INCOMES,
+      ViewState.FIXED_EXPENSES,
+      ViewState.VARIABLE_EXPENSES,
+      ViewState.PERSONAL_EXPENSES,
+      ViewState.YIELDS,
+      ViewState.INVOICES,
+      ViewState.REPORTS,
+      ViewState.AUDIT,
+      ViewState.DAS,
+      ViewState.AGENDA
+    ],
+    []
+  );
+
+  const mobileDockNavigationOrder = useMemo<ViewState[]>(
+    () => [
+      ViewState.DASHBOARD,
+      ViewState.LAUNCHES,
+      ViewState.ACCOUNTS,
+      ViewState.YIELDS,
+      ViewState.INVOICES,
+      ViewState.REPORTS,
+      ViewState.AGENDA
+    ],
+    []
+  );
+
+  const navigateDockByDirection = useCallback(
+    (
+      direction: 1 | -1,
+      options?: { wrap?: boolean; source?: 'keyboard' | 'swipe' }
+    ) => {
+      if (currentView === ViewState.LOGIN) return false;
+      const dockOrder = isMobile ? mobileDockNavigationOrder : desktopDockNavigationOrder;
+      const currentIndex = dockOrder.indexOf(currentView);
+      if (currentIndex === -1) return false;
+
+      let nextIndex = currentIndex + direction;
+      if (options?.wrap) {
+        nextIndex = (nextIndex + dockOrder.length) % dockOrder.length;
+      } else if (nextIndex < 0 || nextIndex >= dockOrder.length) {
+        return false;
+      }
+
+      const nextView = dockOrder[nextIndex];
+      if (!nextView || nextView === currentView) return false;
+
+      if (auditModalState.isOpen) {
+        setAuditModalState(prev => ({ ...prev, isOpen: false }));
+      }
+      if (isMobile && options?.source === 'swipe' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('mm:mobile-dock-click'));
+      }
+
+      setCurrentView(nextView);
+      return true;
+    },
+    [
+      currentView,
+      isMobile,
+      mobileDockNavigationOrder,
+      desktopDockNavigationOrder,
+      auditModalState.isOpen,
+      setAuditModalState,
+      setCurrentView
+    ]
+  );
+
   const canAccessSettings = Boolean(currentUser);
   const mobileQuickAccessItems = useMemo(
     () => [
@@ -1670,49 +2271,56 @@ const AppInner: React.FC = () => {
         label: 'Início',
         shortLabel: 'Início',
         icon: <Home size={18} className="text-indigo-500 dark:text-indigo-400" />,
-        onClick: () => setCurrentView(ViewState.DASHBOARD)
+        onClick: () => setCurrentView(ViewState.DASHBOARD),
+        isActive: currentView === ViewState.DASHBOARD
       },
       {
         id: 'launches',
         label: 'Lançamentos',
         shortLabel: 'Lanç.',
         icon: <ArrowDownUp size={18} className="text-cyan-500 dark:text-cyan-400" />,
-        onClick: () => setCurrentView(ViewState.LAUNCHES)
+        onClick: () => setCurrentView(ViewState.LAUNCHES),
+        isActive: currentView === ViewState.LAUNCHES
       },
       {
         id: 'accounts',
         label: 'Contas Bancárias',
         shortLabel: 'Contas',
         icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
-        onClick: () => setCurrentView(ViewState.ACCOUNTS)
+        onClick: () => setCurrentView(ViewState.ACCOUNTS),
+        isActive: currentView === ViewState.ACCOUNTS
       },
       {
         id: 'yields',
         label: 'Rendimentos',
         shortLabel: 'Rend.',
         icon: <TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />,
-        onClick: () => setCurrentView(ViewState.YIELDS)
+        onClick: () => setCurrentView(ViewState.YIELDS),
+        isActive: currentView === ViewState.YIELDS
       },
       {
         id: 'invoices',
         label: 'Faturas',
         shortLabel: 'Faturas',
         icon: <CreditCardIcon size={18} className="text-rose-500 dark:text-rose-400" />,
-        onClick: () => setCurrentView(ViewState.INVOICES)
+        onClick: () => setCurrentView(ViewState.INVOICES),
+        isActive: currentView === ViewState.INVOICES
       },
       {
         id: 'reports',
         label: 'Relatórios',
         shortLabel: 'Relatórios',
         icon: <ReportsBarsIcon size={18} />,
-        onClick: () => setCurrentView(ViewState.REPORTS)
+        onClick: () => setCurrentView(ViewState.REPORTS),
+        isActive: currentView === ViewState.REPORTS
       },
       {
         id: 'agenda',
         label: 'Agenda',
         shortLabel: 'Agenda',
         icon: <CalendarDays size={18} className="text-sky-500 dark:text-sky-400" />,
-        onClick: () => setCurrentView(ViewState.AGENDA)
+        onClick: () => setCurrentView(ViewState.AGENDA),
+        isActive: currentView === ViewState.AGENDA
       }
     ],
     [currentView, setCurrentView, resolveExpenseColor, fixedExpenseLabel, variableExpenseLabel, personalExpenseLabel]
@@ -1814,7 +2422,10 @@ const AppInner: React.FC = () => {
         label: 'Painel de Controle',
         shortLabel: 'Controle',
         icon: <Shield size={28} className="text-amber-500 dark:text-amber-400" />,
-        onClick: () => setCurrentView(ViewState.MASTER),
+        onClick: () => {
+          setMasterInitialMode(null);
+          setCurrentView(ViewState.MASTER);
+        },
         isActive: currentView === ViewState.MASTER,
         showWhen: isMasterUser
       },
@@ -1823,8 +2434,8 @@ const AppInner: React.FC = () => {
         label: 'Auditoria',
         shortLabel: 'Auditoria',
         icon: <History size={28} className="text-zinc-500 dark:text-zinc-400" />,
-        onClick: () => setAuditModalState({ isOpen: true, entityTypes: null }),
-        isActive: auditModalState.isOpen
+        onClick: () => openAuditPanel(null),
+        isActive: currentView === ViewState.AUDIT
       },
       {
         id: 'calculator',
@@ -1835,7 +2446,7 @@ const AppInner: React.FC = () => {
         isActive: isCalculatorOpen
       }
     ],
-    [currentView, setCurrentView, resolveExpenseColor, auditModalState.isOpen, isCalculatorOpen, setAuditModalState, setIsCalculatorOpen, isMasterUser]
+    [currentView, setCurrentView, resolveExpenseColor, openAuditPanel, isCalculatorOpen, setIsCalculatorOpen, isMasterUser]
   );
 
   const [viewDate, setViewDate] = useState<Date>(new Date());
@@ -1860,11 +2471,16 @@ const AppInner: React.FC = () => {
     isOpen: isPwaInstallOpen,
     isInstalled: isPwaInstalled,
     mode: pwaInstallMode,
-    openModalAutoIfEligible,
     openModalManual,
     closePwaModal,
     triggerInstall
   } = usePwaInstallPrompt();
+  const isInstallStepModalVisible =
+    isPwaInstallOpen &&
+    onboardingCompleted &&
+    !isTourDecisionOpen &&
+    !isLoginRoute &&
+    !isOnboardingRoute;
 
   useEffect(() => {
     const prev = prevViewRef.current;
@@ -1882,6 +2498,12 @@ const AppInner: React.FC = () => {
   }, [currentView]);
 
   useEffect(() => {
+    if (currentView === ViewState.AUDIT) return;
+    if (!auditModalState.isOpen) return;
+    setAuditModalState(prev => ({ ...prev, isOpen: false }));
+  }, [auditModalState.isOpen, currentView]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (event.defaultPrevented) return;
@@ -1891,14 +2513,18 @@ const AppInner: React.FC = () => {
       }
       if (auditModalState.isOpen) {
         setAuditModalState(prev => ({ ...prev, isOpen: false }));
+        if (currentView === ViewState.AUDIT) {
+          const previous = viewHistoryRef.current.pop();
+          setCurrentView(previous || ViewState.DASHBOARD);
+        }
         return;
       }
       if (installHelpOpen) {
         setInstallHelpOpen(false);
         return;
       }
-      if (isPwaInstallOpen) {
-        closePwaModal();
+      if (isInstallStepModalVisible) {
+        handleInstallStepClose();
         return;
       }
       if (document.querySelector('[data-modal-root="true"]')) {
@@ -1912,12 +2538,12 @@ const AppInner: React.FC = () => {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [
-    closePwaModal,
     currentView,
+    handleInstallStepClose,
     installHelpOpen,
     auditModalState.isOpen,
-    isCalculatorOpen,
-    isPwaInstallOpen
+    isInstallStepModalVisible,
+    isCalculatorOpen
   ]);
 
   useEffect(() => {
@@ -1933,57 +2559,17 @@ const AppInner: React.FC = () => {
       }
       if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
       if (currentView === ViewState.LOGIN) return;
-
-      const baseDockOrder: Array<{ id: string; view?: ViewState; audit?: boolean }> = [
-        { id: 'home', view: ViewState.DASHBOARD },
-        { id: 'accounts', view: ViewState.ACCOUNTS },
-        { id: 'incomes', view: ViewState.INCOMES },
-        { id: 'fixed_expenses', view: ViewState.FIXED_EXPENSES },
-        { id: 'variable_expenses', view: ViewState.VARIABLE_EXPENSES },
-        { id: 'personal_expenses', view: ViewState.PERSONAL_EXPENSES },
-        { id: 'yields', view: ViewState.YIELDS },
-        { id: 'invoices', view: ViewState.INVOICES },
-        { id: 'reports', view: ViewState.REPORTS },
-        { id: 'das', view: ViewState.DAS },
-        { id: 'agenda', view: ViewState.AGENDA },
-        ...(isMasterUser ? [{ id: 'master', view: ViewState.MASTER }] : []),
-        { id: 'audit', audit: true }
-      ];
-      const mobileDockOrder: Array<{ id: string; view?: ViewState }> = [
-        { id: 'home', view: ViewState.DASHBOARD },
-        { id: 'accounts', view: ViewState.ACCOUNTS },
-        { id: 'launches', view: ViewState.LAUNCHES },
-        { id: 'yields', view: ViewState.YIELDS },
-        { id: 'invoices', view: ViewState.INVOICES },
-        { id: 'reports', view: ViewState.REPORTS },
-        { id: 'agenda', view: ViewState.AGENDA }
-      ];
-      const dockOrder = isMobile ? mobileDockOrder : baseDockOrder;
-
-      const auditIndex = dockOrder.findIndex(item => item.audit);
-      const currentIndex = auditModalState.isOpen
-        ? auditIndex
-        : dockOrder.findIndex(item => currentView === item.view);
-      if (currentIndex === -1) return;
       const direction = event.key === 'ArrowRight' ? 1 : -1;
-      const nextIndex = (currentIndex + direction + dockOrder.length) % dockOrder.length;
-      const nextItem = dockOrder[nextIndex];
+      const navigated = navigateDockByDirection(direction, {
+        wrap: true,
+        source: 'keyboard'
+      });
+      if (!navigated) return;
       event.preventDefault();
-
-      if (nextItem.audit) {
-        setAuditModalState({ isOpen: true, entityTypes: null });
-        return;
-      }
-      if (auditModalState.isOpen) {
-        setAuditModalState(prev => ({ ...prev, isOpen: false }));
-      }
-      if (nextItem.view) {
-        setCurrentView(nextItem.view);
-      }
     };
     document.addEventListener('keydown', handleShortcut);
     return () => document.removeEventListener('keydown', handleShortcut);
-  }, [currentView, setCurrentView, auditModalState.isOpen, setAuditModalState, isMobile, isMasterUser]);
+  }, [currentView, navigateDockByDirection]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2004,48 +2590,152 @@ const AppInner: React.FC = () => {
   }, [authUser, isLandingRoute, theme]);
 
   useEffect(() => {
-    if (isBetaHost) {
-      console.log('[pwa] auto_modal_skipped', { reason: 'banner_enabled', path: currentPath });
+    if (!firstAccessScopeId) {
+      setInstallDecisionCompleted(false);
+      setTourDecision('pending');
+      setIsTourDecisionOpen(false);
+      setTourRestartToken(0);
       return;
     }
-    const isAppRoute = currentPath.startsWith('/app');
-    const eligible = !isLandingRoute && (isLoginRoute || isAppRoute);
-    if (!eligible) {
-      console.log('[pwa] install_prompt_blocked', { path: currentPath });
+    const installDone = readFirstAccessInstallDecision(firstAccessScopeId);
+    const storedTourDecision = readFirstAccessTourDecision(firstAccessScopeId);
+    setInstallDecisionCompleted(installDone);
+    setTourDecision(storedTourDecision);
+    setIsTourDecisionOpen(false);
+    console.log('[first-access]', {
+      step: 'hydrate',
+      scopeId: firstAccessScopeId,
+      installDone,
+      tourDecision: storedTourDecision
+    });
+  }, [firstAccessScopeId]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (!onboardingCompleted) return;
+    if (installDecisionCompleted) return;
+    if (!firstAccessScopeId) return;
+    if (isPwaInstalled || isStandalone || readInstalledFlag()) {
+      completeInstallDecisionStep('already_installed');
+    }
+  }, [
+    authUser,
+    firstAccessScopeId,
+    installDecisionCompleted,
+    isPwaInstalled,
+    isStandalone,
+    onboardingCompleted
+  ]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (!onboardingCompleted) return;
+    if (installDecisionCompleted) return;
+    if (isOnboardingRoute || isLoginRoute || isUpgradeRoute || isTermsRoute || isPrivacyRoute || isRefundRoute) {
       return;
     }
-    if (isLoginRoute && authUser) {
-      console.log('[pwa] install_prompt_blocked', {
-        path: currentPath,
-        reason: 'login_with_auth'
-      });
-      return;
-    }
-    if (!onboardingCompleted) {
-      console.log('[pwa] auto_modal_skipped', { reason: 'onboarding_incomplete', path: currentPath });
-      return;
-    }
-    if (readPostOnboardingShown()) {
-      console.log('[pwa] auto_modal_skipped', { reason: 'post_onboarding_shown', path: currentPath });
-      return;
-    }
-    setPostOnboardingShown();
-    console.log('[pwa] install_prompt_eligible', {
-      path: currentPath,
-      auth: Boolean(authUser)
+    if (isPwaInstallOpen) return;
+    console.log('[first-access]', {
+      step: 'install',
+      status: 'request_open',
+      path: currentPath
     });
     const timer = window.setTimeout(() => {
-      openModalAutoIfEligible();
-    }, 0);
+      openModalManual();
+    }, 120);
     return () => window.clearTimeout(timer);
   }, [
     authUser,
     currentPath,
-    isBetaHost,
-    isLandingRoute,
+    installDecisionCompleted,
     isLoginRoute,
+    isOnboardingRoute,
+    isPrivacyRoute,
+    isPwaInstallOpen,
+    isRefundRoute,
+    isTermsRoute,
+    isUpgradeRoute,
     onboardingCompleted,
-    openModalAutoIfEligible
+    openModalManual
+  ]);
+
+  useEffect(() => {
+    if (isMobile) {
+      setIsTourDecisionOpen(false);
+      return;
+    }
+    if (!authUser || !onboardingCompleted) {
+      setIsTourDecisionOpen(false);
+      return;
+    }
+    if (!installDecisionCompleted) {
+      setIsTourDecisionOpen(false);
+      return;
+    }
+    if (tourDecision !== 'pending') {
+      setIsTourDecisionOpen(false);
+      return;
+    }
+    if (isInstallStepModalVisible) {
+      setIsTourDecisionOpen(false);
+      return;
+    }
+    if (isOnboardingRoute || isLoginRoute || isUpgradeRoute || isTermsRoute || isPrivacyRoute || isRefundRoute) {
+      setIsTourDecisionOpen(false);
+      return;
+    }
+    setIsTourDecisionOpen(true);
+    console.log('[first-access]', {
+      step: 'tour_decision',
+      status: 'open',
+      company: companyInfo?.name || null
+    });
+  }, [
+    authUser,
+    companyInfo?.name,
+    installDecisionCompleted,
+    isLoginRoute,
+    isInstallStepModalVisible,
+    isMobile,
+    isOnboardingRoute,
+    isPrivacyRoute,
+    isRefundRoute,
+    isTermsRoute,
+    isUpgradeRoute,
+    onboardingCompleted,
+    tourDecision
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleTourRestart = () => {
+      if (!authUser || !onboardingCompleted || isMobile) return;
+      if (!installDecisionCompleted) {
+        completeInstallDecisionStep('tour_restart');
+      }
+      setIsTourDecisionOpen(false);
+      setTourDecision('accepted');
+      persistFirstAccessTourDecision('accepted', firstAccessScopeId);
+      setCurrentView(ViewState.DASHBOARD);
+      setTourRestartToken(prev => prev + 1);
+      console.log('[first-access]', {
+        step: 'tour_restart',
+        status: 'forced_start',
+        scopeId: firstAccessScopeId || 'default'
+      });
+    };
+
+    window.addEventListener('mm:first-access-tour-restart', handleTourRestart as EventListener);
+    return () => {
+      window.removeEventListener('mm:first-access-tour-restart', handleTourRestart as EventListener);
+    };
+  }, [
+    authUser,
+    firstAccessScopeId,
+    installDecisionCompleted,
+    isMobile,
+    onboardingCompleted
   ]);
 
   const isIosDevice = useMemo(() => {
@@ -2111,6 +2801,17 @@ const AppInner: React.FC = () => {
     }
     const isAppRoute = currentPath.startsWith('/app');
     const eligibleRoute = !isLandingRoute && (isLoginRoute || isAppRoute);
+    if (onboardingCompleted && !installDecisionCompleted) {
+      if (installBannerVisible) {
+        console.log('[pwa] install_banner_hidden', {
+          reason: 'first_access_install_step_active',
+          path: currentPath
+        });
+      }
+      setInstallBannerVisible(false);
+      setInstallHelpOpen(false);
+      return;
+    }
     const installed = pwaInstalledFlag || readInstalledFlag();
     const standaloneMode = isStandalone || installed;
     const dismissedAt = readDismissedAt();
@@ -2150,11 +2851,13 @@ const AppInner: React.FC = () => {
   }, [
     currentPath,
     deferredPromptEvent,
+    installDecisionCompleted,
     installBannerVisible,
     isBetaHost,
     isLandingRoute,
     isLoginRoute,
     isStandalone,
+    onboardingCompleted,
     pwaInstalledFlag
   ]);
 
@@ -2212,6 +2915,7 @@ const AppInner: React.FC = () => {
     stop('accounts');
     stop('expenses');
     stop('incomes');
+    stop('transfers');
     stop('creditCards');
     stop('yields');
     console.info('[reset] unsubscribe:done', { stopped });
@@ -2243,14 +2947,15 @@ const AppInner: React.FC = () => {
       });
       await clearClientStorage();
       console.info('[reset] storage:cleared', { uid });
-      setAccounts([]);
+      applyAccounts([]);
       applyExpenses([]);
       setIncomes([]);
+      setTransfers([]);
       setCreditCards([]);
       setCompanyInfo(DEFAULT_COMPANY_INFO);
       setLicenseMeta(null);
       setLicenseCryptoEpoch(null);
-      setAccountTypes(DEFAULT_ACCOUNT_TYPES);
+      setAccountTypes([]);
       setExpenseCategories([]);
       setIncomeCategories([]);
       setViewDate(new Date());
@@ -2321,6 +3026,9 @@ const AppInner: React.FC = () => {
       setPreferencesReady(false);
       try {
           const pref = await preferencesService.getPreferences(uid);
+          const scopedAccountTypesKey = getScopedAccountTypesStorageKey(uid);
+          let resolvedAccountTypes: string[] | null = null;
+
           if (pref.theme) {
               setTheme(pref.theme as ThemePreference);
               try {
@@ -2336,6 +3044,52 @@ const AppInner: React.FC = () => {
           if (pref.expenseTypeOptions && pref.expenseTypeOptions.length > 0) {
               setExpenseTypeOptions(normalizeExpenseTypeOptions(pref.expenseTypeOptions));
           }
+
+          if (Array.isArray(pref.accountTypes)) {
+              resolvedAccountTypes = normalizeAccountTypes(pref.accountTypes);
+          }
+
+          if (resolvedAccountTypes === null) {
+              try {
+                  const scopedRaw = localStorage.getItem(scopedAccountTypesKey);
+                  if (scopedRaw) {
+                      resolvedAccountTypes = normalizeAccountTypes(JSON.parse(scopedRaw));
+                  }
+              } catch (error) {
+                  console.error('[prefs] account_types_scoped_parse_error', {
+                      message: (error as any)?.message || error
+                  });
+              }
+          }
+
+          if (resolvedAccountTypes === null) {
+              try {
+                  const legacyRaw = localStorage.getItem(LEGACY_ACCOUNT_TYPES_STORAGE_KEY);
+                  if (legacyRaw) {
+                      const migrated = normalizeAccountTypes(JSON.parse(legacyRaw));
+                      const shouldMigrate = migrated.length > 0 && !isLegacyDefaultAccountTypes(migrated);
+                      if (shouldMigrate) {
+                          resolvedAccountTypes = migrated;
+                          localStorage.setItem(scopedAccountTypesKey, JSON.stringify(migrated));
+                          preferencesService
+                              .setAccountTypes(uid, migrated)
+                              .catch((error) => {
+                                  console.error('[prefs] account_types_migration_save_error', {
+                                      message: (error as any)?.message || error
+                                  });
+                              });
+                      } else {
+                          resolvedAccountTypes = [];
+                      }
+                  }
+              } catch (error) {
+                  console.error('[prefs] account_types_legacy_parse_error', {
+                      message: (error as any)?.message || error
+                  });
+              }
+          }
+
+          setAccountTypes(resolvedAccountTypes ?? []);
       } catch (error) {
           console.error('[prefs] error', { step: 'load-apply', message: (error as any)?.message });
       } finally {
@@ -2343,6 +3097,15 @@ const AppInner: React.FC = () => {
           setPreferencesReady(true);
       }
   };
+
+  useEffect(() => {
+      const uid = authUser?.uid || null;
+      if (!uid) return;
+      if (!onboardingSettings || onboardingSettings.onboardingCompleted) return;
+      if (accounts.length > 0) return;
+      if (!isLegacyDefaultAccountTypes(accountTypes)) return;
+      setAccountTypes([]);
+  }, [accountTypes, accounts.length, authUser?.uid, onboardingSettings]);
 
   useEffect(() => {
       let isActive = true;
@@ -2967,6 +3730,10 @@ const AppInner: React.FC = () => {
       currentView === ViewState.INCOMES ||
       currentView === ViewState.REPORTS ||
       currentView === ViewState.LAUNCHES;
+  const needsTransfers =
+      currentView === ViewState.DASHBOARD ||
+      currentView === ViewState.ACCOUNTS ||
+      currentView === ViewState.REPORTS;
   const needsCreditCards =
       currentView === ViewState.DASHBOARD ||
       currentView === ViewState.INVOICES ||
@@ -2990,7 +3757,7 @@ const AppInner: React.FC = () => {
           { licenseEpoch: licenseCryptoEpoch },
           (items) => {
               console.info('[realtime][accounts] snapshot', { count: items.length });
-              setAccounts(items);
+              applyAccounts(items);
               updateAdminMetricsIfReady(licenseId, { accounts: items.length });
           },
           (error) => {
@@ -3070,6 +3837,35 @@ const AppInner: React.FC = () => {
           console.info('[realtime][incomes] unsubscribe', { licenseId, view: currentView });
       };
   }, [currentUser?.licenseId, licenseCryptoEpoch, needsIncomes, currentView]);
+
+  useEffect(() => {
+      const licenseId = currentUser?.licenseId;
+      if (!licenseId || !licenseCryptoEpoch || !needsTransfers) return;
+      console.info('[realtime][transfers] subscribe_start', { licenseId, view: currentView });
+      const unsubscribe = dataService.subscribeTransfers(
+          licenseId,
+          { licenseEpoch: licenseCryptoEpoch },
+          (items) => {
+              console.info('[realtime][transfers] snapshot', { count: items.length });
+              setTransfers(items);
+          },
+          (error) => {
+              console.error('[realtime][transfers] error', {
+                  licenseId,
+                  message: (error as Error)?.message || error
+              });
+          }
+      );
+      realtimeUnsubRef.current.transfers = unsubscribe;
+      return () => {
+          const shouldUnsub = realtimeUnsubRef.current.transfers === unsubscribe;
+          if (shouldUnsub) {
+              realtimeUnsubRef.current.transfers = null;
+              unsubscribe();
+          }
+          console.info('[realtime][transfers] unsubscribe', { licenseId, view: currentView });
+      };
+  }, [currentUser?.licenseId, licenseCryptoEpoch, needsTransfers, currentView]);
 
   useEffect(() => {
       const licenseId = currentUser?.licenseId;
@@ -3195,14 +3991,30 @@ const AppInner: React.FC = () => {
   }, [authUser?.uid, isStandalone]);
 
   useEffect(() => {
+      const uid = authUser?.uid;
+      if (!uid || !preferencesReady) return;
+      const scopedKey = getScopedAccountTypesStorageKey(uid);
       try {
-          localStorage.setItem('meumei_account_types', JSON.stringify(accountTypes));
+          localStorage.setItem(scopedKey, JSON.stringify(accountTypes));
+          localStorage.removeItem(LEGACY_ACCOUNT_TYPES_STORAGE_KEY);
       } catch (error) {
           if (isStandalone) {
               console.error('[pwa][boot]', error);
           }
       }
-  }, [accountTypes, isStandalone]);
+  }, [accountTypes, authUser?.uid, isStandalone, preferencesReady]);
+
+  useEffect(() => {
+      const uid = authUser?.uid;
+      if (!uid || !preferencesReady) return;
+      preferencesService
+          .setAccountTypes(uid, accountTypes)
+          .catch((error) => {
+              console.error('[prefs] account_types_save_error', {
+                  message: (error as any)?.message || error
+              });
+          });
+  }, [accountTypes, authUser?.uid, preferencesReady]);
 
   useEffect(() => {
       try {
@@ -3368,9 +4180,10 @@ const AppInner: React.FC = () => {
       setHasLoggedOut(true);
       stopRealtimeSubscriptions();
       setCurrentUser(null);
-      setAccounts([]);
+      applyAccounts([]);
       applyExpenses([]);
       setIncomes([]);
+      setTransfers([]);
       setCurrentView(ViewState.LOGIN);
       updateRoute('/login', '');
       setLicenseResolveState('idle');
@@ -3460,9 +4273,10 @@ const AppInner: React.FC = () => {
       if (!currentUser?.licenseId) return;
       const cryptoEpoch = resolveCryptoEpoch();
       if (!cryptoEpoch) return;
+      const baseAccounts = accountsRef.current;
       const nextAccounts: Account[] = [];
       const updatedById = new Map(updated.map(account => [account.id, account]));
-      accounts.forEach(existing => {
+      baseAccounts.forEach(existing => {
           if (existing.locked) {
               nextAccounts.push(existing);
               return;
@@ -3471,11 +4285,11 @@ const AppInner: React.FC = () => {
           nextAccounts.push(next ?? existing);
       });
       updated.forEach(account => {
-          if (!accounts.some(existing => existing.id === account.id)) {
+          if (!baseAccounts.some(existing => existing.id === account.id)) {
               nextAccounts.push(account);
           }
       });
-      setAccounts(nextAccounts);
+      applyAccounts(nextAccounts);
       try {
           const toPersist = nextAccounts.filter(account => !account.locked);
           await dataService.upsertAccounts(toPersist, currentUser.licenseId, cryptoEpoch);
@@ -3484,16 +4298,184 @@ const AppInner: React.FC = () => {
       }
   };
 
+  const handleCreateTransfer = async (
+      payload: {
+          fromAccountId: string;
+          toAccountId: string;
+          amount: number;
+          date: string;
+          notes?: string;
+          status?: Transfer['status'];
+      }
+  ) => {
+      if (!currentUser?.licenseId) return;
+      const cryptoEpoch = resolveCryptoEpoch();
+      if (!cryptoEpoch) return;
+
+      const fromAccountId = String(payload.fromAccountId || '').trim();
+      const toAccountId = String(payload.toAccountId || '').trim();
+      const amount = roundToCents(Number(payload.amount || 0));
+      const date = String(payload.date || '').trim() || new Date().toISOString().slice(0, 10);
+      const status: Transfer['status'] = payload.status === 'pending' || payload.status === 'canceled' ? payload.status : 'completed';
+      if (!fromAccountId || !toAccountId || fromAccountId === toAccountId || amount <= 0) return;
+
+      const baseAccounts = accountsRef.current;
+      const fromAccount = baseAccounts.find(account => account.id === fromAccountId);
+      const toAccount = baseAccounts.find(account => account.id === toAccountId);
+      if (!fromAccount || !toAccount || fromAccount.locked || toAccount.locked) return;
+
+      const transfer: Transfer = {
+          id: Math.random().toString(36).slice(2, 11),
+          fromAccountId,
+          toAccountId,
+          amount,
+          date,
+          status,
+          notes: (payload.notes || '').trim(),
+          createdBy: currentUser.email || authUser?.email || undefined
+      };
+
+      setTransfers(prev => [transfer, ...prev]);
+
+      let changedAccounts: Account[] = [];
+      if (status === 'completed') {
+          const updatedAccounts = baseAccounts.map(account => {
+              if (account.id === fromAccountId) {
+                  return {
+                      ...account,
+                      currentBalance: roundToCents(account.currentBalance - amount)
+                  };
+              }
+              if (account.id === toAccountId) {
+                  return {
+                      ...account,
+                      currentBalance: roundToCents(account.currentBalance + amount)
+                  };
+              }
+              return account;
+          });
+          changedAccounts = updatedAccounts.filter(account => account.id === fromAccountId || account.id === toAccountId);
+          applyAccounts(updatedAccounts);
+      }
+
+      handleAuditLog({
+          actionType: 'transfer_created',
+          description: `Transferência de ${formatCurrency(amount)} de ${fromAccount.name} para ${toAccount.name}.`,
+          entityType: 'account',
+          entityId: transfer.id,
+          metadata: {
+              fromAccountId,
+              fromAccountName: fromAccount.name,
+              toAccountId,
+              toAccountName: toAccount.name,
+              amount,
+              date,
+              status,
+              notes: transfer.notes || ''
+          }
+      });
+
+      try {
+          await dataService.upsertTransfer(transfer, currentUser.licenseId, cryptoEpoch);
+          if (changedAccounts.length) {
+              await dataService.upsertAccounts(changedAccounts, currentUser.licenseId, cryptoEpoch);
+          }
+      } catch (error) {
+          console.error('[transfer] create_failed', {
+              transferId: transfer.id,
+              message: (error as Error)?.message || error
+          });
+      }
+  };
+
+  const handleDeleteTransfer = async (id: string) => {
+      if (!currentUser?.licenseId) return;
+      const cryptoEpoch = resolveCryptoEpoch();
+      if (!cryptoEpoch) return;
+
+      const transfer = transfers.find(item => item.id === id);
+      if (!transfer) return;
+      if (transfer.locked) return;
+
+      const fromAccount = accountsRef.current.find(account => account.id === transfer.fromAccountId);
+      const toAccount = accountsRef.current.find(account => account.id === transfer.toAccountId);
+      setTransfers(prev => prev.filter(item => item.id !== id));
+
+      let changedAccounts: Account[] = [];
+      if (
+          transfer.status === 'completed' &&
+          fromAccount &&
+          toAccount &&
+          !fromAccount.locked &&
+          !toAccount.locked
+      ) {
+          const amount = roundToCents(Number(transfer.amount || 0));
+          if (amount > 0) {
+              const updatedAccounts = accountsRef.current.map(account => {
+                  if (account.id === transfer.fromAccountId) {
+                      return {
+                          ...account,
+                          currentBalance: roundToCents(account.currentBalance + amount)
+                      };
+                  }
+                  if (account.id === transfer.toAccountId) {
+                      return {
+                          ...account,
+                          currentBalance: roundToCents(account.currentBalance - amount)
+                      };
+                  }
+                  return account;
+              });
+              changedAccounts = updatedAccounts.filter(
+                  account => account.id === transfer.fromAccountId || account.id === transfer.toAccountId
+              );
+              applyAccounts(updatedAccounts);
+          }
+      }
+
+      handleAuditLog({
+          actionType: 'transfer_deleted',
+          description: `Transferência removida: ${formatCurrency(transfer.amount)} de ${fromAccount?.name || 'Conta origem'} para ${toAccount?.name || 'Conta destino'}.`,
+          entityType: 'account',
+          entityId: transfer.id,
+          metadata: {
+              fromAccountId: transfer.fromAccountId,
+              fromAccountName: fromAccount?.name || null,
+              toAccountId: transfer.toAccountId,
+              toAccountName: toAccount?.name || null,
+              amount: transfer.amount,
+              date: transfer.date,
+              status: transfer.status
+          }
+      });
+
+      try {
+          await dataService.deleteTransfer(id, currentUser.licenseId);
+          if (changedAccounts.length) {
+              await dataService.upsertAccounts(changedAccounts, currentUser.licenseId, cryptoEpoch);
+          }
+      } catch (error) {
+          console.error('[transfer] delete_failed', {
+              transferId: id,
+              message: (error as Error)?.message || error
+          });
+      }
+  };
+
   const handleDeleteAccount = (id: string) => {
       if (!currentUser?.licenseId) return;
       const cryptoEpoch = resolveCryptoEpoch();
       if (!cryptoEpoch) return;
-      const account = accounts.find(acc => acc.id === id);
+      const currentAccounts = accountsRef.current;
+      const account = currentAccounts.find(acc => acc.id === id);
       if (account?.locked) {
           return;
       }
       const incomesToDelete = incomes.filter(inc => inc.accountId === id);
       const expensesToDelete = expenses.filter(exp => exp.accountId === id);
+      const transfersToDelete = transfers.filter(
+          transfer => transfer.fromAccountId === id || transfer.toAccountId === id
+      );
       if (account) {
           handleAuditLog({
               actionType: 'account_deleted',
@@ -3513,12 +4495,57 @@ const AppInner: React.FC = () => {
       if (expensesToDelete.length) {
           applyExpenses(prev => prev.filter(exp => exp.accountId !== id));
       }
-      setAccounts(prev => prev.filter(a => a.id !== id));
+      if (transfersToDelete.length) {
+          setTransfers(prev =>
+              prev.filter(transfer => transfer.fromAccountId !== id && transfer.toAccountId !== id)
+          );
+      }
+
+      let nextAccounts = currentAccounts.filter(a => a.id !== id);
+      if (transfersToDelete.length) {
+          transfersToDelete.forEach((transfer) => {
+              if (transfer.status !== 'completed') return;
+              const amount = roundToCents(Number(transfer.amount || 0));
+              if (amount <= 0) return;
+
+              if (transfer.fromAccountId === id && transfer.toAccountId !== id) {
+                  nextAccounts = nextAccounts.map(acc =>
+                      acc.id === transfer.toAccountId
+                          ? { ...acc, currentBalance: roundToCents(acc.currentBalance - amount) }
+                          : acc
+                  );
+                  return;
+              }
+
+              if (transfer.toAccountId === id && transfer.fromAccountId !== id) {
+                  nextAccounts = nextAccounts.map(acc =>
+                      acc.id === transfer.fromAccountId
+                          ? { ...acc, currentBalance: roundToCents(acc.currentBalance + amount) }
+                          : acc
+                  );
+              }
+          });
+      }
+      applyAccounts(nextAccounts);
+
+      const counterpartAccountIds = new Set(
+          transfersToDelete.flatMap(transfer => {
+              if (transfer.status !== 'completed') return [];
+              if (transfer.fromAccountId === id && transfer.toAccountId !== id) return [transfer.toAccountId];
+              if (transfer.toAccountId === id && transfer.fromAccountId !== id) return [transfer.fromAccountId];
+              return [];
+          })
+      );
+      const counterpartAccounts = nextAccounts.filter(account => counterpartAccountIds.has(account.id) && !account.locked);
       const deleteOps: Promise<void>[] = [
           dataService.deleteAccount(id, currentUser.licenseId),
           ...incomesToDelete.map(inc => dataService.deleteIncome(inc.id, currentUser.licenseId)),
-          ...expensesToDelete.map(exp => dataService.deleteExpense(exp.id, currentUser.licenseId))
+          ...expensesToDelete.map(exp => dataService.deleteExpense(exp.id, currentUser.licenseId)),
+          ...transfersToDelete.map(transfer => dataService.deleteTransfer(transfer.id, currentUser.licenseId))
       ];
+      if (counterpartAccounts.length) {
+          deleteOps.push(dataService.upsertAccounts(counterpartAccounts, currentUser.licenseId, cryptoEpoch));
+      }
       Promise.all(deleteOps).catch((error) => {
           console.error('[accounts][delete] cascade_failed', {
               accountId: id,
@@ -3531,9 +4558,55 @@ const AppInner: React.FC = () => {
       if (!currentUser?.licenseId) return;
       const cryptoEpoch = resolveCryptoEpoch();
       if (!cryptoEpoch) return;
+      const previousById = new Map(expenses.map(exp => [exp.id, exp]));
+      const created: Expense[] = [];
+      const edited: Expense[] = [];
+      updated.forEach((exp) => {
+          if (exp.locked) return;
+          const previous = previousById.get(exp.id);
+          if (!previous) {
+              created.push(exp);
+              return;
+          }
+          if (hasExpenseCoreChanges(previous, exp)) {
+              edited.push(exp);
+          }
+      });
       applyExpenses(updated);
       // Batch save for efficiency in UI, but simple service call here
       dataService.upsertExpenses(updated.filter(exp => !exp.locked), currentUser.licenseId, cryptoEpoch);
+
+      created.forEach((exp) => {
+          handleAuditLog({
+              actionType: 'expense_created',
+              description: `Despesa "${exp.description}" criada (${formatCurrency(exp.amount)}).`,
+              entityType: 'expense',
+              entityId: exp.id,
+              metadata: {
+                  description: exp.description,
+                  amount: exp.amount,
+                  category: exp.category,
+                  dueDate: exp.dueDate,
+                  status: exp.status
+              }
+          });
+      });
+
+      edited.forEach((exp) => {
+          handleAuditLog({
+              actionType: 'expense_edited',
+              description: `Despesa "${exp.description}" atualizada (${formatCurrency(exp.amount)}).`,
+              entityType: 'expense',
+              entityId: exp.id,
+              metadata: {
+                  description: exp.description,
+                  amount: exp.amount,
+                  category: exp.category,
+                  dueDate: exp.dueDate,
+                  status: exp.status
+              }
+          });
+      });
   };
 
   const generateExpenseId = () => Math.random().toString(36).substr(2, 9);
@@ -3549,8 +4622,9 @@ const AppInner: React.FC = () => {
           type: item?.type || quickExpenseType
       })) as Expense[];
       const nextExpenses = [...expenses, ...normalized];
-      let updatedAccounts = [...accounts];
+      let updatedAccounts = [...accountsRef.current];
       let accountsChanged = false;
+      const changedAccountIds = new Set<string>();
       normalized.forEach((item) => {
           if (!item.accountId || item.status !== 'paid') return;
           const accIndex = updatedAccounts.findIndex(a => a.id === item.accountId);
@@ -3570,10 +4644,14 @@ const AppInner: React.FC = () => {
                   currentBalance: updatedAccounts[accIndex].currentBalance - item.amount
               };
               accountsChanged = true;
+              changedAccountIds.add(item.accountId);
           }
       });
       if (accountsChanged) {
-          void handleUpdateAccounts(updatedAccounts);
+          const changedAccounts = updatedAccounts.filter(account => changedAccountIds.has(account.id));
+          if (changedAccounts.length) {
+              void handleUpdateAccounts(changedAccounts);
+          }
       }
       handleUpdateExpenses(nextExpenses);
       setIsQuickExpenseOpen(false);
@@ -3616,7 +4694,8 @@ const AppInner: React.FC = () => {
           });
       }
       if (exp && exp.status === 'paid' && exp.accountId) {
-          const accIndex = accounts.findIndex(a => a.id === exp.accountId);
+          const baseAccounts = accountsRef.current;
+          const accIndex = baseAccounts.findIndex(a => a.id === exp.accountId);
           if (accIndex > -1) {
               const mutationId = `expense:delete:${exp.id}:${exp.accountId}:${exp.amount}:${exp.status}`;
               const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
@@ -3628,9 +4707,9 @@ const AppInner: React.FC = () => {
                   status: exp.status
               });
               if (shouldApply) {
-                  const newAccounts = [...accounts];
+                  const newAccounts = [...baseAccounts];
                   newAccounts[accIndex].currentBalance += Number(exp.amount);
-                  setAccounts(newAccounts);
+                  applyAccounts(newAccounts);
                   if (!newAccounts[accIndex].locked) {
                       dataService.upsertAccount(newAccounts[accIndex], currentUser.licenseId, cryptoEpoch);
                   }
@@ -3646,8 +4725,54 @@ const AppInner: React.FC = () => {
       if (!currentUser?.licenseId) return;
       const cryptoEpoch = resolveCryptoEpoch();
       if (!cryptoEpoch) return;
+      const previousById = new Map(incomes.map(inc => [inc.id, inc]));
+      const created: Income[] = [];
+      const edited: Income[] = [];
+      updated.forEach((inc) => {
+          if (inc.locked) return;
+          const previous = previousById.get(inc.id);
+          if (!previous) {
+              created.push(inc);
+              return;
+          }
+          if (hasIncomeCoreChanges(previous, inc)) {
+              edited.push(inc);
+          }
+      });
       setIncomes(updated);
       dataService.upsertIncomes(updated.filter(inc => !inc.locked), currentUser.licenseId, cryptoEpoch);
+
+      created.forEach((inc) => {
+          handleAuditLog({
+              actionType: 'income_created',
+              description: `Receita "${inc.description}" criada (${formatCurrency(inc.amount)}).`,
+              entityType: 'income',
+              entityId: inc.id,
+              metadata: {
+                  description: inc.description,
+                  amount: inc.amount,
+                  category: inc.category,
+                  date: inc.date,
+                  status: inc.status
+              }
+          });
+      });
+
+      edited.forEach((inc) => {
+          handleAuditLog({
+              actionType: 'income_edited',
+              description: `Receita "${inc.description}" atualizada (${formatCurrency(inc.amount)}).`,
+              entityType: 'income',
+              entityId: inc.id,
+              metadata: {
+                  description: inc.description,
+                  amount: inc.amount,
+                  category: inc.category,
+                  date: inc.date,
+                  status: inc.status
+              }
+          });
+      });
   };
 
   const handleDeleteIncome = (id: string) => {
@@ -3671,7 +4796,8 @@ const AppInner: React.FC = () => {
           });
       }
       if (inc && inc.status === 'received' && inc.accountId) {
-          const accIndex = accounts.findIndex(a => a.id === inc.accountId);
+          const baseAccounts = accountsRef.current;
+          const accIndex = baseAccounts.findIndex(a => a.id === inc.accountId);
           if (accIndex > -1) {
               const mutationId = `income:delete:${inc.id}:${inc.accountId}:${inc.amount}:${inc.status}`;
               const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
@@ -3683,9 +4809,9 @@ const AppInner: React.FC = () => {
                   status: inc.status
               });
               if (shouldApply) {
-                  const newAccounts = [...accounts];
+                  const newAccounts = [...baseAccounts];
                   newAccounts[accIndex].currentBalance -= Number(inc.amount);
-                  setAccounts(newAccounts);
+                  applyAccounts(newAccounts);
                   if (!newAccounts[accIndex].locked) {
                       dataService.upsertAccount(newAccounts[accIndex], currentUser.licenseId, cryptoEpoch);
                   }
@@ -3739,7 +4865,7 @@ const AppInner: React.FC = () => {
 
       // 1. Mark Expenses Paid + Debit Account (per item)
       const paidAt = paymentDate || new Date().toISOString().split('T')[0];
-      const updatedAccounts = [...accounts];
+      const updatedAccounts = [...accountsRef.current];
       const changedExpenseIds = new Set(expenseIds);
       const expenseKey = expenseIds.length > 0 ? [...expenseIds].sort().join('|') : 'none';
       let accountsChanged = false;
@@ -3864,13 +4990,29 @@ const AppInner: React.FC = () => {
       });
 
       applyExpenses(updatedExpenses);
+      handleAuditLog({
+          actionType: 'invoice_paid',
+          description: `Fatura paga${cardName ? ` (${cardName})` : ''} no valor de ${formatCurrency(resolvedTotal)}.`,
+          entityType: 'expense',
+          entityId: paymentExpenseId,
+          metadata: {
+              cardName: cardName || null,
+              amount: resolvedTotal,
+              date: paidAt,
+              expenseCount: changedExpenseIds.size,
+              accountId: sourceAccountId || null
+          }
+      });
       const changedExpenses = updatedExpenses.filter(e => changedExpenseIds.has(e.id));
       const ledgerExpenses = updatedExpenses.filter(exp => exp.origin === 'invoice_payment' && exp.id === paymentExpenseId);
       const expensesToPersist = [...changedExpenses, ...ledgerExpenses].filter(exp => !exp.locked);
       dataService.upsertExpenses(expensesToPersist, currentUser.licenseId, cryptoEpoch);
 
       if (accountsChanged) {
-          void handleUpdateAccounts(updatedAccounts);
+          const changedAccounts = updatedAccounts.filter(account => debitTotals.has(account.id));
+          if (changedAccounts.length) {
+              void handleUpdateAccounts(changedAccounts);
+          }
       }
       console.info('[balances] ui refreshed');
   };
@@ -3880,7 +5022,7 @@ const AppInner: React.FC = () => {
       const cryptoEpoch = resolveCryptoEpoch();
       if (!cryptoEpoch) return;
 
-      const updatedAccounts = [...accounts];
+      const updatedAccounts = [...accountsRef.current];
       const changedExpenseIds = new Set(expenseIds);
       const expenseKey = expenseIds.length > 0 ? [...expenseIds].sort().join('|') : 'none';
       let accountsChanged = false;
@@ -3977,6 +5119,18 @@ const AppInner: React.FC = () => {
       });
 
       applyExpenses(updatedExpenses);
+      handleAuditLog({
+          actionType: 'invoice_reopened',
+          description: `Fatura reaberta${reopenCardId ? ' para novo pagamento' : ''}.`,
+          entityType: 'expense',
+          entityId: paymentLedger?.id || reopenedExpenses[0]?.id || null,
+          metadata: {
+              cardId: reopenCardId || null,
+              invoiceMonthKey: reopenMonthKey || null,
+              expenseCount: changedExpenseIds.size,
+              date: today
+          }
+      });
       const changedExpenses = updatedExpenses.filter(e => changedExpenseIds.has(e.id));
       const ledgerUpdates = paymentLedger
           ? updatedExpenses.filter(exp => exp.id === paymentLedger.id)
@@ -3985,7 +5139,10 @@ const AppInner: React.FC = () => {
       dataService.upsertExpenses(expensesToPersist, currentUser.licenseId, cryptoEpoch);
 
       if (accountsChanged) {
-          void handleUpdateAccounts(updatedAccounts);
+          const changedAccounts = updatedAccounts.filter(account => refundTotals.has(account.id));
+          if (changedAccounts.length) {
+              void handleUpdateAccounts(changedAccounts);
+          }
       }
       console.info('[balances] ui refreshed');
   };
@@ -4041,11 +5198,12 @@ const AppInner: React.FC = () => {
           accounts,
           incomes,
           expenses,
+          transfers,
           yields,
           viewDate,
           options: { includeUpToEndOfMonth: true, debug: balanceDebugEnabled }
       });
-  }, [accounts, incomes, expenses, yields, viewDate, balanceDebugEnabled]);
+  }, [accounts, incomes, expenses, transfers, yields, viewDate, balanceDebugEnabled]);
 
   const realBalances: RealBalanceResult = useMemo(() => {
       if (balanceDebugEnabled) return baseRealBalances;
@@ -4055,13 +5213,23 @@ const AppInner: React.FC = () => {
           accounts,
           incomes,
           expenses,
+          transfers,
           yields,
           viewDate,
           options: { includeUpToEndOfMonth: true, debug: true }
       });
-  }, [accounts, incomes, expenses, yields, viewDate, balanceDebugEnabled, baseRealBalances]);
+  }, [accounts, incomes, expenses, transfers, yields, viewDate, balanceDebugEnabled, baseRealBalances]);
 
-  const totalBalance = realBalances.total;
+  const totalBalanceDiff = Math.abs((realBalances.total || 0) - legacyTotalBalance);
+  const totalBalance = totalBalanceDiff > 0.01 ? legacyTotalBalance : realBalances.total;
+  useEffect(() => {
+      if (totalBalanceDiff <= 0.01) return;
+      console.warn('[balances] dashboard_balance_fallback', {
+          auditedTotal: Number(realBalances.total.toFixed(2)),
+          accountsTotal: Number(legacyTotalBalance.toFixed(2)),
+          diff: Number(totalBalanceDiff.toFixed(2))
+      });
+  }, [legacyTotalBalance, realBalances.total, totalBalanceDiff]);
   const balanceSnapshot = useMemo(() => ({
       byAccountId: realBalances.byAccountId,
       diffs: realBalances.diffs,
@@ -4070,6 +5238,61 @@ const AppInner: React.FC = () => {
       cutoff: realBalances.stats.cutoff,
       debug: realBalances.debug
   }), [legacyTotalBalance, realBalances]);
+  useEffect(() => {
+      if (!currentUser?.licenseId || !licenseCryptoEpoch) return;
+      if (balanceRepairInFlightRef.current) return;
+
+      const repairable = accounts
+          .filter(account => !account.locked)
+          .map(account => {
+              const targetBalance = roundToCents(Number(realBalances.byAccountId[account.id] || 0));
+              const currentBalance = roundToCents(Number(account.currentBalance || 0));
+              const diff = roundToCents(targetBalance - currentBalance);
+              return { account, targetBalance, diff };
+          })
+          .filter(item => Math.abs(item.diff) > 0.01);
+
+      if (repairable.length === 0) return;
+
+      balanceRepairInFlightRef.current = true;
+      const reconciledAccounts = accounts.map(account => {
+          const candidate = repairable.find(item => item.account.id === account.id);
+          if (!candidate) return account;
+          return {
+              ...account,
+              currentBalance: candidate.targetBalance
+          };
+      });
+      const changedAccounts = reconciledAccounts.filter(account =>
+          repairable.some(item => item.account.id === account.id)
+      );
+
+      console.warn('[balances] auto_repair', {
+          count: changedAccounts.length,
+          diffs: repairable.reduce<Record<string, number>>((acc, item) => {
+              acc[item.account.id] = item.diff;
+              return acc;
+          }, {})
+      });
+
+      applyAccounts(reconciledAccounts);
+      dataService
+          .upsertAccounts(changedAccounts, currentUser.licenseId, licenseCryptoEpoch)
+          .catch((error) => {
+              console.error('[balances] auto_repair_failed', {
+                  message: (error as Error)?.message || error
+              });
+          })
+          .finally(() => {
+              balanceRepairInFlightRef.current = false;
+          });
+  }, [
+      accounts,
+      applyAccounts,
+      currentUser?.licenseId,
+      licenseCryptoEpoch,
+      realBalances.byAccountId
+  ]);
   const totalIncome = currentMonthIncomes.reduce((acc, curr) => acc + curr.amount, 0);
   const totalExpenses = monthExpenseData.totalAll;
   const pendingIncome = currentMonthIncomes.filter(i => i.status === 'pending').reduce((acc, curr) => acc + curr.amount, 0);
@@ -4099,6 +5322,7 @@ const AppInner: React.FC = () => {
           cutoff: realBalances.stats.cutoff,
           incomes: realBalances.stats.incomes,
           expenses: realBalances.stats.expenses,
+          transfers: realBalances.stats.transfers,
           yields: realBalances.stats.yields
       });
       if (diffs.length > 0) {
@@ -4141,9 +5365,10 @@ const AppInner: React.FC = () => {
       return (
           accounts.some(acc => acc.lockedReason === 'epoch_mismatch') ||
           expenses.some(exp => exp.lockedReason === 'epoch_mismatch') ||
-          incomes.some(inc => inc.lockedReason === 'epoch_mismatch')
+          incomes.some(inc => inc.lockedReason === 'epoch_mismatch') ||
+          transfers.some(transfer => transfer.lockedReason === 'epoch_mismatch')
       );
-  }, [accounts, expenses, incomes]);
+  }, [accounts, expenses, incomes, transfers]);
 
   useEffect(() => {
       if (hasEpochLocked && !recoveryLoggedRef.current) {
@@ -4153,98 +5378,392 @@ const AppInner: React.FC = () => {
   }, [hasEpochLocked]);
 
   // Uppercase input transformation removed to avoid truncating user input.
+  const clearMobileSwipeVisualTimer = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (mobileSwipeVisualResetTimerRef.current === null) return;
+    window.clearTimeout(mobileSwipeVisualResetTimerRef.current);
+    mobileSwipeVisualResetTimerRef.current = null;
+  }, []);
+
+  const settleMobileSwipeVisual = useCallback((duration = 190) => {
+    clearMobileSwipeVisualTimer();
+    setMobileSwipeVisualActive(true);
+    setMobileSwipeVisualTransitionMs(duration);
+    setMobileSwipeVisualOffset(0);
+    if (typeof window === 'undefined') {
+      setMobileSwipeVisualTransitionMs(0);
+      setMobileSwipeVisualActive(false);
+      return;
+    }
+    mobileSwipeVisualResetTimerRef.current = window.setTimeout(() => {
+      setMobileSwipeVisualTransitionMs(0);
+      setMobileSwipeVisualActive(false);
+      mobileSwipeVisualResetTimerRef.current = null;
+    }, duration + 24);
+  }, [clearMobileSwipeVisualTimer]);
+
+  useEffect(() => {
+    return () => clearMobileSwipeVisualTimer();
+  }, [clearMobileSwipeVisualTimer]);
+
+  const isSwipeBlockedByTarget = useCallback((target: HTMLElement | null) => {
+    if (!target || typeof window === 'undefined') return true;
+    if (
+      target.closest(
+        'input, textarea, select, [contenteditable="true"], [data-no-swipe-nav="true"], [data-modal-root="true"], .mobile-quick-access-footer'
+      )
+    ) {
+      return true;
+    }
+
+    const stopNode = mainContentRef.current;
+    let node: HTMLElement | null = target;
+    while (node && node !== stopNode) {
+      const style = window.getComputedStyle(node);
+      const overflowX = style.overflowX;
+      const canScrollX = node.scrollWidth - node.clientWidth > 12;
+      if ((overflowX === 'auto' || overflowX === 'scroll') && canScrollX) {
+        return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  }, []);
+
+  const handleMobileSwipeStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (!isMobile || currentView === ViewState.LOGIN || event.touches.length !== 1) return;
+    if (typeof document !== 'undefined' && document.querySelector('[data-modal-root="true"]')) return;
+    clearMobileSwipeVisualTimer();
+    setMobileSwipeVisualTransitionMs(0);
+    setMobileSwipeVisualOffset(0);
+    setMobileSwipeVisualActive(false);
+
+    const touch = event.touches[0];
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
+    if (viewportWidth > 0 && (touch.clientX < 12 || touch.clientX > viewportWidth - 12)) {
+      mobileSwipeGestureRef.current = null;
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (isSwipeBlockedByTarget(target)) {
+      mobileSwipeGestureRef.current = null;
+      return;
+    }
+
+    mobileSwipeGestureRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+      startedAt: Date.now(),
+      isHorizontal: false
+    };
+  }, [isMobile, currentView, isSwipeBlockedByTarget, clearMobileSwipeVisualTimer]);
+
+  const handleMobileSwipeMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const gesture = mobileSwipeGestureRef.current;
+    if (!gesture || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    gesture.lastX = touch.clientX;
+    gesture.lastY = touch.clientY;
+    const deltaX = touch.clientX - gesture.startX;
+    const deltaY = touch.clientY - gesture.startY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    if (!gesture.isHorizontal) {
+      if (absX < 8 && absY < 8) return;
+      if (absX <= absY * 0.85) return;
+      gesture.isHorizontal = true;
+    }
+
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 420;
+    const maxOffset = Math.max(96, Math.min(viewportWidth * 0.88, 340));
+    const resistanceStart = viewportWidth * 0.72;
+    let easedOffset = deltaX;
+    if (absX > resistanceStart) {
+      const extra = absX - resistanceStart;
+      easedOffset = Math.sign(deltaX) * (resistanceStart + extra * 0.38);
+    }
+    easedOffset = Math.max(-maxOffset, Math.min(maxOffset, easedOffset));
+    setMobileSwipeVisualActive(true);
+    setMobileSwipeVisualTransitionMs(0);
+    setMobileSwipeVisualOffset(easedOffset);
+
+    if (event.cancelable && absX > 18 && absX > absY * 1.2) {
+      event.preventDefault();
+    }
+  }, []);
+
+  const handleMobileSwipeEnd = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const gesture = mobileSwipeGestureRef.current;
+    mobileSwipeGestureRef.current = null;
+    if (!gesture || !isMobile) {
+      settleMobileSwipeVisual(150);
+      return;
+    }
+    if (typeof document !== 'undefined' && document.querySelector('[data-modal-root="true"]')) {
+      settleMobileSwipeVisual(150);
+      return;
+    }
+
+    const deltaX = gesture.lastX - gesture.startX;
+    const deltaY = gesture.lastY - gesture.startY;
+    const elapsedMs = Date.now() - gesture.startedAt;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 420;
+    const distanceThreshold = Math.min(96, Math.max(52, viewportWidth * 0.16));
+    const velocityX = absX / Math.max(elapsedMs, 1);
+    const isFastFlick = velocityX > 0.42 && absX > 20;
+    const isMostlyHorizontal = absY <= 120 && absX >= absY * 0.82;
+
+    if (!isMostlyHorizontal || (!isFastFlick && absX < distanceThreshold)) {
+      settleMobileSwipeVisual(220);
+      return;
+    }
+
+    const direction: 1 | -1 = deltaX < 0 ? -1 : 1;
+    const navigated = navigateDockByDirection(direction, {
+      wrap: true,
+      source: 'swipe'
+    });
+    settleMobileSwipeVisual(navigated ? 165 : 220);
+    if (navigated && event.cancelable) {
+      event.preventDefault();
+    }
+  }, [isMobile, navigateDockByDirection, settleMobileSwipeVisual]);
+
+  const handleMobileSwipeCancel = useCallback(() => {
+    mobileSwipeGestureRef.current = null;
+    settleMobileSwipeVisual(150);
+  }, [settleMobileSwipeVisual]);
 
 const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: boolean }) => {
     const shouldOffset = isMobile && !options?.skipMobileOffset;
     const compactMode = !isPublicRoute && isCompactHeight;
-    const layoutPaddingClass = isMobile ? 'pb-20' : compactMode ? 'pb-20' : 'pb-28';
     const mobileShellClass = isMobile ? 'mm-mobile-shell' : '';
+    const desktopShellClass = isMobile ? 'min-h-screen' : '';
+    const swipeVisualDirection = mobileSwipeVisualOffset < -8 ? 1 : mobileSwipeVisualOffset > 8 ? -1 : 0;
+    const swipeNavigationDirection: 1 | -1 | 0 = swipeVisualDirection === 1 ? -1 : swipeVisualDirection === -1 ? 1 : 0;
+    const swipeProgress = Math.min(1, Math.abs(mobileSwipeVisualOffset) / 120);
+    const mobileSwipeStyle = isMobile
+      ? {
+          transform: `translate3d(${mobileSwipeVisualOffset}px, 0, 0)`,
+          transition: mobileSwipeVisualTransitionMs > 0
+            ? `transform ${mobileSwipeVisualTransitionMs}ms cubic-bezier(0.22, 1, 0.36, 1)`
+            : undefined,
+          willChange: mobileSwipeVisualActive ? ('transform' as const) : undefined
+        }
+      : undefined;
+    const swipeNeighborView = (() => {
+      if (!isMobile || swipeNavigationDirection === 0) return null;
+      const currentIndex = mobileDockNavigationOrder.indexOf(currentView);
+      if (currentIndex === -1) return null;
+      const total = mobileDockNavigationOrder.length;
+      if (total === 0) return null;
+      const nextIndex = (currentIndex + swipeNavigationDirection + total) % total;
+      return mobileDockNavigationOrder[nextIndex];
+    })();
+    const swipeNeighborMeta = (() => {
+      if (!swipeNeighborView) return null;
+      switch (swipeNeighborView) {
+        case ViewState.DASHBOARD:
+          return { title: 'Início', subtitle: 'Resumo do mês', accent: '#6366f1' };
+        case ViewState.LAUNCHES:
+          return { title: 'Lançamentos', subtitle: 'Entradas e saídas', accent: '#06b6d4' };
+        case ViewState.ACCOUNTS:
+          return { title: 'Contas', subtitle: 'Saldos por conta', accent: '#3b82f6' };
+        case ViewState.YIELDS:
+          return { title: 'Rendimentos', subtitle: 'Evolução dos rendimentos', accent: '#8b5cf6' };
+        case ViewState.INVOICES:
+          return { title: 'Faturas', subtitle: 'Controle de cartões', accent: '#f43f5e' };
+        case ViewState.REPORTS:
+          return { title: 'Relatórios', subtitle: 'Análises financeiras', accent: '#10b981' };
+        case ViewState.AGENDA:
+          return { title: 'Agenda', subtitle: 'Próximos compromissos', accent: '#0ea5e9' };
+        default:
+          return { title: 'Próxima tela', subtitle: 'Arraste para navegar', accent: '#6366f1' };
+      }
+    })();
+    const underlayShift = Math.max(0, 34 - Math.min(34, Math.abs(mobileSwipeVisualOffset) * 0.18));
+
     return (
-        <div
-            className={`mm-app-root ${mobileShellClass} min-h-screen bg-zinc-100 dark:bg-[#09090b] text-zinc-950 dark:text-white font-inter transition-colors duration-300 ${layoutPaddingClass} ${compactMode ? 'mm-compact' : ''}`}
-            data-compact={compactMode ? 'true' : undefined}
-        >
-            <GlobalHeader 
-                companyName={companyInfo.name}
-                username={currentUser?.email || ''}
-                viewDate={viewDate}
-                summary={headerSummary}
-                onMonthChange={handleMonthChange}
-                canGoBack={true}
-                theme={theme}
-                onThemeChange={handleThemeChange}
-                onOpenSettings={() => canAccessSettings && setCurrentView(ViewState.SETTINGS)}
-                onOpenReports={() => setCurrentView(ViewState.REPORTS)}
-                onOpenAgenda={() => setCurrentView(ViewState.AGENDA)}
-                onLogout={handleLogout}
-                onCompanyClick={handleOpenCompanySheet}
-                onOpenCalculator={() => setIsCalculatorOpen(true)}
-                onOpenAudit={isMobile ? () => {} : () => setAuditModalState({ isOpen: true, entityTypes: null })}
-                canAccessSettings={canAccessSettings}
-                versionLabel={APP_VERSION}
-                entitlementBadge={entitlementBadge}
-                renewalInfo={renewalInfo}
-                onRenew={renewalInfo ? handleRenew : undefined}
-                assistantHidden={assistantHidden}
-                onOpenAssistant={() => setAssistantHidden(false)}
-            />
-            <div style={shouldOffset ? { paddingTop: 'var(--mm-mobile-top, 92px)' } : undefined}>
-                <div className={`mm-content ${compactMode ? 'mm-content--compact scrollbar-hide' : ''}`}>
-                    {cryptoStatus !== 'ready' && (
-                        <div className="mx-auto mt-4 max-w-5xl px-4">
-                            <div className="rounded-2xl border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/80 dark:bg-amber-900/10 px-4 py-3 text-amber-700 dark:text-amber-300 text-sm">
-                                Configuração de segurança pendente: defina <span className="font-semibold">VITE_CRYPTO_SALT</span>. Modo protegido ativo (somente leitura).
-                            </div>
+        <div className={`relative overflow-x-hidden ${mobileShellClass} ${desktopShellClass} bg-zinc-100 dark:bg-[#09090b]`}>
+            {isMobile && swipeNeighborMeta && (
+                <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden" aria-hidden="true">
+                    <div
+                        className="absolute inset-0"
+                        style={{
+                            background: `radial-gradient(120% 80% at ${swipeVisualDirection === 1 ? '100%' : '0%'} 24%, ${swipeNeighborMeta.accent}2b, transparent 65%), linear-gradient(180deg, rgba(9,9,11,0.95), rgba(6,8,16,0.98))`
+                        }}
+                    />
+                    <div
+                        className={`absolute top-[calc(var(--mm-mobile-top,92px)+14px)] ${swipeVisualDirection === 1 ? 'right-3 text-right' : 'left-3 text-left'} rounded-2xl border border-white/10 bg-black/35 px-3 py-2 backdrop-blur-md`}
+                        style={{
+                            opacity: Math.min(0.98, 0.25 + swipeProgress * 0.95),
+                            transform: `translateX(${swipeVisualDirection === 1 ? underlayShift : -underlayShift}px)`
+                        }}
+                    >
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/95">{swipeNeighborMeta.title}</p>
+                        <p className="text-[10px] text-white/70">{swipeNeighborMeta.subtitle}</p>
+                    </div>
+                    <div
+                        className={`absolute ${swipeVisualDirection === 1 ? 'right-3' : 'left-3'} bottom-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+14px)] w-[min(74vw,280px)] rounded-2xl border border-white/10 bg-black/30 p-3 backdrop-blur-md`}
+                        style={{
+                            opacity: Math.min(0.9, 0.18 + swipeProgress * 0.92),
+                            transform: `translateX(${swipeVisualDirection === 1 ? underlayShift * 0.75 : -underlayShift * 0.75}px)`
+                        }}
+                    >
+                        <div className="h-2.5 w-24 rounded-full bg-white/25" />
+                        <div className="mt-2 h-2 w-full rounded-full bg-white/15" />
+                        <div className="mt-1.5 h-2 w-4/5 rounded-full bg-white/10" />
+                        <div className="mt-1.5 h-2 w-3/5 rounded-full bg-white/10" />
+                    </div>
+                </div>
+            )}
+            <div
+                ref={appRootRef}
+                className={`mm-app-root relative overflow-x-hidden ${mobileShellClass} ${desktopShellClass} bg-zinc-100 dark:bg-[#09090b] text-zinc-950 dark:text-white font-inter transition-colors duration-300 ${compactMode ? 'mm-compact' : ''}`}
+                data-compact={compactMode ? 'true' : undefined}
+                style={mobileSwipeStyle}
+                onTouchStart={isMobile ? handleMobileSwipeStart : undefined}
+                onTouchMove={isMobile ? handleMobileSwipeMove : undefined}
+                onTouchEnd={isMobile ? handleMobileSwipeEnd : undefined}
+                onTouchCancel={isMobile ? handleMobileSwipeCancel : undefined}
+            >
+                {isMobile && swipeVisualDirection !== 0 && (
+                    <>
+                        <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-[9]">
+                            <div
+                                className={`absolute inset-y-0 ${swipeVisualDirection === 1 ? 'right-0' : 'left-0'} w-16`}
+                                style={{
+                                    opacity: Math.min(0.2, swipeProgress * 0.24),
+                                    background: swipeVisualDirection === 1
+                                        ? 'linear-gradient(90deg, rgba(99,102,241,0), rgba(99,102,241,0.4))'
+                                        : 'linear-gradient(270deg, rgba(99,102,241,0), rgba(99,102,241,0.4))'
+                                }}
+                            />
                         </div>
-                    )}
-                    {hasEpochLocked && (
-                        <div className="mx-auto mt-4 max-w-5xl px-4">
-                            <div className="rounded-2xl border border-blue-200/60 dark:border-blue-900/40 bg-blue-50/80 dark:bg-blue-900/10 px-4 py-3 text-blue-700 dark:text-blue-300 text-sm">
-                                Dados anteriores arquivados por atualização de segurança. Itens históricos permanecem visíveis, mas não podem ser editados.
+                    </>
+                )}
+                <GlobalHeader 
+                    companyName={companyInfo.name}
+                    username={currentUser?.email || ''}
+                    viewDate={viewDate}
+                    summary={headerSummary}
+                    onMonthChange={handleMonthChange}
+                    canGoBack={true}
+                    theme={theme}
+                    onThemeChange={handleThemeChange}
+                    onOpenSettings={() => canAccessSettings && setCurrentView(ViewState.SETTINGS)}
+                    onOpenFeedback={() => {
+                      if (!isMasterUser) return;
+                      setMasterInitialMode('feedback');
+                      setCurrentView(ViewState.MASTER);
+                    }}
+                    onOpenReports={() => setCurrentView(ViewState.REPORTS)}
+                    onOpenAgenda={() => setCurrentView(ViewState.AGENDA)}
+                    onLogout={handleLogout}
+                    onCompanyClick={handleOpenCompanySheet}
+                    onOpenCalculator={() => setIsCalculatorOpen(true)}
+                    onOpenAudit={isMobile ? () => {} : () => openAuditPanel(null)}
+                    canAccessSettings={canAccessSettings}
+                    versionLabel={APP_VERSION}
+                    entitlementBadge={entitlementBadge}
+                    renewalInfo={renewalInfo}
+                    onRenew={renewalInfo ? handleRenew : undefined}
+                    assistantHidden={assistantHidden}
+                    onOpenAssistant={() => setAssistantHidden(false)}
+                    isMasterUser={isMasterUser}
+                    bugNotificationCount={isMasterUser ? bugNotificationCount : 0}
+                />
+                <div
+                    className={isMobile ? '' : 'flex-1 min-h-0'}
+                    style={shouldOffset ? { paddingTop: 'var(--mm-mobile-top, 92px)' } : undefined}
+                >
+                    <div
+                        ref={mainContentRef}
+                        className={`mm-content ${compactMode ? 'mm-content--compact scrollbar-hide' : ''} ${isMobile ? '' : 'mm-content--desktop'}`}
+                    >
+                        {cryptoStatus !== 'ready' && (
+                            <div className="mx-auto mt-4 max-w-5xl px-4">
+                                <div className="rounded-2xl border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/80 dark:bg-amber-900/10 px-4 py-3 text-amber-700 dark:text-amber-300 text-sm">
+                                    Configuração de segurança pendente: defina <span className="font-semibold">VITE_CRYPTO_SALT</span>. Modo protegido ativo (somente leitura).
+                                </div>
                             </div>
-                        </div>
-                    )}
-                    {!agendaNoticeDismissed && agendaTodayItems.length > 0 && (
-                        <div className="mx-auto mt-4 max-w-5xl px-4">
-                            <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/10 px-4 py-3 text-emerald-800 dark:text-emerald-200 text-sm">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                        <p className="font-semibold">Agenda de hoje</p>
-                                        <p className="text-[12px] text-emerald-700 dark:text-emerald-200/80">
-                                            {agendaTodayItems.length} compromisso(s) marcado(s) para hoje.
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setCurrentView(ViewState.AGENDA)}
-                                            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
-                                        >
-                                            Ver agenda
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={dismissAgendaNotice}
-                                            className="rounded-full border border-emerald-300/70 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/60 dark:text-emerald-100 dark:hover:bg-emerald-800/40"
-                                        >
-                                            Dispensar
-                                        </button>
+                        )}
+                        {hasEpochLocked && (
+                            <div className="mx-auto mt-4 max-w-5xl px-4">
+                                <div className="rounded-2xl border border-blue-200/60 dark:border-blue-900/40 bg-blue-50/80 dark:bg-blue-900/10 px-4 py-3 text-blue-700 dark:text-blue-300 text-sm">
+                                    Dados anteriores arquivados por atualização de segurança. Itens históricos permanecem visíveis, mas não podem ser editados.
+                                </div>
+                            </div>
+                        )}
+                        {!agendaNoticeDismissed && agendaTodayItems.length > 0 && (
+                            <div className="mx-auto mt-4 max-w-5xl px-4">
+                                <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/10 px-4 py-3 text-emerald-800 dark:text-emerald-200 text-sm">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                            <p className="font-semibold">Agenda de hoje</p>
+                                            <p className="text-[12px] text-emerald-700 dark:text-emerald-200/80">
+                                                {agendaTodayItems.length} compromisso(s) marcado(s) para hoje.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setCurrentView(ViewState.AGENDA)}
+                                                className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
+                                            >
+                                                Ver agenda
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={dismissAgendaNotice}
+                                                className="rounded-full border border-emerald-300/70 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/60 dark:text-emerald-100 dark:hover:bg-emerald-800/40"
+                                            >
+                                                Dispensar
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+                        )}
+                        {content}
+                    </div>
+                    {!isMobile && companySheetOpen && (
+                        <div
+                            className="fixed inset-x-0 z-[120] px-4 sm:px-6"
+                            style={{ bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)' }}
+                            data-modal-root="true"
+                        >
+                            <div className="mx-auto w-full max-w-5xl">
+                                <CompanyDetailsSheet company={companyInfo} onClose={() => setCompanySheetOpen(false)} />
+                            </div>
                         </div>
                     )}
-                    {content}
                 </div>
-                {!isMobile && companySheetOpen && (
-                    <div
-                        className="fixed inset-x-0 z-[120] px-4 sm:px-6"
-                        style={{ bottom: 'calc(var(--mm-desktop-dock-height, 84px) + 10px)' }}
-                        data-modal-root="true"
-                    >
-                        <div className="mx-auto w-full max-w-5xl">
-                            <CompanyDetailsSheet company={companyInfo} onClose={() => setCompanySheetOpen(false)} />
-                        </div>
+                {debugLayoutEnabled && !isMobile && layoutMetrics && (
+                    <div className="pointer-events-none fixed left-3 top-3 z-[2500] max-w-[360px] rounded-xl border border-cyan-300/30 bg-black/80 px-3 py-2 text-[11px] leading-4 text-cyan-100 shadow-2xl backdrop-blur-md">
+                        <p className="font-semibold tracking-wide text-cyan-200">Layout Debug HUD</p>
+                        <p>viewport: {layoutMetrics.viewportWidth}x{layoutMetrics.viewportHeight}</p>
+                        <p>header/dock/sub: {layoutMetrics.headerHeight}/{layoutMetrics.dockHeight}/{layoutMetrics.subheaderHeight}</p>
+                        <p>contentAvail: {layoutMetrics.contentAvailableHeight}</p>
+                        <p>main c/s: {layoutMetrics.mainClientHeight}/{layoutMetrics.mainScrollHeight}</p>
+                        <p className="mt-1 font-semibold text-cyan-300">offenders:</p>
+                        <ul className="max-h-36 overflow-y-auto pr-1">
+                            {layoutMetrics.offenders.length === 0 ? (
+                                <li className="text-cyan-200/80">none</li>
+                            ) : (
+                                layoutMetrics.offenders.map((offender, index) => (
+                                    <li key={`${offender.selector}-${index}`} className="break-all text-cyan-100/90">
+                                        {offender.selector} ({offender.clientHeight}/{offender.scrollHeight})
+                                    </li>
+                                ))
+                            )}
+                        </ul>
                     </div>
                 )}
             </div>
@@ -4884,6 +6403,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
   return (
       <>
         {currentView === ViewState.DASHBOARD && renderLayout(
+            <div data-tour-anchor="tour-view-dashboard" data-tour-screen="dashboard">
             <Dashboard 
                 onOpenAccounts={() => setCurrentView(ViewState.ACCOUNTS)}
                 onOpenVariableExpenses={() => {
@@ -4945,11 +6465,13 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 isPwaInstallable={pwaInstallMode === 'installable'}
                 isStandalone={isStandalone}
                 onInstallApp={triggerInstall}
-            />,
+            />
+            </div>,
             { skipMobileOffset: true }
         )}
 
       {currentView === ViewState.REPORTS && renderLayout(
+          <div data-tour-anchor="tour-view-reports" data-tour-screen="reports">
           <ReportsView 
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
              incomes={incomes}
@@ -4959,47 +6481,74 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              creditCards={creditCards}
              licenseId={currentUser?.licenseId}
              expenseTypeOptions={expenseTypeOptions}
-          />,
+          />
+          </div>,
+          { skipMobileOffset: true }
+      )}
+
+      {currentView === ViewState.AUDIT && renderLayout(
+          <div data-tour-anchor="tour-view-audit" data-tour-screen="audit">
+          <AuditLogModal
+             isOpen={currentView === ViewState.AUDIT}
+             onClose={() => {
+                 const previous = viewHistoryRef.current.pop();
+                 setCurrentView(previous || ViewState.DASHBOARD);
+             }}
+             licenseId={currentUser?.licenseId || null}
+             entityTypes={auditModalState.entityTypes ?? undefined}
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.AGENDA && renderLayout(
+          <div data-tour-anchor="tour-view-agenda" data-tour-screen="agenda">
           <AgendaView
             items={agendaItems}
             onSave={handleUpsertAgendaItem}
             onDelete={handleDeleteAgendaItem}
             onBack={() => setCurrentView(ViewState.DASHBOARD)}
             viewDate={viewDate}
-          />,
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.DAS && renderLayout(
+          <div data-tour-anchor="tour-view-das" data-tour-screen="das">
           <DasView
               onBack={() => setCurrentView(ViewState.DASHBOARD)}
               company={companyInfo}
               onOpenCompany={() => setCurrentView(ViewState.SETTINGS)}
           />
+          </div>,
+          { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.ACCOUNTS && renderLayout(
+          <div data-tour-anchor="tour-view-accounts" data-tour-screen="accounts">
           <AccountsView 
              accounts={accounts}
              onUpdateAccounts={handleUpdateAccounts}
              onDeleteAccount={handleDeleteAccount}
              incomes={incomes}
              expenses={expenses}
+             transfers={transfers}
+             onCreateTransfer={handleCreateTransfer}
+             onDeleteTransfer={handleDeleteTransfer}
              accountTypes={accountTypes}
              onUpdateAccountTypes={setAccountTypes}
              onAuditLog={handleAuditLog}
-             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['account'] })}
+             onOpenAudit={isMobile ? undefined : () => openAuditPanel(['account'])}
              balanceSnapshot={balanceSnapshot}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
-          />,
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.INCOMES && renderLayout(
+          <div data-tour-anchor="tour-view-incomes" data-tour-screen="incomes">
           <IncomesView 
              incomes={incomes}
              autoOpenNew={autoOpenIncome}
@@ -5017,9 +6566,10 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('incomes', name)}
              onRemoveCategory={(name) => handleRemoveCategory('incomes', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['income'] })}
+             onOpenAudit={isMobile ? undefined : () => openAuditPanel(['income'])}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
-          />,
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
@@ -5067,6 +6617,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       )}
 
       {currentView === ViewState.YIELDS && renderLayout(
+          <div data-tour-anchor="tour-view-yields" data-tour-screen="yields">
           <YieldsView 
              accounts={accounts}
              onUpdateAccounts={handleUpdateAccounts}
@@ -5074,17 +6625,27 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              licenseId={currentUser?.licenseId || null}
              licenseCryptoEpoch={licenseCryptoEpoch}
              onAuditLog={handleAuditLog}
-             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['yield'] })}
+             onOpenAudit={isMobile ? undefined : () => openAuditPanel(['yield'])}
+             onOpenNewAccount={() => {
+                 setCurrentView(ViewState.ACCOUNTS);
+                 if (typeof window !== 'undefined') {
+                     window.setTimeout(() => {
+                         window.dispatchEvent(new CustomEvent('mm:tour-open-account-modal'));
+                     }, 60);
+                 }
+             }}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
-          />,
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.INVOICES && renderLayout(
+          <div data-tour-anchor="tour-view-invoices" data-tour-screen="invoices">
           <FaturasErrorBoundary>
               <InvoicesView 
                  onBack={() => setCurrentView(ViewState.DASHBOARD)}
-                 onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+                 onOpenAudit={isMobile ? undefined : () => openAuditPanel(['expense'])}
                  expenses={expenses}
                  creditCards={creditCards}
                  accounts={accounts}
@@ -5101,12 +6662,14 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                  }}
                  onAddCategory={(name) => handleAddCategory('expenses', name)}
               />
-          </FaturasErrorBoundary>,
+          </FaturasErrorBoundary>
+          </div>,
           { skipMobileOffset: true }
       )}
 
       {/* Expense Views */}
       {currentView === ViewState.VARIABLE_EXPENSES && renderLayout(
+         <div data-tour-anchor="tour-view-variable-expenses" data-tour-screen="variable_expenses">
          <ExpensesView 
              title={`Despesas ${variableExpenseLabel}`}
              subtitle="Gerencie seus gastos"
@@ -5131,14 +6694,16 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             onOpenAudit={isMobile ? undefined : () => openAuditPanel(['expense'])}
              mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
-          />,
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.FIXED_EXPENSES && renderLayout(
+         <div data-tour-anchor="tour-view-fixed-expenses" data-tour-screen="fixed_expenses">
          <ExpensesView 
              title={`Despesas ${fixedExpenseLabel}`}
              subtitle="Contas recorrentes"
@@ -5163,14 +6728,16 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             onOpenAudit={isMobile ? undefined : () => openAuditPanel(['expense'])}
              mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
-          />,
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
       {currentView === ViewState.PERSONAL_EXPENSES && renderLayout(
+         <div data-tour-anchor="tour-view-personal-expenses" data-tour-screen="personal_expenses">
          <ExpensesView 
              title={`Despesas ${personalExpenseLabel}`}
              subtitle="Retiradas pessoais"
@@ -5195,10 +6762,11 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              onAddCategory={(name) => handleAddCategory('expenses', name)}
              onRemoveCategory={(name) => handleRemoveCategory('expenses', name)}
              onResetCategories={handleResetCategories}
-             onOpenAudit={isMobile ? undefined : () => setAuditModalState({ isOpen: true, entityTypes: ['expense'] })}
+             onOpenAudit={isMobile ? undefined : () => openAuditPanel(['expense'])}
              mobileScope={mobileExpensesScope}
              onBack={() => setCurrentView(ViewState.DASHBOARD)}
-          />,
+          />
+          </div>,
           { skipMobileOffset: true }
       )}
 
@@ -5211,7 +6779,12 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
 
       {currentView === ViewState.MASTER && isMasterUser && renderLayout(
           <MasterControlPanel
-              onBack={() => setCurrentView(ViewState.DASHBOARD)}
+              onBack={() => {
+                setMasterInitialMode(null);
+                setCurrentView(ViewState.DASHBOARD);
+              }}
+              initialMode={masterInitialMode}
+              onInitialModeHandled={() => setMasterInitialMode(null)}
           />
       )}
 
@@ -5222,21 +6795,17 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           companyInfo={companyInfo}
           onUpdateCompany={handleUpdateCompany}
           onSystemReset={handleSystemReset}
-          onOpenInstall={openModalManual}
-          isAppInstalled={isPwaInstalled}
-          tipsEnabled={tipsEnabled}
-          onUpdateTipsEnabled={handleTipsEnabledChange}
+            onOpenInstall={openModalManual}
+            isAppInstalled={isPwaInstalled}
+            isMasterUser={isMasterUser}
+            tipsEnabled={tipsEnabled}
+            onUpdateTipsEnabled={handleTipsEnabledChange}
+            appVersion={APP_VERSION}
         />
       )}
       <CalculatorModal 
           isOpen={isCalculatorOpen}
           onClose={() => setIsCalculatorOpen(false)}
-      />
-      <AuditLogModal
-          isOpen={auditModalState.isOpen}
-          onClose={() => setAuditModalState(prev => ({ ...prev, isOpen: false }))}
-          licenseId={currentUser?.licenseId || null}
-          entityTypes={auditModalState.entityTypes ?? undefined}
       />
       {isMobile && isQuickExpenseOpen && (
           <NewExpenseModal
@@ -5379,12 +6948,27 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           </div>
       )}
       <InstallAppModal
-          isOpen={isPwaInstallOpen}
+          isOpen={isInstallStepModalVisible}
           isInstalled={isPwaInstalled}
           mode={pwaInstallMode}
-          onInstall={triggerInstall}
-          onClose={closePwaModal}
+          onInstall={handleInstallStepInstall}
+          onClose={handleInstallStepClose}
       />
+      <TourDecisionModal
+          isOpen={isTourDecisionOpen}
+          companyName={companyInfo?.name || ''}
+          onAccept={() => applyTourDecision('accepted', 'manual_accept')}
+          onDecline={() => applyTourDecision('declined', 'manual_decline')}
+      />
+      {!isMobile && (
+          <DesktopFirstAccessTour
+              scopeId={authUser?.uid || undefined}
+              enabled={onboardingCompleted && installDecisionCompleted && tourDecision === 'accepted'}
+              restartToken={tourRestartToken}
+              currentView={currentView}
+              onSetView={setCurrentView}
+          />
+      )}
       {isMobile && (
           <MobileQuickAccessFooter items={mobileQuickAccessItems} />
       )}

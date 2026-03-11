@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Trash2, Pencil } from 'lucide-react';
 import type { AgendaItem } from '../types';
 import useIsMobile from '../hooks/useIsMobile';
@@ -38,6 +38,11 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
   const [time, setTime] = useState('');
   const [notes, setNotes] = useState('');
   const [notifyBeforeMinutes, setNotifyBeforeMinutes] = useState<number | null>(DEFAULT_NOTIFY_MINUTES);
+  const subHeaderRef = useRef<HTMLDivElement | null>(null);
+  const firstSectionRef = useRef<HTMLDivElement | null>(null);
+  const [subHeaderHeight, setSubHeaderHeight] = useState(0);
+  const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
+  const [topAdjust, setTopAdjust] = useState(0);
 
   const todayKey = buildTodayKey();
   const baseDate = viewDate ? new Date(viewDate) : new Date();
@@ -79,6 +84,50 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
       return dt >= start && dt < end;
     }).length;
   }, [sortedItems]);
+
+  useLayoutEffect(() => {
+    const headerNode = subHeaderRef.current;
+    const sectionNode = firstSectionRef.current;
+    if (!headerNode || !sectionNode) return;
+
+    const measureGap = () => {
+      const headerBottom = headerNode.getBoundingClientRect().bottom;
+      const sectionTop = sectionNode.getBoundingClientRect().top;
+      const gap = Math.round(sectionTop - headerBottom);
+      const desired = 0;
+      setTopAdjust((prev) => {
+        const nextAdjust = Math.max(0, gap - desired + prev);
+        return prev === nextAdjust ? prev : nextAdjust;
+      });
+    };
+
+    measureGap();
+    window.addEventListener('resize', measureGap);
+    return () => window.removeEventListener('resize', measureGap);
+  }, [subHeaderHeight, topAdjust]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const node = subHeaderRef.current;
+    if (!node) return;
+
+    const updateMetrics = () => {
+      const rect = node.getBoundingClientRect();
+      const height = Math.round(rect.height);
+      setSubHeaderHeight((prev) => (prev === height ? prev : height));
+      const fillHeight = Math.max(0, Math.round(rect.top));
+      setHeaderFill((prev) => (prev.top === 0 && prev.height === fillHeight ? prev : { top: 0, height: fillHeight }));
+    };
+
+    updateMetrics();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateMetrics) : null;
+    observer?.observe(node);
+    window.addEventListener('resize', updateMetrics);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateMetrics);
+    };
+  }, [isMobile]);
 
   const resolveEventMs = (dateValue?: string, timeValue?: string) => {
     if (!dateValue) return undefined;
@@ -173,12 +222,12 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
   };
 
   const selectedItems = selectedDayKey ? itemsByDate.get(selectedDayKey) || [] : [];
-  const headerCardRadius = isMobile ? 'rounded-none' : 'rounded-xl';
-  const headerActionRadius = isMobile ? 'rounded-none' : 'rounded-2xl';
-  const dayCellRadius = isMobile ? 'rounded-none' : 'rounded-xl';
+  const headerCardRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
+  const headerActionRadius = isMobile ? 'rounded-xl' : 'rounded-2xl';
+  const dayCellRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
 
   const headerContent = (
-      <div className="space-y-[5px]">
+      <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
       <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
         <div className="h-8 w-8" aria-hidden="true" />
         <div className="min-w-0 text-center">
@@ -191,15 +240,15 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
       </div>
 
       <div className="grid grid-cols-3 gap-[5px]">
-        <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
+        <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
           <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Hoje</p>
           <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">{todayCount}</p>
         </div>
-        <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
+        <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
           <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Próximos 7 dias</p>
           <p className="text-[12px] font-semibold text-indigo-600 dark:text-indigo-400">{weekCount}</p>
         </div>
-        <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
+        <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
           <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total</p>
           <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{items.length}</p>
         </div>
@@ -211,7 +260,8 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
           onClick={() => {
             openFormForDate(defaultDateKey);
           }}
-          className={`w-full ${headerActionRadius} bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-emerald-900/20 transition active:scale-[0.98]`}
+          data-tour-anchor="agenda-new"
+          className={`w-full mm-mobile-primary-cta mm-btn-base mm-btn-primary mm-btn-primary-emerald ${headerActionRadius}`}
         >
           Novo agendamento
         </button>
@@ -298,36 +348,67 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
   );
 
   return (
-    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300">
-      <div className={isMobile ? 'pt-0 relative z-10' : 'max-w-7xl mx-auto px-4 sm:px-6 pt-6 relative z-10'}>
-        {isMobile ? (
-          <MobileFullWidthSection contentClassName="px-3 pt-0 pb-[5px]">
-            {headerContent}
-          </MobileFullWidthSection>
-        ) : (
-          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
-            {headerContent}
-          </div>
-        )}
-      </div>
-
-      <main className={`w-full ${isMobile ? 'mt-0 pb-12 space-y-0' : 'mt-[var(--mm-content-gap)] pb-12 space-y-4'}`}>
-        {isMobile ? (
-          <MobileFullWidthSection
-            contentClassName="px-3 pt-0 pb-3"
-            withDivider={false}
-            backgroundClassName="bg-emerald-50/60 dark:bg-emerald-500/10"
-          >
-            <div className="flex flex-col">{calendarContent}</div>
-          </MobileFullWidthSection>
-        ) : (
-          <div className="px-4 sm:px-6">
-            <div className="mx-auto w-full md:w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] md:max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] rounded-3xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/60 dark:bg-emerald-500/10 p-4 flex flex-col md:min-h-[calc(100vh-var(--mm-header-height,120px)-var(--mm-desktop-dock-height,84px)-var(--mm-subheader-height,176px)-96px)]">
-              {calendarContent}
+    <>
+      {isMobile ? (
+        <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+          <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
+            {headerFill.height > 0 && (
+              <div
+                className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
+                style={{ top: headerFill.top, height: headerFill.height }}
+              />
+            )}
+            <div
+              className="fixed left-0 right-0 z-30"
+              style={{ top: 'var(--mm-mobile-top, 0px)' }}
+            >
+              <div
+                ref={subHeaderRef}
+                className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
+              >
+                <div className="mm-mobile-subheader-pad mm-mobile-subheader-pad-tight">
+                  {headerContent}
+                </div>
+              </div>
+            </div>
+            <div
+              className="h-full overflow-y-auto px-0 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px))]"
+              style={{
+                paddingTop: subHeaderHeight
+                  ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px - ${topAdjust}px)`
+                  : 'calc(var(--mm-mobile-top, 0px))'
+              }}
+            >
+              <div className="space-y-0">
+                <div ref={firstSectionRef}>
+                  <MobileFullWidthSection
+                    contentClassName="mm-mobile-section-pad mm-mobile-section-pad-tight-top pb-3"
+                    withDivider={false}
+                    backgroundClassName="bg-emerald-50/60 dark:bg-emerald-500/10"
+                  >
+                    <div className="flex flex-col">{calendarContent}</div>
+                  </MobileFullWidthSection>
+                </div>
+              </div>
             </div>
           </div>
-        )}
-      </main>
+        </div>
+      ) : (
+        <div className="mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 h-full min-h-0 flex flex-col">
+          <div className="w-full px-4 sm:px-6 pt-6 relative z-10">
+            <div className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+              {headerContent}
+            </div>
+          </div>
+          <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] flex-1 min-h-0">
+            <div className="h-full min-h-0">
+              <div className="w-full h-full min-h-0 rounded-3xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/60 dark:bg-emerald-500/10 p-4 flex flex-col">
+                {calendarContent}
+              </div>
+            </div>
+          </main>
+        </div>
+      )}
 
       {activeSheet && (
         <div className="fixed inset-0 z-[1300]">
@@ -351,7 +432,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
                   <button
                     type="button"
                     onClick={() => selectedDayKey && openFormForDate(selectedDayKey)}
-                    className="rounded-full border border-emerald-300 dark:border-emerald-700 px-3 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-300"
+                    className="mm-btn-chip mm-btn-chip-success"
                   >
                     Novo agendamento
                   </button>
@@ -401,9 +482,9 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
             )}
 
             {activeSheet === 'form' && (
-              <div className="space-y-3 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+72px)]">
+              <div className="space-y-2 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+72px)]">
                 <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
+                  <div className="text-[15px] font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
                     <CalendarDays size={16} />
                     {editingId ? 'Editar agendamento' : 'Novo agendamento'}
                   </div>
@@ -411,43 +492,43 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
 
                 <div className="grid grid-cols-1 md:grid-cols-[1.2fr,0.6fr,0.5fr] gap-2">
                   <div className="space-y-1">
-                    <label className="text-[11px] uppercase tracking-wide font-light text-zinc-500 dark:text-zinc-400">Serviço / atividade</label>
+                    <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">Serviço / atividade</label>
                     <input
                       value={title}
                       onChange={(event) => setTitle(event.target.value)}
                       placeholder="Captação de conteúdo"
-                      className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[11px] font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      className="w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[11px] uppercase tracking-wide font-light text-zinc-500 dark:text-zinc-400">Data</label>
+                    <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">Data</label>
                     <input
                       type="date"
                       value={date}
                       onChange={(event) => setDate(event.target.value)}
-                      className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[11px] font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      className="w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[11px] uppercase tracking-wide font-light text-zinc-500 dark:text-zinc-400">Horário</label>
+                    <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">Horário</label>
                     <input
                       type="time"
                       value={time}
                       onChange={(event) => setTime(event.target.value)}
-                      className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[11px] font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      className="w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] uppercase tracking-wide font-light text-zinc-500 dark:text-zinc-400">Me avise</label>
+                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">Me avise</label>
                   <select
                     value={notifyBeforeMinutes === null ? '' : String(notifyBeforeMinutes)}
                     onChange={(event) => {
                       const raw = event.target.value;
                       setNotifyBeforeMinutes(raw === '' ? null : Number(raw));
                     }}
-                    className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[11px] font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    className="w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30"
                   >
                     {NOTIFY_OPTIONS.map(option => (
                       <option key={option.value} value={option.value}>
@@ -458,13 +539,13 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] uppercase tracking-wide font-light text-zinc-500 dark:text-zinc-400">Observações</label>
+                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">Observações</label>
                   <textarea
                     value={notes}
                     onChange={(event) => setNotes(event.target.value)}
                     placeholder="Detalhes do serviço, cliente, local..."
                     rows={2}
-                    className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[11px] font-semibold text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    className="w-full min-h-[84px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none"
                   />
                 </div>
                 {!isMobile && (
@@ -508,14 +589,14 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
                   setActiveSheet(null);
                   resetForm();
                 }}
-                className="rounded-none border border-zinc-200 dark:border-zinc-800 py-3 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-3 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={handleSubmit}
-                className="rounded-none border border-emerald-500/40 py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
+                className="rounded-xl border border-emerald-500/40 py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
               >
                 Salvar
               </button>
@@ -523,7 +604,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

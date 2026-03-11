@@ -1,13 +1,12 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ShoppingCart, Trash2, X, AlertTriangle, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown } from 'lucide-react';
+import { ShoppingCart, Trash2, X, AlertTriangle, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown, Pencil, SlidersHorizontal } from 'lucide-react';
 import { withAlpha } from '../services/cardColorUtils';
 import { Expense, Account, CreditCard, ExpenseType, ExpenseTypeOption } from '../types';
 import NewExpenseModal from './NewExpenseModal';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import useIsMobile from '../hooks/useIsMobile';
-import useIsCompactHeight from '../hooks/useIsCompactHeight';
 import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import MobileEmptyState from './mobile/MobileEmptyState';
 import MobilePageShell from './mobile/MobilePageShell';
@@ -15,6 +14,7 @@ import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import { buildInstallmentDescription, getExpenseInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
+import { isCreditPaymentMethod, resolveExpenseCardId } from '../services/invoiceUtils';
 import { DEFAULT_EXPENSE_TYPES } from '../constants';
 import SelectDropdown from './common/SelectDropdown';
 import { PREMIUM_COLOR_PRESETS } from './ui/colorPresets';
@@ -93,7 +93,6 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const isMobile = useIsMobile();
-  const isCompactHeight = useIsCompactHeight();
   const [mobileScreen, setMobileScreen] = useState<'list' | 'form'>('list');
   const [drawerExpense, setDrawerExpense] = useState<Expense | null>(null);
   const [mobilePageIndex, setMobilePageIndex] = useState(0);
@@ -104,7 +103,22 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
   const [mobileExpenseType, setMobileExpenseType] = useState<ExpenseType | null>(expenseType);
+  const [desktopFilterOpen, setDesktopFilterOpen] = useState(false);
+  const [desktopSearchTerm, setDesktopSearchTerm] = useState('');
+  const [desktopStatusFilter, setDesktopStatusFilter] = useState<'all' | 'paid' | 'pending'>('all');
+  const [desktopSourceFilter, setDesktopSourceFilter] = useState<'all' | string>('all');
+  const [desktopCategoryFilter, setDesktopCategoryFilter] = useState<'all' | string>('all');
   const canAdjustAccount = (account?: Account | null) => Boolean(account && !account.locked);
+  const selectChangedAccounts = (baseAccounts: Account[], nextAccounts: Account[]) => {
+      const baseById = new Map(baseAccounts.map(account => [account.id, account]));
+      return nextAccounts.filter(account => {
+          const previous = baseById.get(account.id);
+          if (!previous) return true;
+          const previousBalance = Number(previous.currentBalance || 0);
+          const nextBalance = Number(account.currentBalance || 0);
+          return Math.abs(previousBalance - nextBalance) > 0.009;
+      });
+  };
   const resolvedTypeOptions = (expenseTypeOptions && expenseTypeOptions.length > 0)
     ? expenseTypeOptions
     : DEFAULT_EXPENSE_TYPES;
@@ -113,6 +127,12 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   const [typeDrafts, setTypeDrafts] = useState<ExpenseTypeOption[]>([]);
   const [typeError, setTypeError] = useState('');
   const isSingleTypeManager = !isMobile && expenseType && expenseType !== 'all';
+  const tourNewExpenseButtonAnchor =
+      expenseType === 'fixed'
+          ? 'expenses-fixed-new'
+          : expenseType === 'personal'
+              ? 'expenses-personal-new'
+              : 'expenses-variable-new';
 
   useEffect(() => {
       if (highlightTarget && highlightTarget.entity === 'expense' && highlightTarget.subtype === expenseType) {
@@ -140,6 +160,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       console.info('[layout][mobile-subheader] expenses in-flow', { type: expenseType });
       headerLayoutLoggedRef.current = true;
   }, [isMobile, expenseType]);
+
+  useEffect(() => {
+      if (!isMobile) return;
+      setDesktopFilterOpen(false);
+  }, [isMobile]);
 
   useEffect(() => {
       if (!isMobile || typeof window === 'undefined') return;
@@ -215,19 +240,86 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
              targetDate.getMonth() === viewDate.getMonth() && 
              targetDate.getFullYear() === viewDate.getFullYear();
   });
-  const selectableExpenses = filteredExpenses.filter(exp => !exp.locked);
 
-  const totalAmount = filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-  const totalPaid = filteredExpenses.filter(e => e.status === 'paid').reduce((acc, curr) => acc + curr.amount, 0);
-  const EXPENSE_COLLAPSE_LIMIT = 10;
-  const visibleExpenses = filteredExpenses;
-  const expenseDesktopNeedsScroll = isCompactHeight || filteredExpenses.length > EXPENSE_COLLAPSE_LIMIT;
+  const sourceNameByExpenseId = React.useMemo(() => {
+      const accountNameById = new Map(accounts.map(account => [account.id, account.name]));
+      const cardNameById = new Map(creditCards.map(card => [card.id, card.name]));
+      const map = new Map<string, string>();
+      filteredExpenses.forEach(expense => {
+          const resolvedCardId = resolveExpenseCardId(expense as Expense & { creditCardId?: string });
+          const isCreditExpense =
+              isCreditPaymentMethod(expense.paymentMethod) || Boolean(resolvedCardId);
+          const sourceName = isCreditExpense
+              ? cardNameById.get(resolvedCardId || expense.accountId || '') || 'Cartão Deletado'
+              : accountNameById.get(expense.accountId || '') || 'Conta Deletada';
+          map.set(expense.id, sourceName);
+      });
+      return map;
+  }, [accounts, creditCards, filteredExpenses]);
+
+  const desktopCategoryOptions = React.useMemo(
+      () =>
+          Array.from(
+              new Set(
+                  filteredExpenses
+                      .map(item => (item.category || '').trim())
+                      .filter(Boolean)
+              )
+          ).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      [filteredExpenses]
+  );
+  const desktopSourceOptions = React.useMemo(
+      () =>
+          Array.from(
+              new Set(
+                  filteredExpenses
+                      .map(item => sourceNameByExpenseId.get(item.id) || '')
+                      .filter(Boolean)
+              )
+          ).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      [filteredExpenses, sourceNameByExpenseId]
+  );
+  const normalizedDesktopSearch = desktopSearchTerm.trim().toLowerCase();
+  const visibleExpenses = isMobile
+      ? filteredExpenses
+      : filteredExpenses.filter(expense => {
+            if (desktopStatusFilter !== 'all' && expense.status !== desktopStatusFilter) return false;
+            const sourceName = sourceNameByExpenseId.get(expense.id) || '';
+            if (desktopSourceFilter !== 'all' && sourceName !== desktopSourceFilter) return false;
+            if (desktopCategoryFilter !== 'all' && expense.category !== desktopCategoryFilter) return false;
+            if (!normalizedDesktopSearch) return true;
+            const haystack = [
+                expense.description,
+                expense.category,
+                expense.paymentMethod,
+                expense.taxStatus,
+                expense.notes || '',
+                sourceName
+            ]
+                .join(' ')
+                .toLowerCase();
+            return haystack.includes(normalizedDesktopSearch);
+        });
+  const selectableExpenses = visibleExpenses.filter(exp => !exp.locked);
+
+  const totalAmount = visibleExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+  const totalPaid = visibleExpenses.filter(e => e.status === 'paid').reduce((acc, curr) => acc + curr.amount, 0);
   const isListViewSafe = isMobile ? mobileScreen === 'list' : true;
-  const allowPageScroll = isMobile ? false : expenseDesktopNeedsScroll;
+  const allowPageScroll = !isMobile;
   const MOBILE_PAGE_SIZE = 8;
   const mobilePages = chunkItems(visibleExpenses, MOBILE_PAGE_SIZE);
   const hasMobilePages = mobilePages.length > 1;
+  const desktopActiveFilterCount =
+      (normalizedDesktopSearch ? 1 : 0) +
+      (desktopStatusFilter !== 'all' ? 1 : 0) +
+      (desktopSourceFilter !== 'all' ? 1 : 0) +
+      (desktopCategoryFilter !== 'all' ? 1 : 0);
   useEffect(() => {
+      if (!isMobile) {
+          document.documentElement.classList.remove('lock-scroll');
+          document.body.classList.remove('lock-scroll');
+          return;
+      }
       const shouldLock = !allowPageScroll;
       document.documentElement.classList.toggle('lock-scroll', shouldLock);
       document.body.classList.toggle('lock-scroll', shouldLock);
@@ -235,14 +327,22 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           document.documentElement.classList.remove('lock-scroll');
           document.body.classList.remove('lock-scroll');
       };
-  }, [allowPageScroll]);
+  }, [allowPageScroll, isMobile]);
+
+  useEffect(() => {
+      const visibleIds = new Set(visibleExpenses.map(expense => expense.id));
+      setSelectedIds(prev => {
+          const next = prev.filter(id => visibleIds.has(id));
+          return next.length === prev.length ? prev : next;
+      });
+  }, [visibleExpenses]);
 
   // --- SELECTION CALCULATIONS ---
-  const selectedExpenses = filteredExpenses.filter(e => selectedIds.includes(e.id));
+  const selectedExpenses = visibleExpenses.filter(e => selectedIds.includes(e.id));
   const selectedTotalAmount = selectedExpenses.reduce((acc, curr) => acc + curr.amount, 0);
   const selectedPaidTotal = selectedExpenses.filter(e => e.status === 'paid').reduce((acc, curr) => acc + curr.amount, 0);
   const hasSelection = selectedIds.length > 0;
-  const headerCount = hasSelection ? selectedExpenses.length : filteredExpenses.length;
+  const headerCount = hasSelection ? selectedExpenses.length : visibleExpenses.length;
   const headerTotal = hasSelection ? selectedTotalAmount : totalAmount;
   const headerPaid = hasSelection ? selectedPaidTotal : totalPaid;
 
@@ -352,7 +452,6 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   const handleSaveExpense = (expenseData: any) => {
       let updatedList;
       let newItems: Expense[] = [];
-      let applyNewTransactionImpact = true;
 
       if (Array.isArray(expenseData)) {
           newItems = expenseData.map((e: any) => ({
@@ -366,8 +465,26 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           const isEditing = payload.id && expenses.some(e => e.id === payload.id);
           
           if (isEditing) {
-              const previousExpense = expenses.find(e => e.id === payload.id) || null;
-              const updatedExpense: Expense = { ...(previousExpense as Expense), ...payload, type: (payload.type || previousExpense?.type || expenseType) };
+              const previousExpense = (expenses.find(e => e.id === payload.id) || null) as (Expense & { creditCardId?: string }) | null;
+              const nextPaymentMethod = payload.paymentMethod ?? previousExpense?.paymentMethod ?? '';
+              const isCreditExpense = isCreditPaymentMethod(nextPaymentMethod);
+              const previousCardId = previousExpense ? resolveExpenseCardId(previousExpense) : undefined;
+              const payloadCardId = typeof payload.cardId === 'string' ? payload.cardId : undefined;
+              const normalizedPayload = {
+                  ...payload,
+                  paymentMethod: isCreditExpense ? 'Crédito' : nextPaymentMethod,
+                  accountId: isCreditExpense
+                      ? undefined
+                      : (payload.accountId ?? previousExpense?.accountId),
+                  cardId: isCreditExpense
+                      ? (payloadCardId || previousCardId || undefined)
+                      : undefined
+              };
+              const updatedExpense: Expense = {
+                  ...(previousExpense as Expense),
+                  ...normalizedPayload,
+                  type: (normalizedPayload.type || previousExpense?.type || expenseType)
+              };
               let seriesUpdated = false;
 
               if (applyScope === 'series' && previousExpense?.installments) {
@@ -382,7 +499,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
                       const updatedSeries = targetItems.map(item => ({
                           ...item,
-                          ...payload,
+                          ...normalizedPayload,
                           id: item.id,
                           description: buildInstallmentDescription(baseDescription, item.installmentNumber, item.totalInstallments),
                           installmentGroupId: groupId,
@@ -408,7 +525,12 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                       previousExpense,
                       updatedExpense
                   );
-                  if (accountsChanged) onUpdateAccounts(newAccounts);
+                  if (accountsChanged) {
+                      const changedAccounts = selectChangedAccounts(accounts, newAccounts);
+                      if (changedAccounts.length) {
+                          onUpdateAccounts(changedAccounts);
+                      }
+                  }
               }
           } else {
               const newExpense: Expense = {
@@ -423,7 +545,12 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
               if (onUpdateAccounts && newExpense.status === 'paid' && newExpense.accountId) {
                   const { accounts: newAccounts, accountsChanged } = applyExpenseAccountAdjustments(null, newExpense);
-                  if (accountsChanged) onUpdateAccounts(newAccounts);
+                  if (accountsChanged) {
+                      const changedAccounts = selectChangedAccounts(accounts, newAccounts);
+                      if (changedAccounts.length) {
+                          onUpdateAccounts(changedAccounts);
+                      }
+                  }
               }
           }
       }
@@ -434,6 +561,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   const handleEditExpense = (expense: Expense) => {
       if (expense.locked) return;
+      setDesktopFilterOpen(false);
       setEditingExpense(expense);
       setInlineEditExpenseId(expense.id);
       setInlineNewOpen(false);
@@ -449,7 +577,12 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       if (onUpdateAccounts && expenseToDelete.status === 'paid' && expenseToDelete.accountId) {
           const { accounts: newAccounts, accountsChanged } = applyExpenseAccountAdjustments(expenseToDelete, null);
-          if (accountsChanged) onUpdateAccounts(newAccounts);
+          if (accountsChanged) {
+              const changedAccounts = selectChangedAccounts(accounts, newAccounts);
+              if (changedAccounts.length) {
+                  onUpdateAccounts(changedAccounts);
+              }
+          }
       }
 
       onDeleteExpense(expenseToDelete.id);
@@ -458,7 +591,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   };
 
   const handleBulkDeleteConfirm = () => {
-      const toDelete = filteredExpenses.filter(e => selectedIds.includes(e.id));
+      const toDelete = visibleExpenses.filter(e => selectedIds.includes(e.id));
       let currentAccounts = [...accounts];
       let anyAccountChanged = false;
 
@@ -478,7 +611,10 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       });
 
       if (anyAccountChanged && onUpdateAccounts) {
-          onUpdateAccounts(currentAccounts);
+          const changedAccounts = selectChangedAccounts(accounts, currentAccounts);
+          if (changedAccounts.length) {
+              onUpdateAccounts(changedAccounts);
+          }
       }
 
       setSelectedIds([]);
@@ -486,7 +622,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   };
 
   const handleBulkStatusChange = (newStatus: 'paid' | 'pending') => {
-      const toUpdate = filteredExpenses.filter(e => selectedIds.includes(e.id) && e.status !== newStatus);
+      const toUpdate = visibleExpenses.filter(e => selectedIds.includes(e.id) && e.status !== newStatus);
       if (toUpdate.length === 0) {
           setSelectedIds([]);
           return;
@@ -515,7 +651,10 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       onUpdateExpenses(currentExpenses);
       if (anyAccountChanged && onUpdateAccounts) {
-          onUpdateAccounts(currentAccounts);
+          const changedAccounts = selectChangedAccounts(accounts, currentAccounts);
+          if (changedAccounts.length) {
+              onUpdateAccounts(changedAccounts);
+          }
       }
       setSelectedIds([]);
   };
@@ -530,6 +669,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           console.info('[mobile-ui] expenses', { screen: 'form', action: 'new', type: expenseType });
           return;
       }
+      setDesktopFilterOpen(false);
       setInlineNewOpen(true);
       setInlineEditExpenseId(null);
       setEditingExpense(null);
@@ -560,8 +700,9 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   }, [autoOpenEditId, expenses, effectiveMobileScope, isMobile, onAutoOpenEditHandled]);
 
   const getSourceInfo = (expense: Expense) => {
-      if (expense.creditCardId) {
-          const card = creditCards.find(c => c.id === expense.creditCardId);
+      const expenseCardId = resolveExpenseCardId(expense as Expense & { creditCardId?: string });
+      if (expenseCardId) {
+          const card = creditCards.find(c => c.id === expenseCardId);
           return { name: card?.name || 'Cartão', icon: <ShoppingCart size={14} style={{ color: expenseAccentColor }} /> };
       }
       const account = accounts.find(a => a.id === expense.accountId);
@@ -647,10 +788,65 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   };
 
   useEffect(() => {
-      if (!drawerExpense) {
-          setInlineEditExpenseId(null);
-          return;
-      }
+      if (isMobile) return;
+      const handleListArrowNavigation = (event: KeyboardEvent) => {
+          if (event.defaultPrevented || event.repeat) return;
+          if (event.ctrlKey || event.metaKey || event.altKey) return;
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          if (document.querySelector('[data-modal-root="true"]')) return;
+
+          const target = event.target as HTMLElement | null;
+          if (target) {
+              const tagName = target.tagName;
+              if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target.isContentEditable) {
+                  return;
+              }
+          }
+
+          if (inlineNewOpen || inlineEditExpenseId || isBulkDeleteModalOpen || expenseToDelete) return;
+
+          const navigableExpenses = visibleExpenses.filter(
+              expense => !(expense.locked || expense.lockedReason === 'epoch_mismatch')
+          );
+          if (navigableExpenses.length === 0) return;
+
+          event.preventDefault();
+          const direction = event.key === 'ArrowDown' ? 1 : -1;
+          const anchorId = highlightedId;
+          const currentIndex = anchorId
+              ? navigableExpenses.findIndex(expense => expense.id === anchorId)
+              : -1;
+          const nextIndex =
+              currentIndex === -1
+                  ? (direction > 0 ? 0 : navigableExpenses.length - 1)
+                  : (currentIndex + direction + navigableExpenses.length) % navigableExpenses.length;
+          const nextExpense = navigableExpenses[nextIndex];
+          if (!nextExpense) return;
+
+          setHighlightedId(nextExpense.id);
+          requestAnimationFrame(() => {
+              document.getElementById(`expense-${nextExpense.id}`)?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'nearest'
+              });
+          });
+      };
+
+      window.addEventListener('keydown', handleListArrowNavigation);
+      return () => window.removeEventListener('keydown', handleListArrowNavigation);
+  }, [
+      drawerExpense,
+      expenseToDelete,
+      highlightedId,
+      inlineEditExpenseId,
+      inlineNewOpen,
+      isBulkDeleteModalOpen,
+      isMobile,
+      visibleExpenses
+  ]);
+
+  useEffect(() => {
+      if (!drawerExpense) return;
       if (inlineEditExpenseId && inlineEditExpenseId !== drawerExpense.id) {
           setInlineEditExpenseId(null);
       }
@@ -718,7 +914,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           : (editingExpense ? 'Editar Despesa' : 'Nova Despesa');
 
   const mobileHeader = (
-          <div className="space-y-2">
+          <div className={`space-y-2 mm-mobile-header-stack ${isListView ? 'mm-mobile-header-stable' : ''}`}>
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
                   <button
                       type="button"
@@ -740,17 +936,17 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
               {isListView && (
                   <>
                       <div className="grid grid-cols-3 gap-2">
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
                               <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
                           </div>
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total</p>
                               <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
                                   R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Pago</p>
                               <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
                                   R$ {headerPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -762,7 +958,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                           {onOpenAudit && (
                               <button
                                   onClick={onOpenAudit}
-                                  className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-300 hover:border-rose-200 dark:hover:border-rose-700 transition"
+                                  className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-300 hover:border-rose-200 dark:hover:border-rose-700 transition"
                                   title="Auditoria do dia"
                               >
                                   <History size={14} />
@@ -771,7 +967,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                           )}
                           <button
                               onClick={handleNew}
-                              className="w-full rounded-2xl text-white font-semibold py-2.5 text-sm shadow-lg hover:brightness-110 transition"
+                              data-tour-anchor={tourNewExpenseButtonAnchor}
+                              className="w-full rounded-xl mm-mobile-primary-cta text-white font-semibold py-2.5 text-sm shadow-lg hover:brightness-110 transition"
                               style={{ backgroundColor: expenseAccentColor, boxShadow: `0 12px 24px ${withAlpha(expenseAccentColor, 0.25)}` }}
                           >
                               Nova Despesa
@@ -800,13 +997,13 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               ref={subHeaderRef}
                               className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
-                              <div className="px-4 pb-3 pt-2">
+                              <div className="mm-mobile-subheader-pad">
                                   {mobileHeader}
                               </div>
                           </div>
                       </div>
                       <div
-                          className="h-full px-4 pb-[calc(env(safe-area-inset-bottom)+88px)] overflow-hidden"
+                          className="h-full mm-mobile-content-pad pb-[calc(env(safe-area-inset-bottom)+88px)] overflow-hidden"
                           style={{
                               paddingTop: subHeaderHeight
                                   ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px)`
@@ -814,7 +1011,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                           }}
                       >
                           {isListView ? (
-                              <MobileFullWidthSection contentClassName="px-4 py-3">
+                              <MobileFullWidthSection contentClassName="mm-mobile-section-pad">
                               <div className="space-y-3">
                                   <div className="py-2">
                                       <button
@@ -845,7 +1042,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                           const isLocked = Boolean(expense.locked || expense.lockedReason === 'epoch_mismatch');
                                           const isSelected = selectedIds.includes(expense.id);
                                           const typeColor = typeMetaById.get(expense.type)?.color || '#ef4444';
-                                          const rowBg = withAlpha(typeColor, 0.14);
+                                          const absoluteIndex = pageIndex * MOBILE_PAGE_SIZE + index;
+                                          const rowBg = absoluteIndex % 2 === 0 ? withAlpha(typeColor, 0.14) : 'transparent';
                                           return (
                                               <div
                                                   key={expense.id}
@@ -911,7 +1109,10 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                   ) : (
                                       <MobileEmptyState
                                           icon={<ShoppingCart size={18} style={{ color: expenseAccentColor }} />}
-                                          message="Nenhuma despesa encontrada para este mês."
+                                          title="Nenhuma despesa neste mês"
+                                          message="Cadastre a primeira despesa para acompanhar o que já foi pago e o que ainda está pendente."
+                                          actionLabel="Nova despesa"
+                                          onAction={handleNew}
                                       />
                                   )}
                               </div>
@@ -931,29 +1132,29 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                               aria-label="Fechar nova despesa"
                                           />
                                           <div
-                                              className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+                                              className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-t-2xl border-0 shadow-none flex flex-col"
                                               style={{ top: 0, bottom: dockOffset }}
                                           >
-                                          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+                                          <div className="px-3 pt-2.5 pb-2.5 bg-[#0b0b10] border-b border-white/10">
                                               <div className="flex items-start justify-between gap-3">
                                                   <div className="min-w-0">
                                                       <div className="flex items-center gap-2">
                                                           <ShoppingCart size={16} style={{ color: expenseAccentColor }} />
-                                                          <p className="text-[13px] font-semibold text-white truncate">{headerTitle}</p>
+                                                          <p className="text-[15px] font-semibold text-white truncate">{headerTitle}</p>
                                                       </div>
-                                                      <p className="text-[9px] text-white/70">Preencha os dados da despesa.</p>
+                                                      <p className="text-[11px] text-white/70">Preencha os dados da despesa.</p>
                                                   </div>
                                                   <button
                                                       type="button"
                                                       onClick={handleMobileFormClose}
-                                                      className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                                      className="h-8 w-8 rounded-xl bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                                                       aria-label="Fechar nova despesa"
                                                   >
                                                       <X size={16} />
                                                   </button>
                                               </div>
                                           </div>
-                                              <div className="flex-1 overflow-hidden px-3 pt-1 pb-16">
+                                              <div className="flex-1 overflow-y-auto overscroll-contain px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+132px)]">
                                                   <NewExpenseModal
                                                       isOpen
                                                       variant="inline"
@@ -995,14 +1196,14 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                                   <button
                                                       type="button"
                                                       onClick={handleMobileFormClose}
-                                                      className="rounded-none border border-rose-400/50 bg-rose-950/30 py-3 text-sm font-semibold text-rose-200 hover:bg-rose-900/40 transition"
+                                                      className="rounded-xl border border-rose-400/50 bg-rose-950/30 py-3 text-sm font-semibold text-rose-200 hover:bg-rose-900/40 transition"
                                                   >
                                                       Cancelar
                                                   </button>
                                                   <button
                                                       type="button"
                                                       onClick={() => submitRef.current?.()}
-                                                      className="rounded-none border border-rose-500/40 py-3 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition"
+                                                      className="rounded-xl border border-rose-500/40 py-3 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition"
                                                   >
                                                       Salvar
                                                   </button>
@@ -1154,14 +1355,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   const desktopHeader = (
       <div className="space-y-2">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-              <button
-                  type="button"
-                  onClick={onBack}
-                  className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-                  aria-label="Voltar para o início"
-              >
-                  <Home size={16} />
-              </button>
+              <div className="h-8 w-8" aria-hidden="true" />
               <div className="min-w-0 text-center">
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{title}</p>
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{listSubtitle}</p>
@@ -1188,11 +1382,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                           </div>
                       </div>
 
-                      <div className={`grid ${onUpdateExpenseTypes ? 'grid-cols-3' : onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+                      <div className="flex flex-wrap items-center justify-center gap-2">
               {onOpenAudit && (
                   <button
                       onClick={onOpenAudit}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+                      className="mm-btn-base mm-btn-secondary min-w-[168px] px-6"
                       title="Auditoria do dia"
                   >
                       <History size={14} />
@@ -1202,7 +1396,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
               {onUpdateExpenseTypes && (
                   <button
                       onClick={() => setIsTypeManagerOpen(true)}
-                      className="flex items-center justify-center gap-2 rounded-xl border bg-white dark:bg-[#101014] py-2 text-xs font-semibold transition hover:opacity-90"
+                      className="mm-btn-base mm-btn-secondary min-w-[120px] px-5"
                       style={{ borderColor: expenseAccentColor, color: expenseAccentColor }}
                       title="Editar tipo de despesa"
                   >
@@ -1212,7 +1406,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
               )}
                   <button
                       onClick={handleNew}
-                      className="w-full rounded-2xl text-white font-semibold py-2.5 text-sm shadow-lg hover:brightness-110 transition"
+                      data-tour-anchor={tourNewExpenseButtonAnchor}
+                      className="mm-btn-base mm-btn-primary min-w-[220px] px-8"
                       style={{ backgroundColor: expenseAccentColor, boxShadow: `0 12px 24px ${withAlpha(expenseAccentColor, 0.25)}` }}
                   >
                       Nova {getSingularTitle()}
@@ -1241,7 +1436,16 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
               className={
                   isMobile
                       ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
-                      : 'absolute left-1/2 bottom-6 w-full max-w-7xl -translate-x-1/2 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 max-h-[80vh] flex flex-col'
+                      : 'absolute left-1/2 w-full max-w-7xl -translate-x-1/2 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 flex flex-col'
+              }
+              style={
+                  isMobile
+                      ? undefined
+                      : {
+                            bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)',
+                            maxHeight:
+                                'max(320px, calc(var(--mm-content-available-height, 720px) - 20px))'
+                        }
               }
           >
               <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
@@ -1342,53 +1546,11 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   ) : null;
 
   return (
-      <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${expenseDesktopNeedsScroll ? 'pb-20' : 'pb-6'} ${expenseDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
+      <div className="bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300">
           {summarySection}
           {typeManagerModal}
 
-          {selectedIds.length > 0 && (
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-4 animate-in fade-in slide-in-from-top-2">
-                  <div
-                      className="text-white p-3 rounded-xl shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4"
-                      style={{ backgroundColor: expenseAccentColor }}
-                  >
-                      <div className="flex items-center gap-4">
-                          <span className="bg-white/20 px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-2">
-                              <CheckSquare size={16} /> {selectedIds.length} selecionados
-                          </span>
-                          <div className="h-6 w-px bg-white/20 hidden sm:block"></div>
-                          <span className="text-sm font-medium">
-                              Soma: <strong className="text-lg ml-1">R$ {selectedTotalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
-                          </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                          <button
-                              onClick={() => handleBulkStatusChange('paid')}
-                              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-xs font-bold transition-colors"
-                          >
-                              <CheckCircle2 size={14} /> Marcar Pagos
-                          </button>
-                          <button
-                              onClick={() => handleBulkStatusChange('pending')}
-                              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-bold transition-colors"
-                          >
-                              <Circle size={14} /> Marcar Pendentes
-                          </button>
-                          <button
-                              onClick={() => setIsBulkDeleteModalOpen(true)}
-                              aria-label="Excluir selecionados"
-                              className="flex-none p-1.5 bg-white/10 hover:bg-red-500 text-white rounded-lg transition-colors"
-                              title="Excluir Selecionados"
-                          >
-                              <Trash2 size={16} />
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          )}
-
-          <main className={`max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] animate-in fade-in slide-in-from-bottom-4 duration-500 ${expenseDesktopNeedsScroll ? 'pb-10' : 'pb-6'}`}>
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="space-y-3">
                   {inlineNewOpen && (
                       <NewExpenseModal
@@ -1416,21 +1578,94 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
                   {filteredExpenses.length > 0 ? (
                       <>
-                          <div className="flex items-center justify-between rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                              <button
-                                  type="button"
-                                  onClick={toggleSelectAll}
-                                  disabled={selectableExpenses.length === 0}
-                                  className="flex items-center gap-2 font-semibold disabled:opacity-50"
-                              >
-                                  {allSelectableSelected ? (
-                                      <CheckSquare size={14} className="text-rose-600" />
-                                  ) : (
-                                      <Square size={14} />
-                                  )}
-                                  <span>{allSelectableSelected ? 'Desmarcar todos' : 'Selecionar todos'}</span>
-                              </button>
-                              <span className="text-[11px]">{selectedIds.length} selecionados</span>
+                          <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400 space-y-3">
+                              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                      <button
+                                          type="button"
+                                          onClick={toggleSelectAll}
+                                          disabled={selectableExpenses.length === 0}
+                                          className="mm-btn-chip"
+                                      >
+                                          {allSelectableSelected ? (
+                                              <CheckSquare size={14} className="text-rose-600" />
+                                          ) : (
+                                              <Square size={14} />
+                                          )}
+                                          <span>{allSelectableSelected ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                                      </button>
+                                      <span className="text-[11px] font-semibold">{selectedIds.length} selecionados</span>
+                                      <span className="text-zinc-400 dark:text-zinc-600">|</span>
+                                      <span className="text-[11px]">
+                                          Soma:{' '}
+                                          <strong className="text-zinc-800 dark:text-zinc-100">
+                                              R$ {selectedTotalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                          </strong>
+                                      </span>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2">
+                                      {!isMobile && (
+                                          <button
+                                              type="button"
+                                              onClick={() => setDesktopFilterOpen(prev => !prev)}
+                                              className={`mm-btn-chip ${desktopFilterOpen ? 'mm-btn-chip-active-rose' : ''}`}
+                                          >
+                                              <SlidersHorizontal size={13} />
+                                              Filtrar{desktopActiveFilterCount > 0 ? ` (${desktopActiveFilterCount})` : ''}
+                                          </button>
+                                      )}
+                                      <button
+                                          type="button"
+                                          onClick={() => handleBulkStatusChange('paid')}
+                                          disabled={!hasSelection}
+                                          className="mm-btn-chip mm-btn-chip-success"
+                                      >
+                                          <CheckCircle2 size={13} /> Marcar Pagos
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={() => handleBulkStatusChange('pending')}
+                                          disabled={!hasSelection}
+                                          className="mm-btn-chip mm-btn-chip-warning"
+                                      >
+                                          <Circle size={13} /> Marcar Pendentes
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={() => setIsBulkDeleteModalOpen(true)}
+                                          disabled={!hasSelection}
+                                          aria-label="Excluir selecionados"
+                                          className="mm-btn-icon"
+                                          title="Excluir selecionados"
+                                      >
+                                          <Trash2 size={14} />
+                                      </button>
+                                  </div>
+                              </div>
+
+                              {!isMobile && (
+                                  <div className="grid items-center gap-2 px-2 text-[10px] uppercase tracking-[0.08em] text-zinc-500 dark:text-zinc-400 [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                      <span className="text-center">#</span>
+                                      <span>Título</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Status</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Data • Competência</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Categoria</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Conta</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Forma</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Natureza</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Ações</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span className="text-right">Valor</span>
+                                  </div>
+                              )}
                           </div>
 
                           {visibleExpenses.map((expense, index) => {
@@ -1440,89 +1675,91 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               const isLocked = Boolean(expense.locked || lockedReason === 'epoch_mismatch');
                               const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
                               const { statusLabel, statusClassName } = getExpenseStatusMeta(expense);
-                              const dueLabel = `Vence ${new Date(expense.dueDate + 'T12:00:00').toLocaleDateString('pt-BR')}`;
                               const source = getSourceInfo(expense);
-                              const isExpanded = drawerExpense?.id === expense.id;
                               const isInlineEditing = inlineEditExpenseId === expense.id;
-                              const details = isExpanded ? buildExpenseDetails(expense) : [];
                               const typeColor = typeMetaById.get(expense.type)?.color || '#ef4444';
-                              const rowBg = withAlpha(typeColor, 0.14);
+                              const rowBg = index % 2 === 0 ? withAlpha(typeColor, 0.14) : 'transparent';
+                              const dateLabel = new Date(expense.date + 'T12:00:00').toLocaleDateString('pt-BR');
+                              const competenceLabel = new Date(expense.dueDate + 'T12:00:00').toLocaleDateString('pt-BR');
+                              const methodLabel = expense.paymentMethod || '-';
+                              const natureLabel = expense.taxStatus || '-';
+                              const effectiveStatusLabel = isLocked ? lockedLabel : statusLabel;
+                              const effectiveStatusClass = isLocked
+                                  ? 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800/70 dark:text-zinc-300'
+                                  : statusClassName;
 
                               return (
                                   <div key={expense.id} id={`expense-${expense.id}`} className="space-y-3">
-                                      <div className="py-2 rounded-md" style={{ backgroundColor: rowBg }}>
-                                          <button
-                                              type="button"
-                                              onClick={() => openDrawer(expense)}
-                                              className="w-full flex items-center justify-between gap-3 text-left"
-                                              disabled={isLocked}
-                                          >
-                                              <div className="flex items-center gap-2 min-w-0">
-                                                  <input
-                                                      type="checkbox"
-                                                      checked={isSelected}
-                                                      onChange={() => toggleSelection(expense.id)}
-                                                      onClick={(event) => event.stopPropagation()}
-                                                      disabled={isLocked}
-                                                      className="h-4 w-4 accent-rose-500"
-                                                      aria-label={`Selecionar despesa ${expense.description}`}
-                                                  />
-                                                  <span
-                                                      className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}
-                                                      title={expense.description}
-                                                  >
-                                                      {expense.description}
-                                                  </span>
-                                              </div>
-                                              <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-rose-600 dark:text-rose-400'}`}>
-                                                  R$ {expense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      <div
+                                          className={`py-2 rounded-md ${isHighlighted ? 'ring-1 ring-rose-300/70' : ''}`}
+                                          style={{ backgroundColor: rowBg }}
+                                      >
+                                          <div className="grid items-center gap-2 px-2 text-[11px] md:text-xs [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={isSelected}
+                                                  onChange={() => toggleSelection(expense.id)}
+                                                  disabled={isLocked}
+                                                  className="h-4 w-4 accent-rose-500"
+                                                  aria-label={`Selecionar despesa ${expense.description}`}
+                                              />
+                                              <span
+                                                  className={`font-bold truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}
+                                                  title={expense.description}
+                                              >
+                                                  {expense.description}
                                               </span>
-                                          </button>
-                                      </div>
-
-                                      {isExpanded && (
-                                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
-                                              <div className="flex items-center justify-between">
-                                                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${effectiveStatusClass}`}>
+                                                  {effectiveStatusLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={`${dateLabel} • ${competenceLabel}`}>
+                                                  {dateLabel} • {competenceLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={expense.category || '-'}>
+                                                  {expense.category || '-'}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={source.name}>
+                                                  {source.name}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={methodLabel}>
+                                                  {methodLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate text-center ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={natureLabel}>
+                                                  {natureLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <div className="flex items-center gap-1">
                                                   <button
                                                       type="button"
-                                                      onClick={() => setDrawerExpense(null)}
-                                                      className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
-                                                      aria-label="Fechar detalhes"
+                                                      onClick={() => handleEditExpense(expense)}
+                                                      disabled={isLocked}
+                                                      className="h-6 w-6 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition disabled:opacity-40"
+                                                      aria-label={`Editar despesa ${expense.description}`}
                                                   >
-                                                      <X size={14} className="mx-auto" />
+                                                      <Pencil size={12} className="mx-auto" />
+                                                  </button>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => requestDelete(expense)}
+                                                      disabled={isLocked}
+                                                      className="h-6 w-6 rounded-md border border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition disabled:opacity-40"
+                                                      aria-label={`Excluir despesa ${expense.description}`}
+                                                  >
+                                                      <Trash2 size={12} className="mx-auto" />
                                                   </button>
                                               </div>
-                                              <div className="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
-                                                  {details.map(item => (
-                                                      <div key={item.label} className="flex items-start justify-between gap-3">
-                                                          <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                                              {item.label}
-                                                          </span>
-                                                          <span className="text-right">{item.value}</span>
-                                                      </div>
-                                                  ))}
-                                              </div>
-                                              {!isLocked && (
-                                                  <div className="mt-4 flex flex-wrap gap-2">
-                                                      <button
-                                                          type="button"
-                                                          onClick={() => handleEditExpense(expense)}
-                                                          className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
-                                                      >
-                                                          Editar
-                                                      </button>
-                                                      <button
-                                                          type="button"
-                                                          onClick={() => requestDelete(expense)}
-                                                          className="rounded-xl border border-rose-200 dark:border-rose-900/40 px-4 py-2 text-xs font-semibold text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition"
-                                                      >
-                                                          Excluir
-                                                      </button>
-                                                  </div>
-                                              )}
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`font-bold text-right ${isLocked ? 'text-zinc-500' : 'text-rose-600 dark:text-rose-400'}`}>
+                                                  R$ {expense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                              </span>
                                           </div>
-                                      )}
+                                      </div>
 
                                       {!isLocked && isInlineEditing && (
                                           <NewExpenseModal
@@ -1551,16 +1788,142 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               );
                           })}
 
+                          {!isMobile && visibleExpenses.length === 0 && (
+                              <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-4 py-5 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                                  Nenhuma despesa encontrada com os filtros atuais.
+                              </div>
+                          )}
+
                           
                       </>
                   ) : (
                       <MobileEmptyState
                           icon={<ShoppingCart size={18} style={{ color: expenseAccentColor }} />}
-                          message="Nenhuma despesa encontrada para este mês."
+                          title="Nenhuma despesa neste mês"
+                          message="Cadastre a primeira despesa para acompanhar o que já foi pago e o que ainda está pendente."
+                          actionLabel="Nova despesa"
+                          onAction={handleNew}
                       />
                   )}
               </div>
           </main>
+
+          {!isMobile && desktopFilterOpen && (
+              <div className="fixed inset-0 z-[85]">
+                  <button
+                      type="button"
+                      className="absolute inset-0 bg-black/25"
+                      onClick={() => setDesktopFilterOpen(false)}
+                      aria-label="Fechar filtros de despesas"
+                  />
+                  <div
+                      className="absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]"
+                      style={{
+                          bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)'
+                      }}
+                  >
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                          <div className="min-w-0">
+                              <p className="text-sm font-semibold truncate">Filtrar Despesas</p>
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  Pesquise por texto e refine a lista por filtros.
+                              </p>
+                          </div>
+                          <button
+                              type="button"
+                              onClick={() => setDesktopFilterOpen(false)}
+                              className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                              aria-label="Fechar filtros"
+                          >
+                              <X size={16} />
+                          </button>
+                      </div>
+
+                      <div className="pt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+                          <div className="md:col-span-2 space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Pesquisar na lista
+                              </label>
+                              <input
+                                  type="text"
+                                  value={desktopSearchTerm}
+                                  onChange={(event) => setDesktopSearchTerm(event.target.value)}
+                                  placeholder="Descrição, categoria, origem, forma..."
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Status
+                              </label>
+                              <select
+                                  value={desktopStatusFilter}
+                                  onChange={(event) =>
+                                      setDesktopStatusFilter(event.target.value as 'all' | 'paid' | 'pending')
+                                  }
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                              >
+                                  <option value="all">Todos</option>
+                                  <option value="paid">Pagos</option>
+                                  <option value="pending">Pendentes</option>
+                              </select>
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Origem
+                              </label>
+                              <select
+                                  value={desktopSourceFilter}
+                                  onChange={(event) => setDesktopSourceFilter(event.target.value)}
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                              >
+                                  <option value="all">Todas</option>
+                                  {desktopSourceOptions.map(source => (
+                                      <option key={source} value={source}>
+                                          {source}
+                                      </option>
+                                  ))}
+                              </select>
+                          </div>
+                          <div className="md:col-span-2 space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Categoria
+                              </label>
+                              <select
+                                  value={desktopCategoryFilter}
+                                  onChange={(event) => setDesktopCategoryFilter(event.target.value)}
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                              >
+                                  <option value="all">Todas</option>
+                                  {desktopCategoryOptions.map(category => (
+                                      <option key={category} value={category}>
+                                          {category}
+                                      </option>
+                                  ))}
+                              </select>
+                          </div>
+                      </div>
+
+                      <div className="pt-3 mt-3 border-t border-zinc-200/60 dark:border-zinc-800/60 flex items-center justify-between gap-3">
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                              {visibleExpenses.length} resultado(s) nesta lista.
+                          </p>
+                          <button
+                              type="button"
+                              onClick={() => {
+                                  setDesktopSearchTerm('');
+                                  setDesktopStatusFilter('all');
+                                  setDesktopSourceFilter('all');
+                                  setDesktopCategoryFilter('all');
+                              }}
+                              className="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                          >
+                              Limpar filtros
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          )}
 
           {expenseToDelete && (
               <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">

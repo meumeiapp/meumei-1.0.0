@@ -1,0 +1,10 @@
+Agência DK - 2026-03-10
+UID/License: 9nenft1OJpadIE8064wHq4KEefq2
+Total de logs: 4
+Inserções: 2
+Exclusões: 2
+Outros: 0
+
+ActionTypes:
+- expense_deleted: 2
+- yield_added: 2

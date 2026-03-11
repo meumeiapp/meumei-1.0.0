@@ -3,6 +3,9 @@ import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   Landmark,
   Wallet,
+  TrendingUp,
+  DollarSign,
+  ArrowRightLeft,
   Trash2,
   X,
   Edit2,
@@ -12,15 +15,13 @@ import {
   Lock,
   AlertTriangle,
   History,
-  Info,
-  ChevronDown
+  Info
 } from 'lucide-react';
 import NewAccountModal from './NewAccountModal';
-import { Account, Expense, Income } from '../types';
+import { Account, Expense, Income, Transfer } from '../types';
 import { AuditLogInput } from '../services/auditService';
 import { getAccountColor, withAlpha } from '../services/cardColorUtils';
 import { PREMIUM_COLOR_PRESETS } from './ui/colorPresets';
-import { DEFAULT_ACCOUNT_TYPES } from '../constants';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
 import useIsMobile from '../hooks/useIsMobile';
 import useIsCompactHeight from '../hooks/useIsCompactHeight';
@@ -30,6 +31,12 @@ import MobileEmptyState from './mobile/MobileEmptyState';
 import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import type { BalanceTrailEntry, RealBalanceDebug } from '../services/realBalanceEngine';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
+import {
+  TOUR_SIMULATED_ACCOUNT_PREFIX,
+  clearTourSimulatedAccounts,
+  readTourSimulatedAccounts,
+  upsertTourSimulatedAccount
+} from '../services/tourSimulationService';
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -38,6 +45,23 @@ const currencyFormatter = new Intl.NumberFormat('pt-BR', {
 });
 
 const formatCurrency = (value: number) => currencyFormatter.format(value || 0);
+const isTourSimulatedAccountId = (id: string) => id.startsWith(TOUR_SIMULATED_ACCOUNT_PREFIX);
+
+type AccountWatermarkKind = 'bank' | 'yield' | 'cash';
+
+const inferAccountWatermark = (account: Account): AccountWatermarkKind => {
+    const source = `${account.type || ''} ${account.name || ''}`.toLowerCase();
+    if (/rend|invest|cdi|selic|tesouro|aplica|yield/.test(source)) return 'yield';
+    if (/banc|conta|caixa|carteira|corrente|poupan|digital/.test(source)) return 'bank';
+    return 'cash';
+};
+
+type TourAccountAuditEntry = {
+  id: string;
+  accountName: string;
+  amount: number;
+  createdAt: string;
+};
 
 interface AccountsViewProps {
   onBack: () => void;
@@ -46,6 +70,16 @@ interface AccountsViewProps {
   onDeleteAccount: (id: string) => void;
   incomes?: Income[];
   expenses?: Expense[];
+  transfers?: Transfer[];
+  onCreateTransfer?: (payload: {
+      fromAccountId: string;
+      toAccountId: string;
+      amount: number;
+      date: string;
+      notes?: string;
+      status?: Transfer['status'];
+  }) => void;
+  onDeleteTransfer?: (id: string) => void;
   accountTypes: string[];
   onUpdateAccountTypes: (types: string[]) => void;
   onAuditLog?: (entry: AuditLogInput) => void;
@@ -67,20 +101,15 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   onDeleteAccount,
   incomes,
   expenses,
+  transfers = [],
+  onCreateTransfer,
+  onDeleteTransfer,
   accountTypes, 
   onUpdateAccountTypes,
   onAuditLog,
   onOpenAudit,
   balanceSnapshot
 }) => {
-  const chunkItems = <T,>(items: T[], size: number): T[][] => {
-      if (size <= 0) return [items];
-      const result: T[][] = [];
-      for (let i = 0; i < items.length; i += size) {
-          result.push(items.slice(i, i + size));
-      }
-      return result;
-  };
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -115,8 +144,26 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const [inlineNewTypeName, setInlineNewTypeName] = useState('');
   const [inlineNewTypeError, setInlineNewTypeError] = useState('');
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [mobilePageIndex, setMobilePageIndex] = useState(0);
-  const mobilePagerRef = useRef<HTMLDivElement | null>(null);
+  const [transferSheetOpen, setTransferSheetOpen] = useState(false);
+  const [transferDeleteTarget, setTransferDeleteTarget] = useState<Transfer | null>(null);
+  const [transferDraft, setTransferDraft] = useState<{
+      fromAccountId: string;
+      toAccountId: string;
+      amount: string;
+      date: string;
+      notes: string;
+      status: Transfer['status'];
+  }>({
+      fromAccountId: '',
+      toAccountId: '',
+      amount: '',
+      date: new Date().toISOString().slice(0, 10),
+      notes: '',
+      status: 'completed'
+  });
+  const [tourSimulatedAccounts, setTourSimulatedAccounts] = useState<Account[]>([]);
+  const [tourAccountAuditEntries, setTourAccountAuditEntries] = useState<TourAccountAuditEntry[]>([]);
+  const [isTourAccountAuditOpen, setIsTourAccountAuditOpen] = useState(false);
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const loggedLockedRef = useRef<Set<string>>(new Set());
@@ -151,7 +198,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           const headerBottom = headerNode.getBoundingClientRect().bottom;
           const sectionTop = sectionNode.getBoundingClientRect().top;
           const gap = Math.round(sectionTop - headerBottom);
-          const desired = 5;
+          const desired = 0;
           setTopAdjust((prev) => {
               const nextAdjust = Math.max(0, gap - desired + prev);
               return prev === nextAdjust ? prev : nextAdjust;
@@ -172,6 +219,8 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           setInlineNewEditId(null);
           setInlineNewNotesOpen(false);
           setInlineNewTypesOpen(false);
+          setTransferSheetOpen(false);
+          setTransferDeleteTarget(null);
           setEditingAccount(null);
           setAccountToDelete(null);
           setAuditAccountId(null);
@@ -204,6 +253,182 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   }, [accounts]);
 
   useEffect(() => {
+      if (typeof window === 'undefined') return;
+      setTourSimulatedAccounts(readTourSimulatedAccounts());
+
+      const handleTourAccountSimulated = (event: Event) => {
+          const detail = (event as CustomEvent<{ account?: any }>).detail;
+          const accountData = detail?.account;
+          if (!accountData) return;
+
+          const initialBalance = Number(accountData.balance);
+          const currentBalance = Number(accountData.currentBalance);
+          const incomingId = accountData.id ? String(accountData.id) : '';
+          const isEditingSimulated = Boolean(incomingId) && isTourSimulatedAccountId(incomingId);
+          const fallbackCurrentBalance = Number.isFinite(currentBalance)
+              ? currentBalance
+              : (Number.isFinite(initialBalance) ? initialBalance : 0);
+          const fallbackInitialBalance = Number.isFinite(initialBalance) ? initialBalance : 0;
+          const accountName = (accountData.name || 'Conta de teste').toString();
+          const accountType = (accountData.type || 'Conta').toString();
+          const accountColor = accountData.color || PREMIUM_COLOR_PRESETS[0] || '#0ea5e9';
+          const accountNotes = accountData.notes ? String(accountData.notes) : '';
+          const accountNature = accountData.nature === 'PF' ? 'PF' : 'PJ';
+          const accountYieldRate = Number.isFinite(Number(accountData.yieldRate))
+              ? Number(accountData.yieldRate)
+              : undefined;
+          const accountYieldIndex = accountData.yieldIndex === 'Selic'
+              ? 'Selic'
+              : (accountData.yieldIndex === 'CDI' ? 'CDI' : undefined);
+
+          const resolvedSimulatedId =
+              incomingId && isTourSimulatedAccountId(incomingId)
+                  ? incomingId
+                  : `${TOUR_SIMULATED_ACCOUNT_PREFIX}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+
+          if (isEditingSimulated) {
+              const updatedAccount: Account = {
+                  id: incomingId,
+                  name: accountName,
+                  type: accountType,
+                  initialBalance: fallbackInitialBalance,
+                  currentBalance: fallbackCurrentBalance,
+                  yieldRate: accountYieldRate,
+                  yieldIndex: accountYieldIndex,
+                  notes: accountNotes,
+                  color: accountColor,
+                  nature: accountNature
+              };
+              const nextStored = upsertTourSimulatedAccount(updatedAccount);
+              setTourSimulatedAccounts(nextStored);
+              setTourAccountAuditEntries(prev => [
+                  {
+                      id: `tour-audit:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+                      accountName,
+                      amount: fallbackInitialBalance,
+                      createdAt: new Date().toISOString()
+                  },
+                  ...prev
+              ]);
+              return;
+          }
+
+          const simulatedAccount: Account = {
+              id: resolvedSimulatedId,
+              name: accountName,
+              type: accountType,
+              initialBalance: fallbackInitialBalance,
+              currentBalance: fallbackCurrentBalance,
+              yieldRate: accountYieldRate,
+              yieldIndex: accountYieldIndex,
+              notes: accountNotes,
+              color: accountColor,
+              nature: accountNature
+          };
+
+          const nextStored = upsertTourSimulatedAccount(simulatedAccount);
+          setTourSimulatedAccounts(nextStored);
+          setTourAccountAuditEntries(prev => [
+              {
+                  id: `tour-audit:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+                  accountName: simulatedAccount.name,
+                  amount: simulatedAccount.initialBalance || 0,
+                  createdAt: new Date().toISOString()
+              },
+              ...prev
+          ]);
+      };
+
+      const clearSimulatedAccounts = () => {
+          clearTourSimulatedAccounts();
+          setTourSimulatedAccounts([]);
+          setTourAccountAuditEntries([]);
+          setIsTourAccountAuditOpen(false);
+          setDrawerAccount(null);
+          setEditingAccount(null);
+          setInlineEditAccountId(null);
+          setInlineNewEditId(null);
+          setInlineNewOpen(false);
+          setIsModalOpen(false);
+      };
+
+      window.addEventListener('mm:tour-new-account-simulated', handleTourAccountSimulated as EventListener);
+      window.addEventListener('mm:first-access-tour-ended', clearSimulatedAccounts);
+      window.addEventListener('mm:first-access-tour-restart', clearSimulatedAccounts);
+      window.addEventListener('mm:first-access-tour-clear-data', clearSimulatedAccounts);
+
+      return () => {
+          window.removeEventListener('mm:tour-new-account-simulated', handleTourAccountSimulated as EventListener);
+          window.removeEventListener('mm:first-access-tour-ended', clearSimulatedAccounts);
+          window.removeEventListener('mm:first-access-tour-restart', clearSimulatedAccounts);
+          window.removeEventListener('mm:first-access-tour-clear-data', clearSimulatedAccounts);
+      };
+  }, []);
+
+  const openTourLocalAudit = React.useCallback(() => {
+      if (tourAccountAuditEntries.length === 0) {
+          const fallbackAccount = tourSimulatedAccounts[0] || accounts[0];
+          if (fallbackAccount) {
+              setTourAccountAuditEntries([
+                  {
+                      id: `tour-audit:fallback:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+                      accountName: fallbackAccount.name || 'Conta criada',
+                      amount:
+                          Number.isFinite(Number(fallbackAccount.initialBalance))
+                              ? Number(fallbackAccount.initialBalance)
+                              : Number.isFinite(Number(fallbackAccount.currentBalance))
+                                  ? Number(fallbackAccount.currentBalance)
+                                  : 0,
+                      createdAt: new Date().toISOString()
+                  }
+              ]);
+          }
+      }
+      setIsTourAccountAuditOpen(true);
+  }, [accounts, tourAccountAuditEntries.length, tourSimulatedAccounts]);
+
+  const handleAccountsAuditClick = () => {
+      const isAccountsTourStep =
+          typeof document !== 'undefined' &&
+          (
+              Boolean(document.querySelector('[data-tour-overlay="true"][data-tour-step="accounts"]')) ||
+              document.documentElement.classList.contains('mm-tour-active')
+          );
+
+      if (isAccountsTourStep) {
+          openTourLocalAudit();
+          return;
+      }
+
+      if (tourAccountAuditEntries.length > 0) {
+          setIsTourAccountAuditOpen(true);
+          return;
+      }
+      onOpenAudit?.();
+  };
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const handleTourOpenAudit = () => openTourLocalAudit();
+      const handleTourCloseAudit = () => setIsTourAccountAuditOpen(false);
+      window.addEventListener('mm:tour-open-accounts-audit', handleTourOpenAudit as EventListener);
+      window.addEventListener('mm:tour-close-accounts-audit', handleTourCloseAudit as EventListener);
+      return () => {
+          window.removeEventListener('mm:tour-open-accounts-audit', handleTourOpenAudit as EventListener);
+          window.removeEventListener('mm:tour-close-accounts-audit', handleTourCloseAudit as EventListener);
+      };
+  }, [openTourLocalAudit]);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      window.dispatchEvent(
+          new CustomEvent('mm:tour-accounts-audit-state', {
+              detail: { open: isTourAccountAuditOpen }
+          })
+      );
+  }, [isTourAccountAuditOpen]);
+
+  useEffect(() => {
       if (highlightTarget && highlightTarget.entity === 'account') {
           const targetId = highlightTarget.id;
           setHighlightedId(targetId);
@@ -219,31 +444,38 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       }
   }, [highlightTarget, setHighlightTarget]);
 
-  const unlockedAccounts = accounts.filter(acc => !acc.locked);
+  const displayAccounts = React.useMemo(() => {
+      if (tourSimulatedAccounts.length === 0) return accounts;
+      const persistedIds = new Set(accounts.map(account => account.id));
+      const unresolvedSimulated = tourSimulatedAccounts.filter(account => !persistedIds.has(account.id));
+      return [...unresolvedSimulated, ...accounts];
+  }, [accounts, tourSimulatedAccounts]);
+  const primaryTourAccountId = tourSimulatedAccounts[0]?.id || null;
+  const unlockedAccounts = displayAccounts.filter(acc => !acc.locked);
   const isSelectionMode = selectedIds.length > 0;
-  const selectableAccounts = accounts.filter(acc => !acc.locked && !acc.decryptError);
+  const selectableAccounts = displayAccounts.filter(acc => !acc.locked && !acc.decryptError && !isTourSimulatedAccountId(acc.id));
 
-  const resolveRealBalance = (account: Account) => {
+  const resolveDisplayedBalance = (account: Account) => {
+    const current = Number(account.currentBalance);
+    return Number.isFinite(current) ? current : 0;
+  };
+
+  const resolveAuditedBalance = (account: Account) => {
     const computed = balanceSnapshot?.byAccountId?.[account.id];
-    return Number.isFinite(computed) ? computed : account.currentBalance;
+    return Number.isFinite(computed) ? computed : resolveDisplayedBalance(account);
   };
 
   const displayBalance = isSelectionMode
-    ? unlockedAccounts.filter(acc => selectedIds.includes(acc.id)).reduce((acc, curr) => acc + resolveRealBalance(curr), 0)
-    : unlockedAccounts.reduce((acc, curr) => acc + resolveRealBalance(curr), 0);
+    ? unlockedAccounts.filter(acc => selectedIds.includes(acc.id)).reduce((acc, curr) => acc + resolveDisplayedBalance(curr), 0)
+    : unlockedAccounts.reduce((acc, curr) => acc + resolveDisplayedBalance(curr), 0);
 
-  const totalBalance = unlockedAccounts.reduce((acc, curr) => acc + resolveRealBalance(curr), 0);
-  const displayCount = isSelectionMode ? selectedIds.length : accounts.length;
+  const totalBalance = unlockedAccounts.reduce((acc, curr) => acc + resolveDisplayedBalance(curr), 0);
+  const displayCount = isSelectionMode ? selectedIds.length : displayAccounts.length;
   const headerTotalBalance = isSelectionMode ? displayBalance : totalBalance;
   const displayLabel = isSelectionMode ? 'Saldo Parcial (Selecionado)' : 'Saldo Total';
-  const listSubtitle = `${accounts.length} ${accounts.length === 1 ? 'conta' : 'contas'}`;
-  const ACCOUNT_DESKTOP_VISIBLE_LIMIT = 10;
-  const visibleAccounts = accounts;
-  const accountDesktopNeedsScroll = isCompactHeight || accounts.length > ACCOUNT_DESKTOP_VISIBLE_LIMIT;
-  const allowPageScroll = isMobile ? false : accountDesktopNeedsScroll;
-  const MOBILE_PAGE_SIZE = 6;
-  const mobilePages = chunkItems(visibleAccounts, MOBILE_PAGE_SIZE);
-  const hasMobilePages = mobilePages.length > 1;
+  const listSubtitle = `${displayAccounts.length} ${displayAccounts.length === 1 ? 'conta' : 'contas'}`;
+  const visibleAccounts = displayAccounts;
+  const allowPageScroll = false;
   useEffect(() => {
       const shouldLock = !allowPageScroll;
       document.documentElement.classList.toggle('lock-scroll', shouldLock);
@@ -253,7 +485,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           document.body.classList.remove('lock-scroll');
       };
   }, [allowPageScroll]);
-  const auditAccount = auditAccountId ? accounts.find(acc => acc.id === auditAccountId) || null : null;
+  const auditAccount = auditAccountId ? displayAccounts.find(acc => acc.id === auditAccountId) || null : null;
   const auditTrails = auditAccountId ? balanceSnapshot?.debug?.trailsByAccountId?.[auditAccountId] ?? [] : [];
   const sortedAuditTrails = React.useMemo(() => {
     if (!auditTrails.length) return [] as BalanceTrailEntry[];
@@ -265,12 +497,127 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const relatedExpenses = accountToDelete
       ? (expenses || []).filter(exp => exp.accountId === accountToDelete.id)
       : [];
+  const accountNameById = React.useMemo(() => {
+      const map = new Map<string, string>();
+      displayAccounts.forEach(account => map.set(account.id, account.name || 'Conta'));
+      return map;
+  }, [displayAccounts]);
+  const eligibleTransferAccounts = React.useMemo(
+      () =>
+          displayAccounts.filter(
+              account => !account.locked && !account.decryptError && !isTourSimulatedAccountId(account.id)
+          ),
+      [displayAccounts]
+  );
+  const transfersSorted = React.useMemo(() => {
+      if (!transfers?.length) return [] as Transfer[];
+      return [...transfers]
+          .filter(transfer => transfer.fromAccountId && transfer.toAccountId)
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [transfers]);
+  const recentTransfers = transfersSorted.slice(0, isMobile ? 8 : 10);
+
+  const formatTransferDate = (value?: string) => {
+      if (!value) return '--';
+      const parsed = new Date(`${value}T12:00:00`);
+      if (Number.isNaN(parsed.getTime())) return value;
+      return parsed.toLocaleDateString('pt-BR');
+  };
+
+  const parseTransferAmount = (value: string) => {
+      const cleaned = value
+          .replace(/\s/g, '')
+          .replace(/[Rr][$]/g, '')
+          .replace(/[^0-9,.-]/g, '');
+      const lastComma = cleaned.lastIndexOf(',');
+      const lastDot = cleaned.lastIndexOf('.');
+      const decimalSeparator = lastComma > lastDot ? ',' : '.';
+      const normalized = decimalSeparator === ','
+          ? cleaned.replace(/\./g, '').replace(',', '.')
+          : cleaned.replace(/,/g, '');
+      const parsed = Number(normalized);
+      if (!Number.isFinite(parsed)) return null;
+      return parsed;
+  };
+
+  const buildDefaultTransferDraft = (sourceAccounts: Account[]) => {
+      const first = sourceAccounts[0]?.id || '';
+      const second = sourceAccounts.find(account => account.id !== first)?.id || '';
+      return {
+          fromAccountId: first,
+          toAccountId: second,
+          amount: '',
+          date: new Date().toISOString().slice(0, 10),
+          notes: '',
+          status: 'completed' as Transfer['status']
+      };
+  };
+
+  const openTransferSheet = () => {
+      if (eligibleTransferAccounts.length < 2) return;
+      const defaultDraft = buildDefaultTransferDraft(eligibleTransferAccounts);
+      setInlineNewOpen(false);
+      setInlineEditAccountId(null);
+      setDrawerAccount(null);
+      setTransferDraft(defaultDraft);
+      setTransferSheetOpen(true);
+  };
+
+  const closeTransferSheet = () => {
+      setTransferSheetOpen(false);
+  };
+
+  useEffect(() => {
+      if (!transferSheetOpen) return;
+      if (eligibleTransferAccounts.length < 2) {
+          setTransferSheetOpen(false);
+          return;
+      }
+      setTransferDraft(prev => {
+          const fallback = buildDefaultTransferDraft(eligibleTransferAccounts);
+          const fromAccountId = eligibleTransferAccounts.some(account => account.id === prev.fromAccountId)
+              ? prev.fromAccountId
+              : fallback.fromAccountId;
+          const toAccountId = eligibleTransferAccounts.some(account => account.id === prev.toAccountId)
+              ? prev.toAccountId
+              : (eligibleTransferAccounts.find(account => account.id !== fromAccountId)?.id || '');
+          return {
+              ...prev,
+              fromAccountId,
+              toAccountId
+          };
+      });
+  }, [eligibleTransferAccounts, transferSheetOpen]);
+
+  const handleSaveTransfer = () => {
+      if (!onCreateTransfer) return;
+      const fromAccountId = transferDraft.fromAccountId;
+      const toAccountId = transferDraft.toAccountId;
+      const amount = parseTransferAmount(transferDraft.amount);
+      if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
+      if (!amount || amount <= 0) return;
+      onCreateTransfer({
+          fromAccountId,
+          toAccountId,
+          amount,
+          date: transferDraft.date || new Date().toISOString().slice(0, 10),
+          notes: transferDraft.notes?.trim() || undefined,
+          status: transferDraft.status
+      });
+      closeTransferSheet();
+  };
+
+  const confirmDeleteTransfer = () => {
+      if (!transferDeleteTarget || !onDeleteTransfer) return;
+      onDeleteTransfer(transferDeleteTarget.id);
+      setTransferDeleteTarget(null);
+  };
 
   const buildAccountDetails = (account: Account) =>
       [
           {
               label: 'Saldo atual',
-              value: formatCurrency(resolveRealBalance(account))
+              value: formatCurrency(resolveDisplayedBalance(account))
           },
           {
               label: 'Tipo',
@@ -515,6 +862,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   const handleOpenNew = () => {
       setInlineEditAccountId(null);
       setDrawerAccount(null);
+      setTransferSheetOpen(false);
       setInlineNewEditId(null);
       setInlineNewDraft({
           name: '',
@@ -535,9 +883,28 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       setIsModalOpen(true);
   };
 
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const handleTourOpenAccountModal = () => {
+          setInlineEditAccountId(null);
+          setDrawerAccount(null);
+          setInlineNewEditId(null);
+          setEditingAccount(null);
+          if (isInlineAllowed) {
+              setInlineNewOpen(true);
+              return;
+          }
+          setInlineNewOpen(false);
+          setIsModalOpen(true);
+      };
+      window.addEventListener('mm:tour-open-account-modal', handleTourOpenAccountModal);
+      return () => window.removeEventListener('mm:tour-open-account-modal', handleTourOpenAccountModal);
+  }, [isInlineAllowed]);
+
   const handleEditAccountDirect = (account: Account) => {
       if (account.locked) return;
       console.info('[ui][accounts][edit]', { accountId: account.id, source: 'drawer' });
+      setTransferSheetOpen(false);
       if (isInlineAllowed) {
           setInlineNewEditId(account.id);
           setInlineNewDraft({
@@ -664,24 +1031,24 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   useEffect(() => {
       if (selectedIds.length === 0) return;
-      const lockedIds = new Set(accounts.filter(acc => acc.locked).map(acc => acc.id));
-      const nextSelected = selectedIds.filter(id => !lockedIds.has(id));
+      const availableIds = new Set(displayAccounts.map(acc => acc.id));
+      const blockedIds = new Set(
+          displayAccounts
+              .filter(acc => acc.locked || acc.decryptError || isTourSimulatedAccountId(acc.id))
+              .map(acc => acc.id)
+      );
+      const nextSelected = selectedIds.filter(id => availableIds.has(id) && !blockedIds.has(id));
       if (nextSelected.length !== selectedIds.length) {
           setSelectedIds(nextSelected);
       }
-  }, [accounts, selectedIds]);
+  }, [displayAccounts, selectedIds]);
 
   useEffect(() => {
-      if (!drawerAccount) {
-          if (!isMobile) {
-              setInlineEditAccountId(null);
-          }
-          return;
-      }
+      if (!drawerAccount) return;
       if (inlineEditAccountId && inlineEditAccountId !== drawerAccount.id) {
           setInlineEditAccountId(null);
       }
-  }, [drawerAccount, inlineEditAccountId, isMobile]);
+  }, [drawerAccount, inlineEditAccountId]);
 
   useEffect(() => {
       if (inlineNewOpen) {
@@ -747,12 +1114,12 @@ const AccountsView: React.FC<AccountsViewProps> = ({
     ? 'space-y-4'
     : 'max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] pb-10 animate-in fade-in slide-in-from-bottom-4 duration-500';
 
-  const headerCardRadius = isMobile ? 'rounded-none' : 'rounded-xl';
-  const headerSecondaryRadius = isMobile ? 'rounded-none' : 'rounded-xl';
-  const headerPrimaryRadius = isMobile ? 'rounded-none' : 'rounded-2xl';
+  const headerCardRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
+  const headerSecondaryRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
+  const headerPrimaryRadius = isMobile ? 'rounded-xl' : 'rounded-2xl';
 
   const accountsHeader = (
-      <div className="space-y-2">
+      <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
               <div className="h-8 w-8" aria-hidden="true" />
               <div className="min-w-0 text-center">
@@ -763,17 +1130,17 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-              <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
+              <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Contas</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{displayCount}</p>
               </div>
-              <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
+              <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo total</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
                       {formatCurrency(headerTotalBalance)}
                   </p>
               </div>
-              <div className={`${headerCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
+              <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo atual</p>
                   <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
                       {formatCurrency(displayBalance)}
@@ -781,11 +1148,12 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               </div>
           </div>
 
-          <div className={`grid ${onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
-              {onOpenAudit && (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+              {(onOpenAudit || tourAccountAuditEntries.length > 0) && (
                   <button
-                      onClick={onOpenAudit}
-                      className={`flex items-center justify-center gap-2 ${headerSecondaryRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition`}
+                      onClick={handleAccountsAuditClick}
+                      data-tour-anchor="accounts-audit-button"
+                      className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7`}
                       title="Auditoria do dia"
                   >
                       <History size={14} />
@@ -793,8 +1161,25 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                   </button>
               )}
               <button
+                  onClick={openTransferSheet}
+                  disabled={!onCreateTransfer || eligibleTransferAccounts.length < 2}
+                  className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7 ${
+                      !onCreateTransfer || eligibleTransferAccounts.length < 2 ? 'opacity-60 cursor-not-allowed' : ''
+                  }`}
+                  title={
+                      eligibleTransferAccounts.length < 2
+                          ? 'Cadastre ao menos duas contas para transferir'
+                          : 'Transferência entre contas'
+                  }
+              >
+                  <ArrowRightLeft size={14} />
+                  Transferir
+              </button>
+              <button
                   onClick={handleOpenNew}
-                  className={`w-full ${headerPrimaryRadius} bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-blue-900/20 transition active:scale-[0.98]`}
+                  data-tour-anchor="accounts-new"
+                  disabled={tourSimulatedAccounts.length > 0}
+                  className={`${isMobile ? 'w-full' : 'inline-flex min-w-[236px] px-8'} mm-mobile-primary-cta mm-btn-base mm-btn-primary mm-btn-primary-blue ${headerPrimaryRadius}`}
               >
                   Nova Conta
               </button>
@@ -812,14 +1197,19 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const inlineNewCardStyle =
       isInlineAllowed && inlineNewOpen
-          ? { minHeight: `calc(var(--app-height, 100vh) - ${subHeaderHeight + 28}px)` }
+          ? { minHeight: `max(320px, calc(var(--mm-content-available-height, 720px) - 24px))` }
           : undefined;
+  const inlineFormLabelClass = 'text-[10px] uppercase tracking-[0.12em] font-semibold text-white/65';
+  const inlineFormInputClass =
+      'mt-1 w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500';
+  const inlineFormSelectClass =
+      'mt-1 rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30';
   const inlineNewActions = isInlineAllowed && inlineNewOpen ? (
       <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-0 grid grid-cols-2 gap-2">
           <button
               type="button"
               onClick={() => setInlineNewOpen(false)}
-              className="rounded-none border border-blue-400/50 bg-blue-950/30 py-3 text-sm font-semibold text-blue-200 hover:bg-blue-900/40 transition"
+              className="rounded-xl border border-blue-400/50 bg-blue-950/30 py-3 text-sm font-semibold text-blue-200 hover:bg-blue-900/40 transition"
           >
               Cancelar
           </button>
@@ -827,7 +1217,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               type="button"
               disabled={!inlineNewDraft.name.trim() || !inlineNewDraft.type || !inlineNewDraft.nature}
               onClick={handleInlineCreate}
-              className={`rounded-none border border-blue-500/40 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition ${
+              className={`rounded-xl border border-blue-500/40 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition ${
                   !inlineNewDraft.name.trim() || !inlineNewDraft.type || !inlineNewDraft.nature
                       ? 'opacity-80 cursor-not-allowed'
                       : ''
@@ -893,34 +1283,34 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   };
 
   const handleResetTypes = () => {
-      onUpdateAccountTypes?.(DEFAULT_ACCOUNT_TYPES);
+      onUpdateAccountTypes?.([]);
       setSelectedTypes([]);
   };
 
   const inlineNewCard = isInlineAllowed && inlineNewOpen ? (
       <div className="rounded-none border-0 bg-transparent p-0 flex flex-col" style={inlineNewCardStyle}>
-          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+          <div className="px-3 pt-2.5 pb-2.5 bg-[#0b0b10] border-b border-white/10">
                       <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                   <Wallet size={16} className="text-white" />
-                          <p className="text-[13px] font-semibold text-white truncate">{inlineNewEditId ? 'Editar Conta' : 'Nova Conta'}</p>
+                          <p className="text-[15px] font-semibold text-white truncate">{inlineNewEditId ? 'Editar Conta' : 'Nova Conta'}</p>
                       </div>
-                              <p className="text-[9px] text-white/70">Preencha os dados da conta.</p>
+                              <p className="text-[11px] text-white/70">Preencha os dados da conta.</p>
                           </div>
                   <button
                       type="button"
                       onClick={() => setInlineNewOpen(false)}
-                      className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                      className="h-8 w-8 rounded-xl bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                       aria-label="Fechar nova conta"
                   >
                       <X size={16} />
                   </button>
               </div>
           </div>
-          <div className="mt-2 px-3 grid grid-cols-1 gap-1.5">
+          <div className="mt-2 px-3 grid grid-cols-1 gap-2">
               <div>
-                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
+                  <label className={inlineFormLabelClass}>
                       Nome da conta
                   </label>
                   <input
@@ -929,14 +1319,14 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       onChange={(event) =>
                           setInlineNewDraft(prev => ({ ...prev, name: event.target.value }))
                       }
-                      placeholder="EX: CONTA CORRENTE PJ, CARTEIRA DIGITAL"
-                      className="mt-0.5 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[9px]"
+                      placeholder="Ex.: Conta corrente PJ, carteira digital"
+                      className={inlineFormInputClass}
                   />
               </div>
 
               <div>
                   <div className="flex items-center justify-between">
-                      <label className="text-[9px] uppercase tracking-wide font-bold text-white">
+                      <label className={inlineFormLabelClass}>
                           Tipo
                       </label>
                   <button
@@ -945,7 +1335,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           setInlineNewTypesOpen(true);
                           setInlineNewTypeError('');
                       }}
-                      className="text-[9px] font-bold flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
+                      className="text-[10px] font-semibold flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
                   >
                       <Edit2 size={10} /> Editar
                   </button>
@@ -958,16 +1348,16 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               type: value
                           }))
                       }
-                      placeholder="SELECIONE"
+                      placeholder="Selecione"
                       options={normalizedAccountTypes.map(type => ({ value: type, label: type }))}
-                      buttonClassName="mt-0.5 rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                      placeholderClassName="text-[9px] font-light uppercase"
+                      buttonClassName={inlineFormSelectClass}
+                      placeholderClassName="text-[11px] font-normal text-zinc-400"
                       listClassName="max-h-48"
                   />
               </div>
 
               <div>
-                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
+                  <label className={inlineFormLabelClass}>
                       Natureza Fiscal
                   </label>
                   <SelectDropdown
@@ -978,19 +1368,19 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               nature: value as 'PJ' | 'PF'
                           }))
                       }
-                      placeholder="SELECIONE"
+                      placeholder="Selecione"
                       options={[
                           { value: 'PJ', label: 'Pessoa Jurídica' },
                           { value: 'PF', label: 'Pessoa Física' }
                       ]}
-                      buttonClassName="mt-0.5 rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                      placeholderClassName="text-[9px] font-light uppercase"
+                      buttonClassName={inlineFormSelectClass}
+                      placeholderClassName="text-[11px] font-normal text-zinc-400"
                       listClassName="max-h-48"
                   />
               </div>
 
               <div>
-                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
+                  <label className={inlineFormLabelClass}>
                       Saldo inicial
                   </label>
                   <input
@@ -1002,13 +1392,13 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               initialBalance: event.target.value
                           }))
                       }
-                      placeholder="EX: R$0,00"
-                      className="mt-0.5 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[9px]"
+                      placeholder="Ex.: R$ 0,00"
+                      className={inlineFormInputClass}
                   />
               </div>
 
               <div>
-                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
+                  <label className={inlineFormLabelClass}>
                       Saldo atual
                   </label>
                   <input
@@ -1020,12 +1410,12 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               currentBalance: event.target.value
                           }))
                       }
-                      placeholder="EX: R$0,00"
-                      className="mt-0.5 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:uppercase placeholder:font-light placeholder:text-[9px]"
+                      placeholder="Ex.: R$ 0,00"
+                      className={inlineFormInputClass}
                   />
               </div>
               <div>
-                  <label className="text-[9px] uppercase tracking-wide font-bold text-white">
+                  <label className={inlineFormLabelClass}>
                       Cor da tag
                   </label>
                   <div className="mt-1 grid [grid-template-columns:repeat(15,minmax(0,1fr))] gap-1">
@@ -1034,7 +1424,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               key={color}
                               type="button"
                               onClick={() => setInlineNewDraft(prev => ({ ...prev, color }))}
-                              className={`h-6 w-6 rounded-none border ${
+                              className={`h-6 w-6 rounded-full border ${
                                   inlineNewDraft.color === color
                                       ? 'ring-2 ring-indigo-500 border-white'
                                       : 'border-white/40'
@@ -1050,7 +1440,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               key={`${color}-row2`}
                               type="button"
                               onClick={() => setInlineNewDraft(prev => ({ ...prev, color }))}
-                              className={`h-6 w-6 rounded-none border ${
+                              className={`h-6 w-6 rounded-full border ${
                                   inlineNewDraft.color === color
                                       ? 'ring-2 ring-indigo-500 border-white'
                                       : 'border-white/40'
@@ -1066,10 +1456,10 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                   <button
                       type="button"
                       onClick={() => setInlineNewNotesOpen(true)}
-                      className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-left text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 flex items-center justify-between"
+                      className={`${inlineFormInputClass} text-left flex items-center justify-between`}
                   >
                       Observações
-                      <span className="text-[9px] font-light text-zinc-400 uppercase">Adicionar</span>
+                      <span className="text-[10px] font-normal text-zinc-400">Adicionar</span>
                   </button>
               </div>
           </div>
@@ -1090,7 +1480,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
               style={{ top: 0, bottom: dockOffset }}
           >
-              <div className="flex-1 overflow-hidden px-3 pt-0 pb-16">
+              <div className="flex-1 overflow-y-auto overscroll-contain px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+132px)]">
                   {inlineNewCard}
               </div>
               {inlineNewActions}
@@ -1131,22 +1521,22 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           }))
                       }
                       rows={4}
-                      placeholder="DETALHES ADICIONAIS..."
-                      className="w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2.5 py-1.5 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
+                      placeholder="Detalhes adicionais..."
+                      className="w-full min-h-[92px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30 resize-none placeholder:text-[11px] placeholder:font-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
                   />
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3">
                   <button
                       type="button"
                       onClick={() => setInlineNewNotesOpen(false)}
-                      className="rounded-none border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                      className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
                   >
                       Cancelar
                   </button>
                   <button
                       type="button"
                       onClick={() => setInlineNewNotesOpen(false)}
-                      className="rounded-none border border-indigo-500/40 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
+                      className="rounded-xl border border-indigo-500/40 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
                   >
                       Salvar
                   </button>
@@ -1174,16 +1564,16 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               >
               <div className="flex items-start justify-between gap-2 pb-2 border-b border-zinc-200/60 dark:border-zinc-800/60">
                   <div className="min-w-0">
-                      <p className="text-xs font-semibold truncate">Categorias</p>
-                      <p className="text-[10px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
+                      <p className="text-sm font-semibold truncate">Categorias</p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
                   </div>
                   <button
                       type="button"
                       onClick={() => setInlineNewTypesOpen(false)}
-                      className="h-7 w-7 rounded-none bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                      className="h-8 w-8 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
                       aria-label="Fechar categorias"
                   >
-                      <X size={14} />
+                      <X size={16} />
                   </button>
               </div>
               <div className="pt-2 flex-1 overflow-hidden px-0.5 pb-2">
@@ -1197,8 +1587,8 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               setInlineNewTypeError('');
                           }}
                           onKeyDown={(event) => event.key === 'Enter' && handleAddInlineType()}
-                          placeholder={inlineNewTypeError || 'NOVA CATEGORIA...'}
-                          className={`w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-xs text-zinc-900 dark:text-white rounded-none px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-zinc-400 placeholder:uppercase placeholder:font-light placeholder:text-[9px] flex-1 w-auto ${
+                          placeholder={inlineNewTypeError || 'Nova categoria...'}
+                          className={`w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500 flex-1 w-auto ${
                               inlineNewTypeError ? 'border-red-500 focus:border-red-500 focus:ring-red-500 placeholder:text-red-500' : ''
                           }`}
                       />
@@ -1206,7 +1596,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           type="button"
                           onClick={handleAddInlineType}
                           aria-label="Adicionar categoria"
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 rounded-none"
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl"
                       >
                           <Plus size={14} />
                       </button>
@@ -1246,7 +1636,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           <button
                               type="button"
                               onClick={handleBulkDeleteTypes}
-                              className="w-full rounded-none border border-red-200 text-red-600 text-[11px] font-semibold py-1.5 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
+                              className="w-full rounded-xl border border-red-200 text-red-600 text-[11px] font-semibold py-1.5 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
                           >
                               Excluir selecionados ({selectedTypes.length})
                           </button>
@@ -1254,7 +1644,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                       <button
                           type="button"
                           onClick={handleResetTypes}
-                          className={`${selectedTypes.length > 0 ? '' : 'w-full'} rounded-none border border-red-200 text-red-600 text-[11px] font-semibold py-1.5 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20`}
+                          className={`${selectedTypes.length > 0 ? '' : 'w-full'} rounded-xl border border-red-200 text-red-600 text-[11px] font-semibold py-1.5 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20`}
                       >
                           Zerar categorias
                       </button>
@@ -1470,129 +1860,299 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       );
   };
 
+  const transferSection = (
+      <section className="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/80 dark:bg-[#111114]/70 backdrop-blur px-3 py-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">Transferências</p>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                      Movimentações entre contas sem impactar Entradas/Saídas.
+                  </p>
+              </div>
+              <button
+                  type="button"
+                  onClick={openTransferSheet}
+                  disabled={!onCreateTransfer || eligibleTransferAccounts.length < 2}
+                  className={`inline-flex items-center gap-1 rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 ${
+                      !onCreateTransfer || eligibleTransferAccounts.length < 2
+                          ? 'opacity-60 cursor-not-allowed'
+                          : 'hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
+                  }`}
+              >
+                  <ArrowRightLeft size={12} />
+                  Nova
+              </button>
+          </div>
+
+          {recentTransfers.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Nenhuma transferência registrada.
+              </div>
+          ) : (
+              <div className="space-y-2">
+                  {recentTransfers.map(transfer => {
+                      const fromName = accountNameById.get(transfer.fromAccountId) || 'Conta removida';
+                      const toName = accountNameById.get(transfer.toAccountId) || 'Conta removida';
+                      const locked = Boolean(transfer.locked);
+                      return (
+                          <div
+                              key={transfer.id}
+                              className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 px-3 py-2"
+                          >
+                              <div className="flex items-center justify-between gap-2">
+                                  <p className="text-[12px] font-semibold text-zinc-800 dark:text-zinc-100 truncate">
+                                      {fromName} <span className="text-zinc-400">→</span> {toName}
+                                  </p>
+                                  <span className="text-[12px] font-semibold text-indigo-600 dark:text-indigo-300">
+                                      {formatCurrency(transfer.amount)}
+                                  </span>
+                              </div>
+                              <div className="mt-1 flex items-center justify-between gap-2">
+                                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                      <span>{formatTransferDate(transfer.date)}</span>
+                                      <span className="text-zinc-300 dark:text-zinc-600">•</span>
+                                      <span className="uppercase tracking-wide">
+                                          {transfer.status === 'completed'
+                                              ? 'Concluída'
+                                              : transfer.status === 'pending'
+                                                  ? 'Pendente'
+                                                  : 'Cancelada'}
+                                      </span>
+                                      {transfer.notes ? (
+                                          <>
+                                              <span className="text-zinc-300 dark:text-zinc-600">•</span>
+                                              <span className="truncate max-w-[220px]">{transfer.notes}</span>
+                                          </>
+                                      ) : null}
+                                  </div>
+                                  {onDeleteTransfer && !locked && (
+                                      <button
+                                          type="button"
+                                          onClick={() => setTransferDeleteTarget(transfer)}
+                                          className="inline-flex items-center gap-1 rounded-md border border-rose-300/40 px-2 py-1 text-[10px] font-semibold text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                                      >
+                                          <Trash2 size={11} />
+                                          Excluir
+                                      </button>
+                                  )}
+                              </div>
+                          </div>
+                      );
+                  })}
+              </div>
+          )}
+      </section>
+  );
+
   const listSection = (
       <main className={listWrapperClass}>
           <div className="space-y-3">
+              {transferSection}
               {isInlineAllowed ? inlineNewCard : null}
 
               {!isMobile || !inlineNewOpen ? (
-              accounts.length > 0 ? (
+              visibleAccounts.length > 0 ? (
                   <>
-                      <div className="flex items-center justify-between rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                          <button
-                              type="button"
-                              onClick={toggleSelectAll}
-                              disabled={selectableAccounts.length === 0}
-                              className="flex items-center gap-2 font-semibold disabled:opacity-50"
-                          >
-                              {selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? (
-                                  <CheckSquare size={14} className="text-indigo-600" />
-                              ) : (
-                                  <Square size={14} />
-                              )}
-                              <span>{selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
-                          </button>
-                          <span className="text-[11px]">{selectedIds.length} selecionados</span>
-                      </div>
-                      {visibleAccounts.map(account => {
-                          const isHighlighted = highlightedId === account.id;
-                          const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
-                          const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
-                          const isLocked = Boolean(account.locked || account.decryptError);
-                          const isSelected = selectedIds.includes(account.id);
-                          const computedBalance = resolveRealBalance(account);
-                          const isExpanded = drawerAccount?.id === account.id;
-                          const details = isExpanded ? buildAccountDetails(account) : [];
-                          const rowBg = withAlpha(account.color || getAccountColor(account), 0.12);
-
-                          return (
-                              <div key={account.id} id={`account-${account.id}`}>
-                                  <div
-                                      className="py-2 rounded-md"
-                                      style={{ backgroundColor: rowBg }}
+                      <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+                          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                              <div className="flex flex-wrap items-center gap-3">
+                                  <button
+                                      type="button"
+                                      onClick={toggleSelectAll}
+                                      disabled={selectableAccounts.length === 0}
+                                      className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 dark:text-zinc-200 disabled:opacity-50"
                                   >
+                                      {selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? (
+                                          <CheckSquare size={14} className="text-indigo-600" />
+                                      ) : (
+                                          <Square size={14} />
+                                      )}
+                                      <span>{selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                                  </button>
+                                  <span className="text-[11px] font-semibold">{selectedIds.length} selecionados</span>
+                                  <span className="text-zinc-400 dark:text-zinc-600">|</span>
+                                  <span className="text-[11px]">
+                                      Soma:{' '}
+                                      <strong className="text-zinc-800 dark:text-zinc-100">
+                                          {formatCurrency(displayBalance)}
+                                      </strong>
+                                  </span>
+                              </div>
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-6 gap-3">
+                          {[
+                              ...visibleAccounts.map((account) => ({ kind: 'account' as const, account })),
+                              ...Array.from(
+                                  {
+                                      length: Math.max(0, 12 - visibleAccounts.length)
+                                  },
+                                  (_, index) => ({ kind: 'placeholder' as const, id: `account-slot-${index}` })
+                              )
+                          ].map((entry) => {
+                              if (entry.kind === 'placeholder') {
+                                  return (
                                       <button
+                                          key={entry.id}
                                           type="button"
-                                          onClick={() => setDrawerAccount(prev => (prev?.id === account.id ? null : account))}
-                                          className="w-full flex items-center justify-between gap-3 text-left"
-                                          disabled={isLocked}
+                                          onClick={handleOpenNew}
+                                          className="h-[184px] rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/40 flex flex-col items-center justify-center gap-2 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
                                       >
-                                          <div className="flex items-center gap-2 min-w-0">
-                                              <input
-                                                  type="checkbox"
-                                                  checked={isSelected}
-                                                  onChange={() => toggleSelection(account.id)}
-                                                  onClick={(event) => event.stopPropagation()}
-                                                  disabled={isLocked}
-                                                  className="h-4 w-4 accent-indigo-500"
-                                                  aria-label={`Selecionar conta ${account.name}`}
-                                              />
-                                              <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                                                  {account.name}
-                                              </span>
-                                          </div>
-                                          <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                              {formatCurrency(computedBalance)}
+                                          <span className="h-10 w-10 rounded-full border border-zinc-400/50 flex items-center justify-center text-2xl leading-none">
+                                              +
                                           </span>
+                                          <span className="text-xs font-semibold uppercase tracking-wide">Adicionar conta</span>
                                       </button>
-                                  </div>
-                                  {!isMobile && isExpanded && (
-                                      <div className="mt-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
-                                          <div className="flex items-center justify-between">
-                                              <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
-                                              <button
-                                                  type="button"
-                                                  onClick={() => setDrawerAccount(null)}
-                                                  className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
-                                                  aria-label="Fechar detalhes"
-                                              >
-                                                  <X size={14} className="mx-auto" />
-                                              </button>
-                                          </div>
-                                          <div className="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
-                                              {details.map(item => (
-                                                  <div key={item.label} className="flex items-start justify-between gap-3">
-                                                      <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                                          {item.label}
-                                                      </span>
-                                                      <span className="text-right">{item.value}</span>
-                                                  </div>
-                                              ))}
-                                          </div>
+                                  );
+                              }
+
+                              const account = entry.account;
+                              const isHighlighted = highlightedId === account.id;
+                              const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
+                              const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivada' : 'Protegida';
+                              const isTourSimulated = isTourSimulatedAccountId(account.id);
+                              const isPrimaryTourAccount = Boolean(primaryTourAccountId) && account.id === primaryTourAccountId;
+                              const isLocked = Boolean(account.locked || account.decryptError);
+                              const isBulkSelectBlocked = isLocked || isTourSimulated;
+                              const isSelected = selectedIds.includes(account.id);
+                              const computedBalance = resolveDisplayedBalance(account);
+                              const isExpanded = drawerAccount?.id === account.id;
+                              const cardColor = account.color || getAccountColor(account);
+                              const watermarkKind = inferAccountWatermark(account);
+
+                              return (
+                                  <div
+                                      key={account.id}
+                                      id={`account-${account.id}`}
+                                      className={`relative overflow-hidden h-[184px] rounded-2xl border transition-all duration-200 flex flex-col ${
+                                          isExpanded
+                                              ? 'border-indigo-400/70 shadow-[0_12px_30px_rgba(99,102,241,0.25)]'
+                                              : 'border-zinc-200/80 dark:border-zinc-800/70'
+                                      } ${
+                                          isHighlighted
+                                              ? 'ring-2 ring-indigo-400/70'
+                                              : ''
+                                      }`}
+                                      style={{
+                                          background:
+                                              `linear-gradient(165deg, ${withAlpha(cardColor, 0.24)} 0%, ${withAlpha(cardColor, 0.1)} 52%, ${withAlpha('#09090b', 0.75)} 100%)`,
+                                          boxShadow: isExpanded ? undefined : `0 10px 24px ${withAlpha(cardColor, 0.16)}`
+                                      }}
+                                  >
+                                      <div className="pointer-events-none absolute right-3 bottom-2 z-0 text-white/15">
+                                          {watermarkKind === 'bank' ? (
+                                              <Landmark size={62} strokeWidth={1.5} />
+                                          ) : watermarkKind === 'yield' ? (
+                                              <TrendingUp size={62} strokeWidth={1.5} />
+                                          ) : (
+                                              <DollarSign size={62} strokeWidth={1.5} />
+                                          )}
+                                      </div>
+                                      <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
+                                          <input
+                                              type="checkbox"
+                                              checked={isSelected}
+                                              onChange={() => toggleSelection(account.id)}
+                                              onClick={(event) => event.stopPropagation()}
+                                              disabled={isBulkSelectBlocked}
+                                              className="h-4 w-4 accent-indigo-500"
+                                              aria-label={`Selecionar conta ${account.name}`}
+                                          />
                                           {!isLocked && (
-                                              <div className="mt-4 grid grid-cols-2 gap-2">
+                                              <>
                                                   <button
                                                       type="button"
-                                                      onClick={() => {
-                                                          // Desktop: abrir modal igual "Nova Conta"
+                                                      onClick={(event) => {
+                                                          event.stopPropagation();
+                                                          if (isPrimaryTourAccount && typeof window !== 'undefined') {
+                                                              window.dispatchEvent(
+                                                                  new CustomEvent('mm:tour-accounts-edit-clicked', {
+                                                                      detail: { accountId: account.id }
+                                                                  })
+                                                              );
+                                                          }
                                                           setInlineEditAccountId(null);
                                                           setDrawerAccount(null);
                                                           setEditingAccount(account);
                                                           setIsModalOpen(true);
                                                       }}
-                                                      className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
+                                                      data-tour-anchor={isPrimaryTourAccount ? 'accounts-created-account-edit' : undefined}
+                                                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-200/70 dark:border-zinc-700/70 bg-white/75 dark:bg-zinc-900/55 text-zinc-700 dark:text-zinc-200 hover:bg-white dark:hover:bg-zinc-900 transition"
+                                                      aria-label={`Editar conta ${account.name}`}
                                                   >
-                                                      Editar
+                                                      <Edit2 size={13} />
                                                   </button>
                                                   <button
                                                       type="button"
-                                                      onClick={() => handleDeleteAccountDirect(account)}
-                                                      className="rounded-xl border border-red-200 dark:border-red-900/40 py-2 text-xs font-semibold text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition"
+                                                      onClick={(event) => {
+                                                          event.stopPropagation();
+                                                          handleDeleteAccountDirect(account);
+                                                      }}
+                                                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-200/70 dark:border-red-900/50 bg-red-50/75 dark:bg-red-900/25 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/35 transition"
+                                                      aria-label={`Excluir conta ${account.name}`}
                                                   >
-                                                      Excluir
+                                                      <Trash2 size={13} />
                                                   </button>
-                                              </div>
+                                              </>
                                           )}
                                       </div>
-                                  )}
-                              </div>
-                          );
-                      })}
+                                      <button
+                                          type="button"
+                                          data-tour-anchor={isPrimaryTourAccount ? 'accounts-created-account-row' : undefined}
+                                          onClick={() => {
+                                              setDrawerAccount(prev => (prev?.id === account.id ? null : account));
+                                              if (isPrimaryTourAccount && typeof window !== 'undefined') {
+                                                  window.dispatchEvent(
+                                                      new CustomEvent('mm:tour-accounts-created-account-clicked', {
+                                                          detail: { accountId: account.id }
+                                                      })
+                                                  );
+                                              }
+                                          }}
+                                          className="relative z-10 w-full flex-1 p-4 pr-24 text-left"
+                                          disabled={isLocked}
+                                      >
+                                          <div className="flex items-start justify-between gap-2">
+                                              <div className="min-w-0">
+                                                  <p className={`text-sm font-semibold truncate ${isLocked ? 'text-zinc-400' : 'text-zinc-100'}`}>
+                                                      {account.name}
+                                                  </p>
+                                              </div>
+                                          </div>
+
+                                          <p className="mt-5 text-[10px] uppercase tracking-[0.2em] text-zinc-400">Valor</p>
+                                          <p className={`mt-1 text-xl font-bold ${isLocked ? 'text-zinc-400' : 'text-emerald-300'}`}>
+                                              {formatCurrency(computedBalance)}
+                                          </p>
+
+                                          <div className="mt-3 flex items-center gap-2">
+                                              <span className="inline-flex items-center rounded-full border border-white/15 bg-black/25 px-2 py-0.5 text-[10px] font-semibold text-zinc-200">
+                                                  {account.nature || 'PJ'}
+                                              </span>
+                                              <span className="inline-flex items-center rounded-full border border-white/15 bg-black/25 px-2 py-0.5 text-[10px] font-semibold text-zinc-200 truncate max-w-[160px]">
+                                                  {account.type || 'Conta'}
+                                              </span>
+                                          </div>
+
+                                          {isLocked && (
+                                              <div className="mt-3 inline-flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+                                                  {lockedLabel}
+                                              </div>
+                                          )}
+                                      </button>
+
+                                  </div>
+                              );
+                          })}
+                      </div>
                   </>
               ) : (
                   <MobileEmptyState
                       icon={<Landmark size={18} />}
-                      message="Nenhuma conta cadastrada."
+                      title="Nenhuma conta cadastrada"
+                      message="Cadastre sua primeira conta para começar a lançar entradas, despesas e acompanhar saldo."
+                      actionLabel="Cadastrar conta"
+                      onAction={handleOpenNew}
                   />
               )
               ) : null}
@@ -1600,11 +2160,20 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       </main>
   );
 
-  const drawerLocked = Boolean(drawerAccount?.locked || drawerAccount?.decryptError);
+  const drawerLocked = Boolean(
+      drawerAccount?.locked ||
+      drawerAccount?.decryptError ||
+      (drawerAccount ? isTourSimulatedAccountId(drawerAccount.id) : false)
+  );
   const drawerDetails = drawerAccount ? buildAccountDetails(drawerAccount) : [];
-  const desktopScrollPadding =
-      (accountDesktopNeedsScroll || inlineNewOpen || inlineEditAccountId) ? 'pb-28' : 'pb-6';
-
+  const transferAmountParsed = parseTransferAmount(transferDraft.amount);
+  const transferSaveDisabled =
+      !onCreateTransfer ||
+      !transferDraft.fromAccountId ||
+      !transferDraft.toAccountId ||
+      transferDraft.fromAccountId === transferDraft.toAccountId ||
+      !transferAmountParsed ||
+      transferAmountParsed <= 0;
   const modals = (
       <>
           <NewAccountModal 
@@ -1619,6 +2188,162 @@ const AccountsView: React.FC<AccountsViewProps> = ({
             variant="dock"
             forceDock={useDockModal}
           />
+
+          {transferSheetOpen && (
+              <div className="fixed inset-0 z-[1260]">
+                  <button
+                      type="button"
+                      onClick={closeTransferSheet}
+                      className={`absolute inset-0 ${isMobile ? 'bg-black/55' : 'bg-black/60 backdrop-blur-sm'}`}
+                      aria-label="Fechar transferência"
+                  />
+                  <div
+                      className={
+                          isMobile
+                              ? 'absolute left-0 right-0 bottom-[var(--mm-mobile-dock-height,68px)] rounded-t-3xl bg-white dark:bg-[#111114] border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4'
+                              : 'absolute left-1/2 top-1/2 w-[min(560px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] shadow-2xl p-5'
+                      }
+                  >
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/70 dark:border-zinc-800/70">
+                          <div className="min-w-0">
+                              <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Transferência entre contas</p>
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  Movimente saldo sem registrar como entrada/saída.
+                              </p>
+                          </div>
+                          <button
+                              type="button"
+                              onClick={closeTransferSheet}
+                              className="h-8 w-8 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                              aria-label="Fechar transferência"
+                          >
+                              <X size={16} />
+                          </button>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Conta origem
+                              </label>
+                              <SelectDropdown
+                                  value={transferDraft.fromAccountId}
+                                  onChange={(value) =>
+                                      setTransferDraft(prev => ({
+                                          ...prev,
+                                          fromAccountId: value,
+                                          toAccountId: value === prev.toAccountId
+                                              ? (eligibleTransferAccounts.find(account => account.id !== value)?.id || '')
+                                              : prev.toAccountId
+                                      }))
+                                  }
+                                  placeholder="Selecione"
+                                  options={eligibleTransferAccounts.map(account => ({ value: account.id, label: account.name }))}
+                                  buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
+                                  listClassName="max-h-48"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Conta destino
+                              </label>
+                              <SelectDropdown
+                                  value={transferDraft.toAccountId}
+                                  onChange={(value) => setTransferDraft(prev => ({ ...prev, toAccountId: value }))}
+                                  placeholder="Selecione"
+                                  options={eligibleTransferAccounts
+                                      .filter(account => account.id !== transferDraft.fromAccountId)
+                                      .map(account => ({ value: account.id, label: account.name }))}
+                                  buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
+                                  listClassName="max-h-48"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Valor
+                              </label>
+                              <input
+                                  type="text"
+                                  value={transferDraft.amount}
+                                  onChange={(event) => setTransferDraft(prev => ({ ...prev, amount: event.target.value }))}
+                                  placeholder="Ex.: 3.708,05"
+                                  className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Data
+                              </label>
+                              <input
+                                  type="date"
+                                  value={transferDraft.date}
+                                  onChange={(event) => setTransferDraft(prev => ({ ...prev, date: event.target.value }))}
+                                  className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                              />
+                          </div>
+                          <div className="sm:col-span-2">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Status
+                              </label>
+                              <SelectDropdown
+                                  value={transferDraft.status}
+                                  onChange={(value) =>
+                                      setTransferDraft(prev => ({
+                                          ...prev,
+                                          status:
+                                              value === 'pending' || value === 'canceled'
+                                                  ? value
+                                                  : 'completed'
+                                      }))
+                                  }
+                                  placeholder="Selecione"
+                                  options={[
+                                      { value: 'completed', label: 'Concluída' },
+                                      { value: 'pending', label: 'Pendente' },
+                                      { value: 'canceled', label: 'Cancelada' }
+                                  ]}
+                                  buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
+                                  listClassName="max-h-48"
+                              />
+                          </div>
+                          <div className="sm:col-span-2">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Observações
+                              </label>
+                              <textarea
+                                  value={transferDraft.notes}
+                                  onChange={(event) => setTransferDraft(prev => ({ ...prev, notes: event.target.value }))}
+                                  rows={3}
+                                  placeholder="Opcional"
+                                  className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
+                              />
+                          </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                          <button
+                              type="button"
+                              onClick={closeTransferSheet}
+                              className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
+                          >
+                              Cancelar
+                          </button>
+                          <button
+                              type="button"
+                              disabled={transferSaveDisabled}
+                              onClick={handleSaveTransfer}
+                              className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition ${
+                                  transferSaveDisabled
+                                      ? 'bg-zinc-300 dark:bg-zinc-700 cursor-not-allowed'
+                                      : 'bg-indigo-600 hover:bg-indigo-500'
+                              }`}
+                          >
+                              Salvar
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          )}
 
           {auditAccount && (
               <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -1638,7 +2363,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           <div>
                               <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Detalhamento do saldo • {auditAccount.name}</h3>
                               <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                                  Saldo atual: R$ {resolveRealBalance(auditAccount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  Saldo atual: R$ {resolveAuditedBalance(auditAccount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                               {balanceSnapshot?.cutoff && (
                                   <p className="text-[11px] text-zinc-400 mt-1">Corte: {balanceSnapshot.cutoff}</p>
@@ -1658,6 +2383,8 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                           ? 'Entrada'
                                           : entry.type === 'expense'
                                             ? 'Despesa'
+                                            : entry.type === 'transfer'
+                                              ? 'Transferência'
                                             : entry.type === 'yield'
                                               ? 'Rendimento'
                                               : 'Base';
@@ -1686,7 +2413,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               </div>
           )}
 
-           {accountToDelete && (
+          {accountToDelete && (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
                         <button 
@@ -1790,10 +2517,122 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                 </div>
             )}
 
+          {transferDeleteTarget && (
+              <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                  <div className="bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-w-sm w-full p-6 relative animate-in zoom-in-95 duration-200">
+                      <button
+                          onClick={() => setTransferDeleteTarget(null)}
+                          aria-label="Fechar confirmação de exclusão de transferência"
+                          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
+                      >
+                          <X size={20} />
+                      </button>
+                      <div className="flex flex-col items-center text-center mb-5">
+                          <div className="w-12 h-12 bg-rose-100 dark:bg-rose-900/20 rounded-full flex items-center justify-center mb-4 text-rose-600 dark:text-rose-400">
+                              <Trash2 size={22} />
+                          </div>
+                          <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Excluir transferência?</h3>
+                          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                              Esta ação vai remover o registro e desfazer o efeito no saldo das contas.
+                          </p>
+                      </div>
+                      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#151517] px-3 py-2 text-xs text-zinc-600 dark:text-zinc-300 mb-5">
+                          <p>
+                              {accountNameById.get(transferDeleteTarget.fromAccountId) || 'Conta removida'} →
+                              {' '}
+                              {accountNameById.get(transferDeleteTarget.toAccountId) || 'Conta removida'}
+                          </p>
+                          <p className="mt-1 font-semibold text-zinc-900 dark:text-white">
+                              {formatCurrency(transferDeleteTarget.amount)}
+                          </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                          <button
+                              onClick={() => setTransferDeleteTarget(null)}
+                              className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
+                          >
+                              Cancelar
+                          </button>
+                          <button
+                              onClick={confirmDeleteTransfer}
+                              className="rounded-xl border border-rose-500/40 py-2.5 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition"
+                          >
+                              Excluir
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {isTourAccountAuditOpen && (
+              <div className="fixed inset-0 z-[1580] pointer-events-none">
+                  <button
+                      type="button"
+                      onClick={() => setIsTourAccountAuditOpen(false)}
+                      aria-label="Fechar auditoria de contas"
+                      className="absolute inset-0 bg-transparent pointer-events-auto animate-in fade-in duration-200"
+                  />
+                  <div
+                      data-tour-anchor="accounts-audit-panel"
+                      className="absolute z-[1705] left-1/2 -translate-x-1/2 pointer-events-auto bg-white/90 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] overflow-hidden animate-in fade-in slide-in-from-bottom-8 duration-200 w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]"
+                      style={{ bottom: 'var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))' }}
+                  >
+                      <button
+                          onClick={() => setIsTourAccountAuditOpen(false)}
+                          aria-label="Fechar auditoria de contas"
+                          data-tour-anchor="accounts-audit-close"
+                          title="Você pode fechar por aqui"
+                          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-white"
+                      >
+                          <X size={20} />
+                      </button>
+
+                      <div className="flex items-start gap-3 mb-4">
+                          <div className="h-10 w-10 rounded-xl bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 flex items-center justify-center">
+                              <History size={18} />
+                          </div>
+                          <div>
+                              <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Auditoria de Contas</h3>
+                              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                  Registros desta tela no guia de primeiro acesso.
+                              </p>
+                          </div>
+                      </div>
+
+                      <div className="max-h-[calc(min(56vh,540px)-120px)] overflow-auto space-y-2 text-xs">
+                          {tourAccountAuditEntries.length === 0 ? (
+                              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-3 text-zinc-500 dark:text-zinc-400">
+                                  Sem registros no momento.
+                              </div>
+                          ) : (
+                              tourAccountAuditEntries.map((entry) => (
+                                  <div
+                                      key={entry.id}
+                                      className="flex items-center justify-between rounded-xl border border-zinc-200 dark:border-zinc-800 px-3 py-2"
+                                  >
+                                      <div className="flex flex-col">
+                                          <span className="font-semibold text-zinc-800 dark:text-zinc-100">
+                                              Conta criada: {entry.accountName}
+                                          </span>
+                                          <span className="text-[10px] text-zinc-400">
+                                              {new Date(entry.createdAt).toLocaleString('pt-BR')}
+                                          </span>
+                                      </div>
+                                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                          {formatCurrency(entry.amount)}
+                                      </span>
+                                  </div>
+                              ))
+                          )}
+                      </div>
+                  </div>
+              </div>
+          )}
+
           <MobileTransactionDrawer
               open={isMobile && Boolean(drawerAccount)}
               title={drawerAccount?.name || ''}
-              amount={drawerAccount ? formatCurrency(resolveRealBalance(drawerAccount)) : undefined}
+              amount={drawerAccount ? formatCurrency(resolveDisplayedBalance(drawerAccount)) : undefined}
               details={drawerDetails}
               actionsDisabled={drawerLocked}
               onClose={() => setDrawerAccount(null)}
@@ -1820,105 +2659,127 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   if (isMobile) {
       const mobileList = (
           <div className="space-y-3">
+              {transferSection}
               {!inlineNewOpen ? (
-              accounts.length > 0 ? (
+              visibleAccounts.length > 0 ? (
                   <>
-                      <div className="px-4 py-2">
-                          <button
-                              type="button"
-                              onClick={toggleSelectAll}
-                              disabled={selectableAccounts.length === 0}
-                              className="w-full flex items-center justify-between text-xs font-semibold text-zinc-400 disabled:opacity-50"
-                          >
-                              <span>{selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
-                              <span>{selectedIds.length} selecionados</span>
-                          </button>
-                      </div>
-                      <div className="relative">
-                          <div
-                              ref={mobilePagerRef}
-                              className="flex gap-4 overflow-x-auto overflow-y-hidden snap-x snap-mandatory scrollbar-hide no-vertical-scroll"
-                              style={{ touchAction: 'pan-x', overscrollBehaviorY: 'contain' }}
-                              onScroll={(event) => {
-                                  const el = event.currentTarget;
-                                  const index = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
-                                  setMobilePageIndex(index);
-                              }}
-                          >
-                              {mobilePages.map((page, pageIndex) => (
-                                  <div
-                                      key={`page-${pageIndex}`}
-                                      className="min-w-full snap-start space-y-2"
+                      <div className="px-4 pt-2">
+                          <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <button
+                                      type="button"
+                                      onClick={toggleSelectAll}
+                                      disabled={selectableAccounts.length === 0}
+                                      className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 dark:text-zinc-200 disabled:opacity-50"
                                   >
-                                      {page.map((account) => {
+                                      {selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? (
+                                          <CheckSquare size={14} className="text-indigo-600" />
+                                      ) : (
+                                          <Square size={14} />
+                                      )}
+                                      <span>{selectedIds.length === selectableAccounts.length && selectableAccounts.length > 0 ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                                  </button>
+                                  <span className="text-[11px] font-semibold">{selectedIds.length} selecionados</span>
+                                  <span className="text-[11px]">
+                                      Soma:{' '}
+                                      <strong className="text-zinc-800 dark:text-zinc-100">
+                                          {formatCurrency(displayBalance)}
+                                      </strong>
+                                  </span>
+                              </div>
+                          </div>
+                      </div>
+                      <div className="px-4 grid grid-cols-2 gap-2">
+                                      {visibleAccounts.map((account) => {
+                                          const isTourSimulated = isTourSimulatedAccountId(account.id);
                                           const isLocked = Boolean(account.locked || account.decryptError);
+                                          const isBulkSelectBlocked = isLocked || isTourSimulated;
                                           const isSelected = selectedIds.includes(account.id);
-                                          const computedBalance = resolveRealBalance(account);
-                                          const rowBg = withAlpha(account.color || getAccountColor(account), 0.12);
+                                          const computedBalance = resolveDisplayedBalance(account);
+                                          const isExpanded = drawerAccount?.id === account.id;
+                                          const cardColor = account.color || getAccountColor(account);
+                                          const watermarkKind = inferAccountWatermark(account);
+                                          const lockedReason = account.lockedReason || (account.decryptError ? 'decrypt_failed' : undefined);
+                                          const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivada' : 'Protegida';
                                           return (
                                               <div
                                                   key={account.id}
                                                   id={`account-${account.id}`}
-                                                  className="px-4 py-2 rounded-none"
-                                                  style={{ backgroundColor: rowBg }}
+                                                  className="min-w-0"
                                               >
-                                                  <button
-                                                      type="button"
-                                                      onClick={() => setDrawerAccount(account)}
-                                                      className="w-full flex items-center justify-between gap-3 text-left"
-                                                      disabled={isLocked}
+                                                  <div
+                                                      className={`relative overflow-hidden rounded-xl border transition-all duration-200 ${
+                                                          isExpanded
+                                                              ? 'border-indigo-400/70 shadow-[0_10px_24px_rgba(99,102,241,0.2)]'
+                                                              : 'border-zinc-200/80 dark:border-zinc-800/70'
+                                                      }`}
+                                                      style={{
+                                                          background:
+                                                              `linear-gradient(160deg, ${withAlpha(cardColor, 0.24)} 0%, ${withAlpha(cardColor, 0.1)} 54%, ${withAlpha('#09090b', 0.78)} 100%)`,
+                                                          boxShadow: isExpanded ? undefined : `0 8px 20px ${withAlpha(cardColor, 0.15)}`
+                                                      }}
                                                   >
-                                                      <div className="flex items-center gap-2 min-w-0">
+                                                      <div className="pointer-events-none absolute right-2 bottom-1 z-0 text-white/15">
+                                                          {watermarkKind === 'bank' ? (
+                                                              <Landmark size={44} strokeWidth={1.5} />
+                                                          ) : watermarkKind === 'yield' ? (
+                                                              <TrendingUp size={44} strokeWidth={1.5} />
+                                                          ) : (
+                                                              <DollarSign size={44} strokeWidth={1.5} />
+                                                          )}
+                                                      </div>
+                                                      <div className="absolute right-2 top-2 z-20">
                                                           <input
                                                               type="checkbox"
                                                               checked={isSelected}
                                                               onChange={() => toggleSelection(account.id)}
                                                               onClick={(event) => event.stopPropagation()}
-                                                              disabled={isLocked}
+                                                              disabled={isBulkSelectBlocked}
                                                               className="h-4 w-4 accent-indigo-500"
                                                               aria-label={`Selecionar conta ${account.name}`}
                                                           />
-                                                          <span className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                                                              {account.name}
-                                                          </span>
                                                       </div>
-                                                      <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                                          {formatCurrency(computedBalance)}
-                                                      </span>
-                                                  </button>
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => setDrawerAccount(account)}
+                                                          className="relative z-10 w-full px-3 py-3 text-left"
+                                                          disabled={isLocked}
+                                                      >
+                                                          <p className={`pr-7 text-sm font-semibold truncate ${isLocked ? 'text-zinc-400' : 'text-zinc-100'}`}>
+                                                              {account.name}
+                                                          </p>
+                                                          <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-zinc-400">Valor</p>
+                                                          <p className={`mt-1 text-lg font-bold ${isLocked ? 'text-zinc-400' : 'text-emerald-300'}`}>
+                                                              {formatCurrency(computedBalance)}
+                                                          </p>
+                                                          <div className="mt-2 flex items-center gap-1.5">
+                                                              <span className="inline-flex items-center rounded-full border border-white/15 bg-black/25 px-2 py-0.5 text-[10px] font-semibold text-zinc-200">
+                                                                  {account.nature || 'PJ'}
+                                                              </span>
+                                                              <span className="inline-flex items-center rounded-full border border-white/15 bg-black/25 px-2 py-0.5 text-[10px] font-semibold text-zinc-200 truncate max-w-[90px]">
+                                                                  {account.type || 'Conta'}
+                                                              </span>
+                                                          </div>
+                                                          {isLocked && (
+                                                              <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+                                                                  <Lock size={10} />
+                                                                  {lockedLabel}
+                                                              </div>
+                                                          )}
+                                                      </button>
+                                                  </div>
                                               </div>
                                           );
                                       })}
-                                  </div>
-                              ))}
-                          </div>
-                          {hasMobilePages && (
-                              <div className="mt-2 px-4 flex items-center justify-end gap-2">
-                                  <span className="text-[10px] text-zinc-400">
-                                      {mobilePageIndex + 1}/{mobilePages.length}
-                                  </span>
-                                  <button
-                                      type="button"
-                                      onClick={() => {
-                                          const next = (mobilePageIndex + 1) % mobilePages.length;
-                                          const container = mobilePagerRef.current;
-                                          if (container) {
-                                              container.scrollTo({ left: container.clientWidth * next, behavior: 'smooth' });
-                                          }
-                                      }}
-                                      className="h-8 w-8 rounded-full bg-white/10 text-white flex items-center justify-center"
-                                      aria-label="Próxima página"
-                                  >
-                                      <ChevronDown size={16} className="-rotate-90" />
-                                  </button>
-                              </div>
-                          )}
                       </div>
                   </>
               ) : (
                   <MobileEmptyState
                       icon={<Landmark size={18} />}
-                      message="Nenhuma conta cadastrada."
+                      title="Nenhuma conta cadastrada"
+                      message="Cadastre sua primeira conta para começar a lançar entradas, despesas e acompanhar saldo."
+                      actionLabel="Cadastrar conta"
+                      onAction={handleOpenNew}
                   />
               )
               ) : null}
@@ -1943,21 +2804,22 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               ref={subHeaderRef}
                               className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
-                              <div className="px-3 pb-3 pt-2">
+                              <div className="mm-mobile-subheader-pad mm-mobile-subheader-pad-tight">
                                   {accountsHeader}
                               </div>
                           </div>
                       </div>
                       <div
-                          className={`h-full px-4 ${inlineNewOpen ? 'pb-[calc(env(safe-area-inset-bottom)+16px)]' : 'pb-[calc(env(safe-area-inset-bottom)+88px)]'} overflow-hidden`}
+                          className={`h-full mm-mobile-content-pad ${inlineNewOpen ? 'pb-[calc(env(safe-area-inset-bottom)+16px)]' : 'pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+20px)]'} overflow-y-auto overflow-x-hidden`}
                           style={{
                               paddingTop: subHeaderHeight
-                                  ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px - ${topAdjust}px)`
-                                  : 'calc(var(--mm-mobile-top, 0px) + 2px)'
+                                  ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px - ${topAdjust}px)`
+                                  : 'calc(var(--mm-mobile-top, 0px))',
+                              WebkitOverflowScrolling: 'touch'
                           }}
                       >
                       <div ref={firstSectionRef}>
-                        <MobileFullWidthSection contentClassName="px-3 py-3">
+                        <MobileFullWidthSection contentClassName="mm-mobile-section-pad mm-mobile-section-pad-tight-top">
                             {mobileList}
                         </MobileFullWidthSection>
                       </div>
@@ -1973,7 +2835,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   }
 
   return (
-    <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter ${desktopScrollPadding} transition-colors duration-300 ${accountDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
+    <div className="bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300">
       {summarySection}
       {listSection}
       {modals}

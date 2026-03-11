@@ -1,0 +1,19 @@
+{
+  "baseUrl": "http://127.0.0.1:4173",
+  "loginEmail": "qa.screenshots.bot@example.com",
+  "generatedAt": "2026-03-06T11:40:26.486Z",
+  "outDir": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z",
+  "total": 10,
+  "captures": [
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/01-mobile-dashboard.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/02-mobile-launches.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/03-mobile-accounts.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/04-mobile-yields.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/05-mobile-invoices.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/06-mobile-reports.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/07-mobile-agenda.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/08-mobile-incomes.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/09-mobile-expenses.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-screenshots-2026-03-06T11-39-34-535Z/10-mobile-settings.png"
+  ]
+}

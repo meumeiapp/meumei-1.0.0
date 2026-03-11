@@ -37,7 +37,7 @@ import { CreditCard as CreditCardType, Expense, Income, Account } from '../types
 import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
-import { CATEGORY_ITEMS_PREVIEW_LIMIT, computeCategoryTotals } from '../utils/categoryTotals';
+import { computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 import SearchHelperBar from './SearchHelperBar';
@@ -57,6 +57,21 @@ interface ExpenseBreakdown {
     fixed: number;
     variable: number;
     personal: number;
+}
+
+type MoneyFlowMode = 'out' | 'in';
+
+interface MoneyFlowEntry {
+    id: string;
+    category: string;
+    key: string;
+    amount: number;
+    date: string;
+    description: string;
+    accountKey: string;
+    accountLabel: string;
+    method: string;
+    nature: string;
 }
 
 const CATEGORY_TREND_COLORS = ['#a855f7', '#38bdf8', '#f97316', '#22c55e', '#ec4899', '#facc15', '#0ea5e9', '#f472b6', '#94a3b8', '#fb923c'];
@@ -171,6 +186,13 @@ const mapMonthAlias = (token: string) => {
   return MONTH_ALIASES[clean as keyof typeof MONTH_ALIASES] || clean;
 };
 
+const normalizeCategoryKey = (value: string) =>
+  value
+    .trim()
+    .toLocaleLowerCase('pt-BR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
 
 interface DashboardProps {
   onOpenAccounts: () => void;
@@ -208,8 +230,6 @@ interface DashboardProps {
 
 const MEI_LIMIT = 81000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const MEI_CHECKPOINTS = [0.25, 0.5, 0.75, 1];
-
 type MeiStatusLevel = 'safe' | 'attention' | 'critical' | 'over';
 
 interface MeiStatus {
@@ -547,7 +567,12 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   );
   
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [expandedCategoryKey, setExpandedCategoryKey] = useState<string | null>(null);
+  const [selectedCategoryKeys, setSelectedCategoryKeys] = useState<string[]>([]);
+  const [moneyFlowMode, setMoneyFlowMode] = useState<MoneyFlowMode>('out');
+  const [flowAccountFilter, setFlowAccountFilter] = useState<string>('all');
+  const [flowMethodFilter, setFlowMethodFilter] = useState<string>('all');
+  const [flowNatureFilter, setFlowNatureFilter] = useState<string>('all');
+  const [hoveredPoint, setHoveredPoint] = useState<null | { x: number; y: number; label: string }>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -558,6 +583,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const collapsePrefsLoadedRef = useRef(false);
   const collapsePrefsKey = 'meumei.dashboard.desktop.collapse';
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
+  const expenseChartHostRef = useRef<HTMLDivElement | null>(null);
+  const [expenseChartWidth, setExpenseChartWidth] = useState(0);
   const categoryNames = useMemo(() => {
       const names = new Set<string>();
       expenses.forEach(exp => {
@@ -611,13 +638,6 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           console.warn('[dashboard][collapse] save_failed', { message: (error as any)?.message });
       }
   }, [collapsePrefsKey, isCreditCardsCollapsed, isExpenseBreakdownCollapsed]);
-
-  useEffect(() => {
-      document.body.classList.add('no-vertical-scroll');
-      return () => {
-          document.body.classList.remove('no-vertical-scroll');
-      };
-  }, []);
 
   const expenseSearchItems = useMemo<InlineSearchItem[]>(() =>
       expenses.map(expense => {
@@ -822,6 +842,92 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       }, {});
   }, [creditCards]);
 
+  const monthlyExpenseFlowEntries = useMemo<MoneyFlowEntry[]>(() => {
+      return expenses
+          .filter(expense => {
+              const date = new Date(`${expense.date}T12:00:00`);
+              if (Number.isNaN(date.getTime())) return false;
+              if (date.getFullYear() !== viewDate.getFullYear() || date.getMonth() !== viewDate.getMonth()) return false;
+              const status = normalizeExpenseStatus(expense.status);
+              return status === 'paid' || status === 'pending';
+          })
+          .map(expense => {
+              const category = (expense.category || 'Sem categoria').trim() || 'Sem categoria';
+              const key = normalizeCategoryKey(category) || 'sem-categoria';
+              const sourceKey = expense.accountId
+                  ? `account:${expense.accountId}`
+                  : expense.cardId
+                      ? `card:${expense.cardId}`
+                      : 'none';
+              const sourceLabel = expense.accountId
+                  ? accountNameById[expense.accountId] || 'Conta removida'
+                  : expense.cardId
+                      ? cardNameById[expense.cardId] || 'Cartão removido'
+                      : 'Sem conta';
+              return {
+                  id: expense.id,
+                  category,
+                  key,
+                  amount: Number(expense.amount) || 0,
+                  date: expense.date,
+                  description: (expense.description || '').trim() || category,
+                  accountKey: sourceKey,
+                  accountLabel: sourceLabel,
+                  method: (expense.paymentMethod || '').trim() || 'Sem forma',
+                  nature: (expense.taxStatus || '').trim() || 'Sem natureza'
+              };
+          });
+  }, [expenses, viewDate, accountNameById, cardNameById]);
+
+  const monthlyIncomeFlowEntries = useMemo<MoneyFlowEntry[]>(() => {
+      return incomes
+          .filter(income => {
+              const date = new Date(`${income.date}T12:00:00`);
+              if (Number.isNaN(date.getTime())) return false;
+              if (date.getFullYear() !== viewDate.getFullYear() || date.getMonth() !== viewDate.getMonth()) return false;
+              return income.status === 'received';
+          })
+          .map(income => {
+              const category = (income.category || 'Sem categoria').trim() || 'Sem categoria';
+              const key = normalizeCategoryKey(category) || 'sem-categoria';
+              const accountId = income.accountId || '';
+              return {
+                  id: income.id,
+                  category,
+                  key,
+                  amount: Number(income.amount) || 0,
+                  date: income.date,
+                  description: (income.description || '').trim() || category,
+                  accountKey: accountId ? `account:${accountId}` : 'none',
+                  accountLabel: accountId ? accountNameById[accountId] || 'Conta removida' : 'Sem conta',
+                  method: (income.paymentMethod || '').trim() || 'Sem forma',
+                  nature: (income.taxStatus || '').trim() || 'Sem natureza'
+              };
+          });
+  }, [incomes, viewDate, accountNameById]);
+
+  const activeFlowEntries = useMemo(
+      () => (moneyFlowMode === 'in' ? monthlyIncomeFlowEntries : monthlyExpenseFlowEntries),
+      [moneyFlowMode, monthlyExpenseFlowEntries, monthlyIncomeFlowEntries]
+  );
+  const hasOutMonthData = monthlyExpenseFlowEntries.length > 0;
+  const hasInMonthData = monthlyIncomeFlowEntries.length > 0;
+
+  useEffect(() => {
+      if (moneyFlowMode === 'out' && !hasOutMonthData && hasInMonthData) {
+          setMoneyFlowMode('in');
+          return;
+      }
+      if (moneyFlowMode === 'in' && !hasInMonthData && hasOutMonthData) {
+          setMoneyFlowMode('out');
+      }
+  }, [moneyFlowMode, hasOutMonthData, hasInMonthData]);
+
+  const flowMonthLabel = useMemo(
+      () => viewDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
+      [viewDate]
+  );
+
   const categoryTotals = useMemo(
       () =>
           computeCategoryTotals(expenses, {
@@ -833,56 +939,295 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               source: 'dashboard',
               variant: 'desktop',
               expensesRevision,
-              refreshNonce,
-              expandedCategory: expandedCategoryKey
+              refreshNonce
           }),
-      [expenses, viewDate, expensesRevision, refreshNonce, expandedCategoryKey]
+      [expenses, viewDate, expensesRevision, refreshNonce]
   );
 
-  const maxCategoryTotal = useMemo(
-      () => Math.max(...categoryTotals.items.map(item => item.total), 0),
-      [categoryTotals.items]
-  );
+  const incomeCategoryTotals = useMemo(() => {
+      const monthIncomes = incomes.filter(income => {
+          const date = new Date(`${income.date}T12:00:00`);
+          if (Number.isNaN(date.getTime())) return false;
+          if (date.getFullYear() !== viewDate.getFullYear() || date.getMonth() !== viewDate.getMonth()) return false;
+          return income.status === 'received';
+      });
 
-  const spendInsights = useMemo(() => {
-      if (!categoryTotals.items.length || categoryTotals.totalSum <= 0) return [];
-      const topCategory = categoryTotals.items[0];
-      const top3Total = categoryTotals.items
-          .slice(0, 3)
-          .reduce((sum, item) => sum + item.total, 0);
-      const top3Percent = categoryTotals.totalSum > 0 ? (top3Total / categoryTotals.totalSum) * 100 : 0;
-      return [
-          {
-              label: 'Categoria líder',
-              value: topCategory.category,
-              sub: formatCurrency(topCategory.total)
-          },
-          {
-              label: 'Top 3',
-              value: `${top3Percent.toFixed(1)}% do total`
-          },
-          {
-              label: 'Categorias ativas',
-              value: `${categoryTotals.items.length}`
+      const totalsByKey = new Map<string, { label: string; total: number; count: number }>();
+      const categoryItems: Record<string, Income[]> = {};
+
+      monthIncomes.forEach(income => {
+          const categoryLabel = (income.category || 'Sem categoria').trim() || 'Sem categoria';
+          const key = normalizeCategoryKey(categoryLabel) || 'sem-categoria';
+          const current = totalsByKey.get(key);
+          if (!current) {
+              totalsByKey.set(key, { label: categoryLabel, total: income.amount, count: 1 });
+          } else {
+              current.total += income.amount;
+              current.count += 1;
           }
-      ];
-  }, [categoryTotals]);
 
-  const creditCardsPreviewCount = 3;
-  const visibleCreditCards = isCreditCardsCollapsed ? creditCards.slice(0, creditCardsPreviewCount) : creditCards;
-  const canExpandCreditCards = creditCards.length > creditCardsPreviewCount;
-  const visibleCategoryItems = isExpenseBreakdownCollapsed ? categoryTotals.items.slice(0, 1) : categoryTotals.items;
+          if (!categoryItems[key]) {
+              categoryItems[key] = [];
+          }
+          categoryItems[key].push(income);
+      });
+
+      const items = Array.from(totalsByKey.entries())
+          .map(([key, item]) => ({ key, category: item.label, total: item.total, count: item.count }))
+          .sort((a, b) => b.total - a.total);
+
+      const totalSum = Number(monthIncomes.reduce((sum, income) => sum + (income.amount || 0), 0).toFixed(2));
+
+      Object.keys(categoryItems).forEach(key => {
+          categoryItems[key].sort((a, b) => {
+              const aDate = new Date(`${a.date}T12:00:00`).getTime();
+              const bDate = new Date(`${b.date}T12:00:00`).getTime();
+              return bDate - aDate;
+          });
+      });
+
+      return {
+          items,
+          totalSum,
+          totalReceived: totalSum,
+          monthLabel: categoryTotals.monthLabel,
+          categoryItems
+      };
+  }, [incomes, viewDate, categoryTotals.monthLabel]);
+
+  const daysInViewMonth = useMemo(
+      () => new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0).getDate(),
+      [viewDate]
+  );
+
+  const flowAccountOptions = useMemo(
+      () =>
+          Array.from(
+              activeFlowEntries.reduce((map, entry) => {
+                  if (!map.has(entry.accountKey)) {
+                      map.set(entry.accountKey, entry.accountLabel);
+                  }
+                  return map;
+              }, new Map<string, string>())
+          )
+              .map(([value, label]) => ({ value, label }))
+              .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+      [activeFlowEntries]
+  );
+
+  const flowMethodOptions = useMemo(
+      () =>
+          Array.from(new Set(activeFlowEntries.map(entry => entry.method)))
+              .map(value => ({ value, label: value }))
+              .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+      [activeFlowEntries]
+  );
+
+  const flowNatureOptions = useMemo(
+      () =>
+          Array.from(new Set(activeFlowEntries.map(entry => entry.nature)))
+              .map(value => ({ value, label: value }))
+              .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+      [activeFlowEntries]
+  );
 
   useEffect(() => {
-      if (!expandedCategoryKey) return;
-      if (!categoryTotals.categoryItems[expandedCategoryKey]) {
-          console.info('[category-totals] expanded_reset', {
-              variant: 'desktop',
-              key: expandedCategoryKey
-          });
-          setExpandedCategoryKey(null);
+      if (flowAccountFilter !== 'all' && !flowAccountOptions.some(option => option.value === flowAccountFilter)) {
+          setFlowAccountFilter('all');
       }
-  }, [categoryTotals.categoryItems, expandedCategoryKey]);
+  }, [flowAccountFilter, flowAccountOptions]);
+
+  useEffect(() => {
+      if (flowMethodFilter !== 'all' && !flowMethodOptions.some(option => option.value === flowMethodFilter)) {
+          setFlowMethodFilter('all');
+      }
+  }, [flowMethodFilter, flowMethodOptions]);
+
+  useEffect(() => {
+      if (flowNatureFilter !== 'all' && !flowNatureOptions.some(option => option.value === flowNatureFilter)) {
+          setFlowNatureFilter('all');
+      }
+  }, [flowNatureFilter, flowNatureOptions]);
+
+  const filteredFlowEntries = useMemo(() => {
+      return activeFlowEntries.filter(entry => {
+          if (flowAccountFilter !== 'all' && entry.accountKey !== flowAccountFilter) return false;
+          if (flowMethodFilter !== 'all' && entry.method !== flowMethodFilter) return false;
+          if (flowNatureFilter !== 'all' && entry.nature !== flowNatureFilter) return false;
+          return true;
+      });
+  }, [activeFlowEntries, flowAccountFilter, flowMethodFilter, flowNatureFilter]);
+
+  const activeFlowBreakdown = useMemo(() => {
+      const grouped = new Map<
+          string,
+          {
+              key: string;
+              category: string;
+              total: number;
+              count: number;
+              entries: MoneyFlowEntry[];
+          }
+      >();
+
+      filteredFlowEntries.forEach(entry => {
+          const current = grouped.get(entry.key);
+          if (!current) {
+              grouped.set(entry.key, {
+                  key: entry.key,
+                  category: entry.category,
+                  total: entry.amount,
+                  count: 1,
+                  entries: [entry]
+              });
+              return;
+          }
+          current.total += entry.amount;
+          current.count += 1;
+          current.entries.push(entry);
+      });
+
+      const items = Array.from(grouped.values())
+          .map(item => ({
+              key: item.key,
+              category: item.category,
+              total: Number(item.total.toFixed(2)),
+              count: item.count
+          }))
+          .sort((a, b) => b.total - a.total);
+
+      const seriesByDay = new Map<string, { total: number; labels: string[]; count: number }[]>();
+      grouped.forEach(item => {
+          const bucket = Array.from({ length: daysInViewMonth }, () => ({ total: 0, labels: [], count: 0 }));
+          item.entries.forEach(entry => {
+              const date = new Date(`${entry.date}T12:00:00`);
+              if (Number.isNaN(date.getTime())) return;
+              const dayIndex = date.getDate() - 1;
+              if (dayIndex < 0 || dayIndex >= bucket.length) return;
+              const point = bucket[dayIndex];
+              point.total += entry.amount;
+              point.count += 1;
+              if (entry.description && !point.labels.includes(entry.description)) {
+                  point.labels.push(entry.description);
+              }
+          });
+          seriesByDay.set(item.key, bucket);
+      });
+
+      return {
+          items,
+          totalSum: Number(filteredFlowEntries.reduce((sum, entry) => sum + entry.amount, 0).toFixed(2)),
+          seriesByDay
+      };
+  }, [filteredFlowEntries, daysInViewMonth]);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const node = expenseChartHostRef.current;
+      if (!node) return;
+
+      const syncWidth = () => {
+          const next = Math.round(node.getBoundingClientRect().width);
+          if (!Number.isFinite(next) || next <= 0) return;
+          setExpenseChartWidth(prev => (prev === next ? prev : next));
+      };
+
+      syncWidth();
+      const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncWidth) : null;
+      resizeObserver?.observe(node);
+      window.addEventListener('resize', syncWidth);
+
+      return () => {
+          resizeObserver?.disconnect();
+          window.removeEventListener('resize', syncWidth);
+      };
+  }, [isExpenseBreakdownCollapsed, expandedPanel, categoryTotals.items.length, incomeCategoryTotals.items.length, daysInViewMonth, moneyFlowMode]);
+
+  const expenseSeriesByDay = useMemo(() => {
+      const map = new Map<string, { total: number; labels: string[]; count: number }[]>();
+      categoryTotals.items.forEach(item => {
+          map.set(
+              item.key,
+              Array.from({ length: daysInViewMonth }, () => ({ total: 0, labels: [], count: 0 }))
+          );
+      });
+      categoryTotals.items.forEach(item => {
+          const bucket = map.get(item.key);
+          if (!bucket) return;
+          const entries = categoryTotals.categoryItems[item.key] || [];
+          entries.forEach(entry => {
+              const date = new Date(`${entry.date}T12:00:00`);
+              if (Number.isNaN(date.getTime())) return;
+              if (date.getFullYear() !== viewDate.getFullYear() || date.getMonth() !== viewDate.getMonth()) return;
+              const dayIndex = date.getDate() - 1;
+              if (dayIndex < 0 || dayIndex >= bucket.length) return;
+              const dayPoint = bucket[dayIndex];
+              dayPoint.total += Number(entry.amount) || 0;
+              dayPoint.count += 1;
+              const destination = (entry.description || '').trim();
+              if (destination && !dayPoint.labels.includes(destination)) {
+                  dayPoint.labels.push(destination);
+              }
+          });
+      });
+      return map;
+  }, [categoryTotals.items, categoryTotals.categoryItems, daysInViewMonth, viewDate]);
+
+  const incomeSeriesByDay = useMemo(() => {
+      const map = new Map<string, { total: number; labels: string[]; count: number }[]>();
+      incomeCategoryTotals.items.forEach(item => {
+          map.set(
+              item.key,
+              Array.from({ length: daysInViewMonth }, () => ({ total: 0, labels: [], count: 0 }))
+          );
+      });
+      incomeCategoryTotals.items.forEach(item => {
+          const bucket = map.get(item.key);
+          if (!bucket) return;
+          const entries = incomeCategoryTotals.categoryItems[item.key] || [];
+          entries.forEach(entry => {
+              const date = new Date(`${entry.date}T12:00:00`);
+              if (Number.isNaN(date.getTime())) return;
+              if (date.getFullYear() !== viewDate.getFullYear() || date.getMonth() !== viewDate.getMonth()) return;
+              const dayIndex = date.getDate() - 1;
+              if (dayIndex < 0 || dayIndex >= bucket.length) return;
+              const dayPoint = bucket[dayIndex];
+              dayPoint.total += Number(entry.amount) || 0;
+              dayPoint.count += 1;
+              const destination = (entry.description || '').trim();
+              if (destination && !dayPoint.labels.includes(destination)) {
+                  dayPoint.labels.push(destination);
+              }
+          });
+      });
+      return map;
+  }, [incomeCategoryTotals.items, incomeCategoryTotals.categoryItems, daysInViewMonth, viewDate]);
+
+  const activeCategoryButtons = useMemo(
+      () => activeFlowBreakdown.items,
+      [activeFlowBreakdown.items]
+  );
+
+  useEffect(() => {
+      setSelectedCategoryKeys([]);
+      setHoveredPoint(null);
+      setFlowAccountFilter('all');
+      setFlowMethodFilter('all');
+      setFlowNatureFilter('all');
+  }, [moneyFlowMode]);
+
+  useEffect(() => {
+      const validKeys = new Set(activeCategoryButtons.map(item => item.key));
+      setSelectedCategoryKeys(prev => {
+          const next = prev.filter(key => validKeys.has(key));
+          if (next.length === prev.length) return prev;
+          return next;
+      });
+  }, [activeCategoryButtons]);
+
+  const creditCardsPreviewCount = 6;
+  const visibleCreditCards = isCreditCardsCollapsed ? creditCards.slice(0, creditCardsPreviewCount) : creditCards;
+  const canExpandCreditCards = creditCards.length > creditCardsPreviewCount;
 
   const handleManualRecalc = () => {
       setRefreshNonce(prev => prev + 1);
@@ -932,7 +1277,6 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   }, [financialData.expenses, categoryTotals.totalSum, categoryTotals.monthExpensesAll, categoryTotals.categoryItems]);
 
   // --- MEI Logic ---
-  const [meiMode, setMeiMode] = useState<'annual' | 'monthly'>('annual');
   const annualMeiRevenue = financialData.annualMeiRevenue || 0;
   const monthlyMeiRevenue = useMemo(() => {
       return incomes
@@ -946,30 +1290,81 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           })
           .reduce((acc, curr) => acc + curr.amount, 0);
   }, [incomes, viewDate]);
-  const meiLimit = meiMode === 'annual' ? MEI_LIMIT : MEI_LIMIT / 12;
-  const meiRevenue = meiMode === 'annual' ? annualMeiRevenue : monthlyMeiRevenue;
-  const rawPercentage = meiLimit > 0 ? (meiRevenue / meiLimit) * 100 : 0;
-  const displayPercentage = Math.min(Math.max(rawPercentage, 0), 100);
-  const progressVisualPercentage = Math.min(Math.max(rawPercentage, 0), 120);
-  const progressLabelLeft = Math.min(Math.max(displayPercentage, 6), 94);
-  const meiRemaining = Math.max(meiLimit - meiRevenue, 0);
-  const meiExcess = Math.max(meiRevenue - meiLimit, 0);
-  const meiStatus = getMeiStatus(rawPercentage);
+  const monthlyMeiLimit = MEI_LIMIT / 12;
+  const meiStatusPriority: Record<MeiStatusLevel, number> = {
+      safe: 0,
+      attention: 1,
+      critical: 2,
+      over: 3
+  };
+  const buildMeiSnapshot = (
+      id: 'annual' | 'monthly',
+      title: string,
+      revenue: number,
+      limit: number,
+      scopeLabel: 'anual' | 'mensal'
+  ) => {
+      const rawPercentage = limit > 0 ? (revenue / limit) * 100 : 0;
+      const displayPercentage = Math.min(Math.max(rawPercentage, 0), 100);
+      const progressVisualPercentage = Math.min(Math.max(rawPercentage, 0), 120);
+      const progressLabelLeft = Math.min(Math.max(displayPercentage, 6), 94);
+      const remaining = Math.max(limit - revenue, 0);
+      const excess = Math.max(revenue - limit, 0);
+      const status = getMeiStatus(rawPercentage);
+      const statusDescription =
+          scopeLabel === 'anual'
+              ? status.description
+              : status.level === 'over'
+                ? 'Você ultrapassou o limite mensal estimado do MEI.'
+                : status.level === 'critical'
+                  ? 'Faltam poucos passos para estourar o limite mensal estimado.'
+                  : status.level === 'attention'
+                    ? 'Você já passou da metade do limite mensal estimado.'
+                    : 'Seu faturamento está bem abaixo do limite mensal estimado.';
+
+      return {
+          id,
+          title,
+          revenue,
+          limit,
+          scopeLabel,
+          rawPercentage,
+          displayPercentage,
+          progressVisualPercentage,
+          progressLabelLeft,
+          remaining,
+          excess,
+          status,
+          statusDescription,
+          limitLabel: scopeLabel === 'anual' ? 'limite anual' : 'limite mensal estimado'
+      };
+  };
+  const annualMeiSnapshot = useMemo(
+      () => buildMeiSnapshot('annual', 'Visão anual', annualMeiRevenue, MEI_LIMIT, 'anual'),
+      [annualMeiRevenue]
+  );
+  const monthlyMeiSnapshot = useMemo(
+      () => buildMeiSnapshot('monthly', 'Visão mensal', monthlyMeiRevenue, monthlyMeiLimit, 'mensal'),
+      [monthlyMeiRevenue, monthlyMeiLimit]
+  );
+  const meiSnapshots = [annualMeiSnapshot, monthlyMeiSnapshot];
+  const dominantMeiSnapshot = useMemo(() => {
+      return meiSnapshots.reduce((worst, current) => {
+          const worstPriority = meiStatusPriority[worst.status.level];
+          const currentPriority = meiStatusPriority[current.status.level];
+          if (currentPriority > worstPriority) return current;
+          if (currentPriority === worstPriority && current.rawPercentage > worst.rawPercentage) return current;
+          return worst;
+      });
+  }, [meiSnapshots]);
+  const meiStatus = dominantMeiSnapshot.status;
+  const meiRemaining = dominantMeiSnapshot.remaining;
+  const meiExcess = dominantMeiSnapshot.excess;
+  const rawPercentage = dominantMeiSnapshot.rawPercentage;
+  const dominantLimitLabel = dominantMeiSnapshot.limitLabel;
   const mascotConfig = getMascotConfig(rawPercentage);
   const incomeAccent = '#22c55e';
   const expenseAccent = '#FF0000';
-  const meiScopeLabel = meiMode === 'annual' ? 'anual' : 'mensal';
-  const meiLimitLabel = meiMode === 'annual' ? 'limite anual' : 'limite mensal estimado';
-  const meiStatusDescription =
-      meiMode === 'annual'
-          ? meiStatus.description
-          : meiStatus.level === 'over'
-            ? 'Você ultrapassou o limite mensal estimado do MEI.'
-            : meiStatus.level === 'critical'
-              ? 'Faltam poucos passos para estourar o limite mensal estimado.'
-              : meiStatus.level === 'attention'
-                ? 'Você já passou da metade do limite mensal estimado.'
-                : 'Seu faturamento está bem abaixo do limite mensal estimado.';
   const healthScore = useMemo(() => {
       const income = financialData.income;
       const expenses = financialData.expenses;
@@ -983,13 +1378,13 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const statusCalloutText = (() => {
       switch (meiStatus.level) {
           case 'over':
-              return `Você excedeu o ${meiLimitLabel} em ${formatCurrency(meiExcess)}. Procure orientação contábil.`;
+              return `Você excedeu o ${dominantLimitLabel} em ${formatCurrency(meiExcess)}. Procure orientação contábil.`;
           case 'critical':
-              return `Restam ${formatCurrency(meiRemaining)} até alcançar o ${meiLimitLabel}. Planeje o próximo mês com cuidado.`;
+              return `Restam ${formatCurrency(meiRemaining)} até alcançar o ${dominantLimitLabel}. Planeje o próximo mês com cuidado.`;
           case 'attention':
-              return `Você já utilizou ${rawPercentage.toFixed(1)}% do ${meiLimitLabel}. Ajuste suas metas para não estourar.`;
+              return `Você já utilizou ${rawPercentage.toFixed(1)}% do ${dominantLimitLabel}. Ajuste suas metas para não estourar.`;
           default:
-              return `Continue acompanhando o faturamento para manter distância confortável do ${meiLimitLabel}.`;
+              return `Continue acompanhando o faturamento para manter distância confortável do ${dominantLimitLabel}.`;
       }
   })();
   const calloutIcon = meiStatus.level === 'over' ? OctagonAlert : meiStatus.level === 'critical' ? Flame : meiStatus.level === 'attention' ? AlertTriangle : CheckCircle2;
@@ -1086,226 +1481,909 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       return '#22c55e';
   };
 
-  const renderCreditCardsSection = (cardsToShow: CreditCardType[], variant: 'compact' | 'expanded' = 'compact') => (
-      <section>
-          <div className="bg-white dark:bg-[#151517] rounded-2xl p-3 border border-zinc-200 dark:border-zinc-800 shadow-sm h-full">
-              <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                      <CreditCard className="text-purple-600 dark:text-purple-500" size={20} />
-                      Faturas dos Cartões
-                  </h2>
-              </div>
+  const renderCreditCardsSection = (cardsToShow: CreditCardType[], variant: 'compact' | 'expanded' = 'compact') => {
+      const shouldFillPlaceholders = variant === 'compact';
+      const slotCount = shouldFillPlaceholders ? 6 : cardsToShow.length;
+      const limitedCards = shouldFillPlaceholders ? cardsToShow.slice(0, slotCount) : cardsToShow;
+      const placeholderCount = shouldFillPlaceholders ? Math.max(0, slotCount - limitedCards.length) : 0;
+      const cardEntries: Array<{ kind: 'card'; card: CreditCardType } | { kind: 'placeholder'; id: string }> = [
+          ...limitedCards.map((card) => ({ kind: 'card' as const, card })),
+          ...Array.from({ length: placeholderCount }, (_, index) => ({ kind: 'placeholder' as const, id: `card-slot-${index}` }))
+      ];
+      const gridClass =
+          variant === 'expanded' ? 'grid-cols-1 md:grid-cols-3 xl:grid-cols-4' : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-6';
 
-              {cardsToShow.length > 0 ? (
-                  <div
-                      className={`grid gap-3 ${variant === 'expanded' ? 'grid-cols-1 md:grid-cols-3 xl:grid-cols-4' : 'grid-cols-1 md:grid-cols-3'}`}
-                  >
-                      {cardsToShow.map((card) => {
-                          const style = getCardStyle(card); 
-                          
-                          const invoiceTotal = cardTotals[card.id] ?? 0;
+      return (
+          <section>
+              <div
+                  className="bg-white dark:bg-[#151517] rounded-2xl p-3 border border-zinc-200 dark:border-zinc-800 shadow-sm h-full"
+                  data-tour-anchor={variant === 'compact' ? 'dashboard-credit-cards' : undefined}
+              >
+                  <div className="flex items-center justify-between mb-2">
+                      <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                          <CreditCard className="text-purple-600 dark:text-purple-500" size={20} />
+                          Faturas dos Cartões
+                      </h2>
+                  </div>
 
-                          const dueDateObj = resolveCardDueDate(card);
-                          const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
-                          const dueBorderColor = resolveDueBorderColor(dueDateObj);
-
-                          return (
-                              <div 
-                                  key={card.id} 
-                                  className="rounded-2xl p-2.5 border-2 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
-                                  style={{
-                                      backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})`,
-                                      borderColor: dueBorderColor
-                                  }}
-                              >
-                                  <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
-                                  <div className="relative z-10 flex flex-col h-full justify-between">
-                                      <div className="flex justify-between items-start">
-                                          <div>
-                                              <h3 className="font-bold text-sm text-white mb-0.5">{card.name}</h3>
-                                              <p className="text-[11px] text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
+                  {cardEntries.length > 0 ? (
+                      <div className={`grid gap-3 ${gridClass}`}>
+                          {cardEntries.map((entry) => {
+                              if (entry.kind === 'placeholder') {
+                                  return (
+                                      <button
+                                          key={entry.id}
+                                          type="button"
+                                          onClick={onOpenInvoices}
+                                          className="rounded-2xl p-2.5 border-2 border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-100/70 dark:bg-zinc-900/40 min-h-[132px] flex flex-col items-center justify-center gap-2 text-zinc-500 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
+                                      >
+                                          <div className="w-10 h-10 rounded-full bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center">
+                                              <Plus size={20} />
                                           </div>
-                                          <div className="bg-white/20 backdrop-blur-md p-1 rounded-lg">
-                                              <img src={style.icon} className="w-6 h-6 opacity-90" alt="Card Brand" />
-                                          </div>
-                                      </div>
-                                      <div className="mt-3">
-                                          <div className="flex justify-between items-end mb-2.5">
+                                          <span className="text-xs font-semibold">Adicionar cartão</span>
+                                      </button>
+                                  );
+                              }
+
+                              const style = getCardStyle(entry.card);
+                              const invoiceTotal = cardTotals[entry.card.id] ?? 0;
+                              const dueDateObj = resolveCardDueDate(entry.card);
+                              const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                              const dueBorderColor = resolveDueBorderColor(dueDateObj);
+
+                              return (
+                                  <div
+                                      key={entry.card.id}
+                                      className="rounded-2xl p-2.5 border-2 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
+                                      style={{
+                                          backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})`,
+                                          borderColor: dueBorderColor
+                                      }}
+                                  >
+                                      <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
+                                      <div className="relative z-10 flex flex-col h-full justify-between">
+                                          <div className="flex justify-between items-start">
                                               <div>
-                                                  <p className="text-[9px] text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
-                                                  <div className="text-lg font-bold text-white">
-                                                      R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                                  </div>
-                                              </div>
-                                              <div className="text-right">
-                                                  <p className="text-[9px] text-white/80 mb-1">Vence em</p>
-                                                  <p
-                                                      className="text-[11px] font-bold text-white bg-white/20 px-2 py-0.5 rounded-md backdrop-blur-sm border"
-                                                      style={{ borderColor: dueBorderColor }}
-                                                  >
-                                                      {formattedDueDate}
+                                                  <h3 className="font-bold text-sm text-white mb-0.5">{entry.card.name}</h3>
+                                                  <p className="text-[11px] text-white/70 font-medium">
+                                                      Limite: {entry.card.limit ? `R$ ${entry.card.limit.toLocaleString('pt-BR')}` : 'Não informado'}
                                                   </p>
                                               </div>
+                                              <div className="bg-white/20 backdrop-blur-md p-1 rounded-lg">
+                                                  <img src={style.icon} className="w-6 h-6 opacity-90" alt="Card Brand" />
+                                              </div>
                                           </div>
-                                          <div className="pt-2.5 border-t border-white/20 flex justify-between items-center">
-                                              <span 
-                                                  className="text-[9px] font-semibold px-2 py-0.5 rounded text-white"
-                                                  style={{ backgroundColor: style.badgeBg }}
-                                              >
-                                                  Fatura Aberta
-                                              </span>
-                                              <button 
-                                                  onClick={onOpenInvoices}
-                                                  className="flex items-center gap-2 text-[10px] font-semibold text-white hover:bg-white/20 px-2 py-1 rounded-lg transition-colors"
-                                              >
-                                                  Ver Detalhes <Eye size={14} />
-                                              </button>
+                                          <div className="mt-3">
+                                              <div className="flex justify-between items-end mb-2.5">
+                                                  <div>
+                                                      <p className="text-[9px] text-white/80 mb-1 uppercase tracking-wider">
+                                                          Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', { month: 'long' })})
+                                                      </p>
+                                                      <div className="text-lg font-bold text-white">
+                                                          R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                      </div>
+                                                  </div>
+                                                  <div className="text-right">
+                                                      <p className="text-[9px] text-white/80 mb-1">Vence em</p>
+                                                      <p
+                                                          className="text-[11px] font-bold text-white bg-white/20 px-2 py-0.5 rounded-md backdrop-blur-sm border"
+                                                          style={{ borderColor: dueBorderColor }}
+                                                      >
+                                                          {formattedDueDate}
+                                                      </p>
+                                                  </div>
+                                              </div>
+                                              <div className="pt-2.5 border-t border-white/20 flex justify-between items-center">
+                                                  <span
+                                                      className="text-[9px] font-semibold px-2 py-0.5 rounded text-white"
+                                                      style={{ backgroundColor: style.badgeBg }}
+                                                  >
+                                                      Fatura Aberta
+                                                  </span>
+                                                  <button
+                                                      onClick={onOpenInvoices}
+                                                      className="flex items-center gap-2 text-[10px] font-semibold text-white hover:bg-white/20 px-2 py-1 rounded-lg transition-colors"
+                                                  >
+                                                      Ver Detalhes <Eye size={14} />
+                                                  </button>
+                                              </div>
                                           </div>
                                       </div>
                                   </div>
-                              </div>
-                          );
-                      })}
-                  </div>
-              ) : (
-                  <div className="bg-white dark:bg-[#151517] rounded-2xl p-10 text-center border border-zinc-200 dark:border-zinc-800 border-dashed">
-                      <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-400">
-                          <CreditCard size={32} />
+                              );
+                          })}
                       </div>
-                      <h3 className="text-zinc-900 dark:text-white font-bold mb-1">Nenhum cartão cadastrado</h3>
-                      <p className="text-sm text-zinc-500 dark:text-zinc-400">Adicione seus cartões de crédito nas configurações.</p>
-                  </div>
-              )}
-          </div>
-      </section>
-  );
-
-  const renderExpenseBreakdownSection = (itemsToShow: typeof categoryTotals.items) => (
-      <section className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300">
-          <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
-              <div>
-                  <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                      <PieChart size={20} className="text-indigo-500" />
-                      Onde foi parar seu dinheiro?
-                  </h2>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                      Ranking das despesas do mês ({categoryTotals.monthLabel}).
-                  </p>
-              </div>
-              <div className="text-right text-xs text-zinc-500 dark:text-zinc-400 flex flex-col items-end gap-1">
-                  <span className="uppercase tracking-wide font-semibold">Total do mês</span>
-                  <div className="text-sm font-semibold text-zinc-900 dark:text-white">
-                      {formatCurrency(categoryTotals.totalSum)}
-                  </div>
-                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                      Pagas: {formatCurrency(categoryTotals.totalPaid)}
-                  </span>
-              </div>
-          </div>
-          {itemsToShow.length > 0 && categoryTotals.totalSum > 0 ? (
-              <div className="space-y-3">
-                  <ul className="space-y-2">
-                      {itemsToShow.map((item, index) => {
-                          const pct = categoryTotals.totalSum > 0 ? (item.total / categoryTotals.totalSum) * 100 : 0;
-                          const barWidth = maxCategoryTotal > 0 ? (item.total / maxCategoryTotal) * 100 : 0;
-                          const barColor =
-                              item.category === 'Outros'
-                                  ? '#94a3b8'
-                                  : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
-                          const isExpanded = expandedCategoryKey === item.key;
-                          const categoryExpenses = categoryTotals.categoryItems[item.key] || [];
-                          const itemsToShowInner = categoryExpenses.slice(0, CATEGORY_ITEMS_PREVIEW_LIMIT);
-                          const extraCount = Math.max(categoryExpenses.length - itemsToShowInner.length, 0);
-                          return (
-                              <li key={item.key} className="space-y-1">
-                                  <button
-                                      type="button"
-                                      onClick={() =>
-                                          setExpandedCategoryKey(prev => (prev === item.key ? null : item.key))
-                                      }
-                                      aria-expanded={isExpanded}
-                                      className="w-full text-left"
-                                  >
-                                      <div className="flex items-center justify-between gap-3 text-sm">
-                                          <div className="flex items-center gap-2 min-w-0">
-                                              <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate">
-                                                  {item.category}
-                                              </span>
-                                              <ChevronDown
-                                                  size={14}
-                                                  className={`text-zinc-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                                              />
-                                          </div>
-                                          <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-                                              {formatCurrency(item.total)} • {pct.toFixed(1)}%
-                                          </span>
-                                      </div>
-                                      <div className="mt-1 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                                          <div
-                                              className="h-full rounded-full"
-                                              style={{ width: `${barWidth}%`, backgroundColor: barColor }}
-                                          ></div>
-                                      </div>
-                                  </button>
-                                  {isExpanded && (
-                                      <div className="mt-2 pl-3 space-y-2 text-xs text-zinc-500 dark:text-zinc-400">
-                                          {itemsToShowInner.map(expense => (
-                                              <div key={expense.id} className="flex items-center justify-between gap-2">
-                                                  <div className="flex flex-col">
-                                                      <span className="font-semibold text-zinc-700 dark:text-zinc-200">{expense.description}</span>
-                                                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                          {new Date((expense.dueDate || expense.date) + 'T12:00:00').toLocaleDateString('pt-BR')} • {expense.status === 'paid' ? 'Pago' : expense.status === 'pending' ? 'Pendente' : 'Cancelado'}
-                                                      </span>
-                                                  </div>
-                                                  <span className="font-semibold text-zinc-700 dark:text-zinc-200">
-                                                      {formatCurrency(expense.amount)}
-                                                  </span>
-                                              </div>
-                                          ))}
-                                          {extraCount > 0 && (
-                                              <button
-                                                  type="button"
-                                                  onClick={() => onOpenReports?.('expenses')}
-                                                  className="text-indigo-500 hover:text-indigo-400 text-[11px] font-semibold"
-                                              >
-                                                  Ver mais {extraCount} despesas...
-                                              </button>
-                                          )}
-                                      </div>
-                                  )}
-                              </li>
-                          );
-                      })}
-                  </ul>
-                  {spendInsights.length > 0 && (
-                      <div className="mt-3 grid gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 md:grid-cols-3">
-                          {spendInsights.map(insight => (
-                              <div
-                                  key={insight.label}
-                                  className="bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3 py-2 flex flex-col gap-1"
-                              >
-                                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                      {insight.label}
-                                  </span>
-                                  <span className="font-semibold text-zinc-900 dark:text-white">
-                                      {insight.value}
-                                  </span>
-                                  {insight.sub && (
-                                      <span className="text-[10px] text-zinc-400">{insight.sub}</span>
-                                  )}
-                              </div>
-                          ))}
+                  ) : (
+                      <div className="bg-white dark:bg-[#151517] rounded-2xl p-10 text-center border border-zinc-200 dark:border-zinc-800 border-dashed">
+                          <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-400">
+                              <CreditCard size={32} />
+                          </div>
+                          <h3 className="text-zinc-900 dark:text-white font-bold mb-1">Nenhum cartão cadastrado</h3>
+                          <p className="text-sm text-zinc-500 dark:text-zinc-400">Adicione seus cartões de crédito nas configurações.</p>
                       </div>
                   )}
               </div>
-          ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
-                  <PieChart size={40} className="mb-3 opacity-20" />
-                  <p className="text-sm text-center">Nenhuma despesa paga encontrada no mês.</p>
+          </section>
+      );
+  };
+
+  const renderExpenseBreakdownSection = (_itemsToShow: typeof categoryTotals.items) => {
+      const isIncomeMode = moneyFlowMode === 'in';
+      const categoryButtons = activeCategoryButtons;
+      const activeSeriesByDay = activeFlowBreakdown.seriesByDay;
+      const activeMonthLabel = flowMonthLabel;
+      const activeTotalSum = activeFlowBreakdown.totalSum;
+      const paidLabel = isIncomeMode ? 'Recebidas' : 'Pagas';
+      const fallbackMode: MoneyFlowMode | null = !isIncomeMode
+          ? (hasInMonthData ? 'in' : null)
+          : (hasOutMonthData ? 'out' : null);
+      const allCategoryKeys = categoryButtons.map(item => item.key);
+      const hasAnyCategorySelected = selectedCategoryKeys.length > 0;
+      const activeKeySet = new Set(selectedCategoryKeys);
+      const chartItems = categoryButtons.filter(item => activeKeySet.has(item.key));
+      const effectiveChartItems = chartItems;
+      const chartItemsWithGrouping = effectiveChartItems.map(item => ({
+          ...item,
+          sourceKeys: [item.key],
+          synthetic: false
+      }));
+
+      const chartSeries = chartItemsWithGrouping.map(item => {
+          const dailyValues = item.synthetic
+              ? Array.from({ length: daysInViewMonth }, (_, dayIndex) => {
+                  const point = { total: 0, labels: [] as string[], count: 0 };
+                  item.sourceKeys.forEach(sourceKey => {
+                      const sourceDay = activeSeriesByDay.get(sourceKey)?.[dayIndex];
+                      if (!sourceDay) return;
+                      point.total += sourceDay.total;
+                      point.count += sourceDay.count;
+                      sourceDay.labels.forEach(label => {
+                          if (!point.labels.includes(label)) {
+                              point.labels.push(label);
+                          }
+                      });
+                  });
+                  return point;
+              })
+              : activeSeriesByDay.get(item.key) ||
+                Array.from({ length: daysInViewMonth }, () => ({ total: 0, labels: [], count: 0 }));
+          let running = 0;
+          const points = dailyValues.map((dayData, index) => {
+              const paidValue = dayData.total;
+              running += paidValue;
+              const mainDestination = dayData.labels[0] || 'Sem destino';
+              const extraDestinations = Math.max(dayData.count - 1, 0);
+              const destinationLabelRaw =
+                  extraDestinations > 0
+                      ? `${mainDestination} +${extraDestinations}`
+                      : mainDestination;
+              const destinationLabel =
+                  destinationLabelRaw.length > 28
+                      ? `${destinationLabelRaw.slice(0, 27)}…`
+                      : destinationLabelRaw;
+              return {
+                  day: index + 1,
+                  value: running,
+                  paid: paidValue,
+                  destinationLabel,
+                  count: dayData.count
+              };
+          });
+          const sourceIndex = categoryButtons.findIndex(category => category.key === item.key);
+          const color =
+              item.synthetic || item.category === 'Outros'
+                  ? '#94a3b8'
+                  : CATEGORY_TREND_COLORS[(sourceIndex >= 0 ? sourceIndex : 0) % CATEGORY_TREND_COLORS.length];
+          return {
+              item,
+              color,
+              points
+          };
+      });
+
+      const maxValue = chartSeries.reduce((max, series) => {
+          const top = series.points.reduce((lineMax, point) => Math.max(lineMax, point.value), 0);
+          return Math.max(max, top);
+      }, 0);
+      // A régua esquerda deve refletir apenas o que está visível no gráfico atual.
+      // Mantém base em 5k e expande de 1k em 1k somente quando necessário.
+      const sharedModeMax = Math.max(maxValue, 0);
+      const buildYAxisScale = (rawMax: number) => {
+          const safeMax = Math.max(rawMax, 0);
+          const baseMax = 5000;
+          const baseTicks = [0, 1000, 2000, 3000, 4000, 5000];
+          if (safeMax <= baseMax) {
+              return { ticks: baseTicks, max: baseMax };
+          }
+          const expandedMax = Math.ceil(safeMax / 1000) * 1000;
+          const extraTicks: number[] = [];
+          for (let value = 6000; value <= expandedMax; value += 1000) {
+              extraTicks.push(value);
+          }
+          return { ticks: [...baseTicks, ...extraTicks], max: expandedMax };
+      };
+
+      const yAxisScale = buildYAxisScale(sharedModeMax);
+      const yMax = Math.max(yAxisScale.max, 1);
+      const yTicks = yAxisScale.ticks;
+      const dayTicks = Array.from({ length: daysInViewMonth }, (_, index) => index + 1);
+      const dayLabelTicks = dayTicks;
+      const chartWidth = expenseChartWidth > 0 ? expenseChartWidth : 980;
+      const chartHeight = 322;
+      const paddingLeft = 86;
+      const paddingRight = 144;
+      const paddingTop = 16;
+      const paddingBottom = 18;
+      const plotWidth = Math.max(chartWidth - paddingLeft - paddingRight, 1);
+      const plotHeight = Math.max(chartHeight - paddingTop - paddingBottom, 1);
+      const rightRulerX = chartWidth - paddingRight;
+      const getX = (day: number) =>
+          daysInViewMonth <= 1
+              ? paddingLeft
+              : paddingLeft + (plotWidth * (day - 1)) / (daysInViewMonth - 1);
+      const getY = (value: number) => {
+          const safeValue = Math.min(Math.max(value, 0), yMax);
+          return paddingTop + (1 - safeValue / Math.max(yMax, 1)) * plotHeight;
+      };
+      const formatAxisValue = (value: number) =>
+          Math.abs(value) >= 100
+              ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(value)
+              : formatCurrency(value);
+      const isDarkMode = typeof document !== 'undefined'
+          ? document.documentElement.classList.contains('dark')
+          : true;
+      const chartColors = isDarkMode
+          ? {
+                grid: '#1f1f23',
+                gridStrong: '#27272a',
+                axis: '#3f3f46',
+                label: '#a1a1aa',
+                rightRulerBg: 'rgba(24,24,27,0.88)',
+                rightRulerBorder: 'rgba(161,161,170,0.45)',
+                rightRulerText: '#e4e4e7'
+            }
+          : {
+                grid: '#e5e7eb',
+                gridStrong: '#d1d5db',
+                axis: '#9ca3af',
+                label: '#6b7280',
+                rightRulerBg: 'rgba(255,255,255,0.94)',
+                rightRulerBorder: 'rgba(113,113,122,0.3)',
+                rightRulerText: '#27272a'
+            };
+      const chartSeriesWithTotal = chartSeries.map(series => ({
+          ...series,
+          total: series.points[series.points.length - 1]?.value ?? 0
+      }));
+      const selectedTotal = chartSeriesWithTotal.reduce((sum, series) => sum + series.total, 0);
+      const selectedPaidTotal = chartSeriesWithTotal.reduce(
+          (sum, series) => sum + series.points.reduce((seriesSum, point) => seriesSum + point.paid, 0),
+          0
+      );
+      const rightRulerTotal = selectedTotal;
+      const rightRulerPaid = selectedPaidTotal;
+      const minRightRulerGap = 16;
+      const minRightRulerY = paddingTop + 8;
+      const rightSummaryReservedHeight = 52;
+      const maxRightRulerY = chartHeight - paddingBottom - rightSummaryReservedHeight;
+      const rightRulerCapacity = Math.max(
+          1,
+          Math.floor((maxRightRulerY - minRightRulerY) / minRightRulerGap) + 1
+      );
+      let hiddenRightRulerEntriesCount = 0;
+      const rightRulerEntriesBase: Array<{
+          key: string;
+          value: number;
+          color: string;
+          y: number;
+      }> = (() => {
+          if (chartSeriesWithTotal.length === 0) {
+              return [
+                  {
+                      key: 'total-selecionado-vazio',
+                      value: 0,
+                      color: '#a1a1aa',
+                      y: getY(0)
+                  }
+              ];
+          }
+
+          const allEntries = chartSeriesWithTotal
+              .map(series => ({
+                  key: `total-${series.item.key}`,
+                  value: series.total,
+                  color: series.color,
+                  y: getY(series.total)
+              }))
+              .sort((a, b) => b.value - a.value);
+
+          if (allEntries.length > rightRulerCapacity) {
+              hiddenRightRulerEntriesCount = allEntries.length - rightRulerCapacity;
+              return allEntries.slice(0, rightRulerCapacity);
+          }
+
+          return allEntries;
+      })();
+      const rightRulerEntries = [...rightRulerEntriesBase]
+          .sort((a, b) => a.y - b.y)
+          .map(entry => ({ ...entry, yAdjusted: entry.y }));
+      for (let index = 0; index < rightRulerEntries.length; index += 1) {
+          if (index === 0) {
+              rightRulerEntries[index].yAdjusted = Math.max(rightRulerEntries[index].yAdjusted, minRightRulerY);
+              continue;
+          }
+          const previous = rightRulerEntries[index - 1];
+          const current = rightRulerEntries[index];
+          current.yAdjusted = Math.max(current.yAdjusted, previous.yAdjusted + minRightRulerGap);
+      }
+      for (let index = rightRulerEntries.length - 1; index >= 0; index -= 1) {
+          if (index === rightRulerEntries.length - 1) {
+              rightRulerEntries[index].yAdjusted = Math.min(rightRulerEntries[index].yAdjusted, maxRightRulerY);
+              continue;
+          }
+          const next = rightRulerEntries[index + 1];
+          const current = rightRulerEntries[index];
+          current.yAdjusted = Math.min(current.yAdjusted, next.yAdjusted - minRightRulerGap);
+          current.yAdjusted = Math.max(current.yAdjusted, minRightRulerY);
+      }
+      const shouldShowSingleCategoryLabels =
+          selectedCategoryKeys.length === 1 && chartSeries.length === 1;
+      const singleCategoryPointLabels = (() => {
+          if (!shouldShowSingleCategoryLabels) {
+              return [] as Array<{
+                  day: number;
+                  x: number;
+                  y: number;
+                  label: string;
+                  bubbleX: number;
+                  bubbleY: number;
+                  bubbleWidth: number;
+                  bubbleHeight: number;
+              }>;
+          }
+
+          const series = chartSeries[0];
+          const placed: Array<{
+              day: number;
+              x: number;
+              y: number;
+              label: string;
+              bubbleX: number;
+              bubbleY: number;
+              bubbleWidth: number;
+              bubbleHeight: number;
+          }> = [];
+          const minBubbleGap = 4;
+          const topLimit = paddingTop + 2;
+          const bottomLimit = chartHeight - paddingBottom - 4;
+          const rightLimit = rightRulerX - 4;
+
+          series.points.forEach(point => {
+              if (point.paid <= 0) return;
+
+              const label = formatCurrency(point.paid);
+              const x = getX(point.day);
+              const y = getY(point.value);
+              const bubbleHeight = 16;
+              const approxCharWidth = 5.2;
+              const bubbleWidth = Math.max(76, label.length * approxCharWidth + 12);
+              const bubbleX = Math.min(
+                  Math.max(x - bubbleWidth / 2, paddingLeft + 2),
+                  rightLimit - bubbleWidth
+              );
+
+              let bubbleY = y - bubbleHeight - 8;
+              if (bubbleY < topLimit) {
+                  bubbleY = y + 8;
+              }
+
+              let safety = 0;
+              while (safety < 16) {
+                  const hasOverlap = placed.some(existing => {
+                      const horizontalOverlap =
+                          bubbleX < existing.bubbleX + existing.bubbleWidth + minBubbleGap &&
+                          bubbleX + bubbleWidth + minBubbleGap > existing.bubbleX;
+                      const verticalOverlap =
+                          bubbleY < existing.bubbleY + existing.bubbleHeight + minBubbleGap &&
+                          bubbleY + bubbleHeight + minBubbleGap > existing.bubbleY;
+                      return horizontalOverlap && verticalOverlap;
+                  });
+                  if (!hasOverlap) break;
+
+                  if (bubbleY >= y) {
+                      bubbleY += bubbleHeight + minBubbleGap;
+                      if (bubbleY + bubbleHeight > bottomLimit) {
+                          bubbleY = y - bubbleHeight - 8;
+                      }
+                  } else {
+                      bubbleY -= bubbleHeight + minBubbleGap;
+                      if (bubbleY < topLimit) {
+                          bubbleY = y + 8;
+                      }
+                  }
+                  safety += 1;
+              }
+
+              bubbleY = Math.min(Math.max(bubbleY, topLimit), bottomLimit - bubbleHeight);
+
+              placed.push({
+                  day: point.day,
+                  x,
+                  y,
+                  label,
+                  bubbleX,
+                  bubbleY,
+                  bubbleWidth,
+                  bubbleHeight
+              });
+          });
+
+          return placed;
+      })();
+      return (
+          <section
+              className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300 flex flex-col"
+              data-tour-anchor="dashboard-spend-ranking"
+          >
+              <div className="grid grid-cols-1 xl:grid-cols-[auto_1fr] items-start gap-3 mb-2">
+                  <div>
+                      <h2 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
+                          <PieChart size={16} className="text-indigo-500" />
+                          Onde foi parar seu dinheiro?
+                      </h2>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {isIncomeMode
+                              ? `Entradas por categoria do mês (${activeMonthLabel}).`
+                          : `Ranking das despesas do mês (${activeMonthLabel}).`}
+                      </p>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2 xl:pt-0.5">
+                      <select
+                          value={moneyFlowMode}
+                          onChange={event => {
+                              setMoneyFlowMode(event.target.value as MoneyFlowMode);
+                              setHoveredPoint(null);
+                          }}
+                          className="h-9 w-[210px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900/60 text-[11px] font-medium text-zinc-700 dark:text-zinc-200 px-2 outline-none"
+                      >
+                          <option value="out">Saídas</option>
+                          <option value="in">Entradas</option>
+                      </select>
+                      <select
+                          value={flowAccountFilter}
+                          onChange={event => setFlowAccountFilter(event.target.value)}
+                          className="h-9 w-[210px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900/60 text-[11px] font-medium text-zinc-700 dark:text-zinc-200 px-2 outline-none"
+                      >
+                          <option value="all">Todas as contas</option>
+                          {flowAccountOptions.map(option => (
+                              <option key={`flow-account-${option.value}`} value={option.value}>
+                                  {option.label}
+                              </option>
+                          ))}
+                      </select>
+                      <select
+                          value={flowMethodFilter}
+                          onChange={event => setFlowMethodFilter(event.target.value)}
+                          className="h-9 w-[210px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900/60 text-[11px] font-medium text-zinc-700 dark:text-zinc-200 px-2 outline-none"
+                      >
+                          <option value="all">Todas as formas</option>
+                          {flowMethodOptions.map(option => (
+                              <option key={`flow-method-${option.value}`} value={option.value}>
+                                  {option.label}
+                              </option>
+                          ))}
+                      </select>
+                      <select
+                          value={flowNatureFilter}
+                          onChange={event => setFlowNatureFilter(event.target.value)}
+                          className="h-9 w-[210px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900/60 text-[11px] font-medium text-zinc-700 dark:text-zinc-200 px-2 outline-none"
+                      >
+                          <option value="all">Todas as naturezas</option>
+                          {flowNatureOptions.map(option => (
+                              <option key={`flow-nature-${option.value}`} value={option.value}>
+                                  {option.label}
+                              </option>
+                          ))}
+                      </select>
+                  </div>
               </div>
-          )}
-      </section>
-  );
+
+              {activeTotalSum > 0 && categoryButtons.length > 0 ? (
+                  <>
+                      <div className="mt-2 flex flex-col lg:flex-row gap-2 flex-1 min-h-0">
+                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#1a1a1a] p-2.5 flex-1 min-w-0 min-h-0">
+                              <div ref={expenseChartHostRef} className="relative h-full min-h-[304px]">
+                              <svg
+                                  width={chartWidth}
+                                  height={chartHeight}
+                                  className="block h-full w-full"
+                                  onMouseLeave={() => setHoveredPoint(null)}
+                              >
+                                  {dayLabelTicks.map(day => (
+                                      <line
+                                          key={`day-grid-${day}`}
+                                          x1={getX(day)}
+                                          y1={paddingTop}
+                                          x2={getX(day)}
+                                          y2={chartHeight - paddingBottom}
+                                          stroke={chartColors.grid}
+                                          strokeWidth="1"
+                                          strokeDasharray="4 6"
+                                      />
+                                  ))}
+                                  {yTicks.map((tick, idx) => (
+                                      <line
+                                          key={`y-grid-${idx}`}
+                                          x1={paddingLeft}
+                                          y1={getY(tick)}
+                                          x2={rightRulerX}
+                                          y2={getY(tick)}
+                                          stroke={idx === 0 ? chartColors.gridStrong : chartColors.grid}
+                                          strokeWidth={idx === 0 ? '1.4' : '1'}
+                                          strokeDasharray={idx === 0 ? undefined : '4 6'}
+                                      />
+                                  ))}
+
+                                  <line
+                                      x1={paddingLeft}
+                                      y1={paddingTop}
+                                      x2={paddingLeft}
+                                      y2={chartHeight - paddingBottom}
+                                      stroke={chartColors.axis}
+                                      strokeWidth="1.3"
+                                  />
+                                  <line
+                                      x1={paddingLeft}
+                                      y1={chartHeight - paddingBottom}
+                                      x2={rightRulerX}
+                                      y2={chartHeight - paddingBottom}
+                                      stroke={chartColors.axis}
+                                      strokeWidth="1.3"
+                                  />
+                                  <line
+                                      x1={rightRulerX}
+                                      y1={paddingTop}
+                                      x2={rightRulerX}
+                                      y2={chartHeight - paddingBottom}
+                                      stroke={chartColors.axis}
+                                      strokeWidth="1.3"
+                                  />
+                                  <text
+                                      x={rightRulerX + 10}
+                                      y={paddingTop - 8}
+                                      textAnchor="start"
+                                      style={{ fontSize: '10px', fontWeight: 700, fill: chartColors.label }}
+                                  >
+                                      Total
+                                  </text>
+
+                                  {chartSeries.map(series => (
+                                      <polyline
+                                          key={`line-${series.item.key}`}
+                                          points={series.points.map(point => `${getX(point.day)},${getY(point.value)}`).join(' ')}
+                                          fill="none"
+                                          stroke={series.color}
+                                          strokeWidth="2.4"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                      />
+                                  ))}
+
+                                  {chartSeries.map(series =>
+                                      series.points.map(point => {
+                                          const shouldRenderDot = point.paid > 0 || point.day === daysInViewMonth;
+                                          if (!shouldRenderDot) return null;
+                                          const pointLabel = [
+                                              `${series.item.category}`,
+                                              `Dia ${String(point.day).padStart(2, '0')}`,
+                                              `Valor do dia ${formatCurrency(point.paid)}`,
+                                              `Acumulado ${formatCurrency(point.value)}`,
+                                              `${point.count || 0} lanç.`
+                                          ].join(' • ');
+                                          return (
+                                              <circle
+                                                  key={`line-dot-${series.item.key}-${point.day}`}
+                                                  cx={getX(point.day)}
+                                                  cy={getY(point.value)}
+                                                  r={point.paid > 0 ? 2.8 : 2.3}
+                                                  fill={series.color}
+                                                  fillOpacity={point.day === daysInViewMonth ? 1 : 0.92}
+                                                  onMouseEnter={() => {
+                                                      setHoveredPoint({
+                                                          x: getX(point.day),
+                                                          y: getY(point.value),
+                                                          label: pointLabel
+                                                      });
+                                                  }}
+                                                  onMouseLeave={() => setHoveredPoint(null)}
+                                              >
+                                                  <title>{pointLabel}</title>
+                                              </circle>
+                                          );
+                                      })
+                                  )}
+
+                                  {singleCategoryPointLabels.map(item => (
+                                      <g key={`single-category-label-${item.day}`}>
+                                          <line
+                                              x1={item.x}
+                                              y1={item.y}
+                                              x2={item.bubbleX + item.bubbleWidth / 2}
+                                              y2={item.bubbleY + item.bubbleHeight / 2}
+                                              stroke={chartColors.rightRulerBorder}
+                                              strokeWidth="1"
+                                              strokeDasharray="2 2"
+                                          />
+                                          <rect
+                                              x={item.bubbleX}
+                                              y={item.bubbleY}
+                                              width={item.bubbleWidth}
+                                              height={item.bubbleHeight}
+                                              rx="6"
+                                              fill={chartColors.rightRulerBg}
+                                              stroke={chartColors.rightRulerBorder}
+                                              strokeWidth="1"
+                                          />
+                                          <text
+                                              x={item.bubbleX + item.bubbleWidth / 2}
+                                              y={item.bubbleY + item.bubbleHeight / 2 + 3}
+                                              textAnchor="middle"
+                                              style={{ fontSize: '9px', fontWeight: 700, fill: chartColors.rightRulerText }}
+                                          >
+                                              {item.label}
+                                          </text>
+                                      </g>
+                                  ))}
+
+                                  {rightRulerEntries.map(entry => {
+                                      const valueLabel = formatCurrency(entry.value);
+                                      const dotX = rightRulerX + 8;
+                                      const textX = dotX + 9;
+                                      const maxBubbleWidth = chartWidth - textX - 6;
+                                      const approxCharWidth = 5.3;
+                                      const desiredBubbleWidth = Math.max(78, valueLabel.length * approxCharWidth + 12);
+                                      const bubbleWidth = Math.min(desiredBubbleWidth, Math.max(maxBubbleWidth, 78));
+                                      const bubbleHeight = 16;
+                                      const bubbleY = Math.max(Math.min(entry.yAdjusted - bubbleHeight / 2, maxRightRulerY - bubbleHeight / 2), minRightRulerY - bubbleHeight / 2);
+                                      const bubbleCenterY = bubbleY + bubbleHeight / 2;
+                                      return (
+                                          <g key={`right-ruler-total-${entry.key}`}>
+                                              <line
+                                                  x1={rightRulerX}
+                                                  y1={entry.y}
+                                                  x2={dotX}
+                                                  y2={entry.y}
+                                                  stroke={entry.color}
+                                                  strokeWidth="1"
+                                                  strokeOpacity="0.8"
+                                              />
+                                              {Math.abs(bubbleCenterY - entry.y) > 1 && (
+                                                  <line
+                                                      x1={dotX}
+                                                      y1={entry.y}
+                                                      x2={textX}
+                                                      y2={bubbleCenterY}
+                                                      stroke={chartColors.rightRulerBorder}
+                                                      strokeWidth="1"
+                                                      strokeDasharray="2 2"
+                                                  />
+                                              )}
+                                              <circle cx={dotX} cy={entry.y} r={3} fill={entry.color} />
+                                              <rect
+                                                  x={textX}
+                                                  y={bubbleY}
+                                                  width={bubbleWidth}
+                                                  height={bubbleHeight}
+                                                  rx="6"
+                                                  fill={chartColors.rightRulerBg}
+                                                  stroke={chartColors.rightRulerBorder}
+                                                  strokeWidth="1"
+                                              />
+                                              <text
+                                                  x={textX + 6}
+                                                  y={bubbleY + bubbleHeight / 2 + 3}
+                                                  textAnchor="start"
+                                                  style={{ fontSize: '9px', fontWeight: 700, fill: chartColors.rightRulerText }}
+                                              >
+                                                  {valueLabel}
+                                              </text>
+                                          </g>
+                                      );
+                                  })}
+                                  {hiddenRightRulerEntriesCount > 0 && (
+                                      (() => {
+                                          const extraLabel = `+${hiddenRightRulerEntriesCount}`;
+                                          const dotX = rightRulerX + 8;
+                                          const textX = dotX + 9;
+                                          const approxCharWidth = 5.3;
+                                          const bubbleWidth = Math.max(78, extraLabel.length * approxCharWidth + 12);
+                                          const bubbleHeight = 16;
+                                          const bubbleY = paddingTop + 4;
+                                          const bubbleCenterY = bubbleY + bubbleHeight / 2;
+                                          return (
+                                              <g>
+                                                  <line
+                                                      x1={rightRulerX}
+                                                      y1={bubbleCenterY}
+                                                      x2={dotX}
+                                                      y2={bubbleCenterY}
+                                                      stroke={chartColors.rightRulerBorder}
+                                                      strokeWidth="1"
+                                                      strokeOpacity="0.8"
+                                                  />
+                                                  <circle cx={dotX} cy={bubbleCenterY} r={3} fill={chartColors.rightRulerBorder} />
+                                                  <rect
+                                                      x={textX}
+                                                      y={bubbleY}
+                                                      width={bubbleWidth}
+                                                      height={bubbleHeight}
+                                                      rx="6"
+                                                      fill={chartColors.rightRulerBg}
+                                                      stroke={chartColors.rightRulerBorder}
+                                                      strokeWidth="1"
+                                                  />
+                                                  <text
+                                                      x={textX + bubbleWidth / 2}
+                                                      y={bubbleY + bubbleHeight / 2 + 3}
+                                                      textAnchor="middle"
+                                                      style={{ fontSize: '9px', fontWeight: 700, fill: chartColors.rightRulerText }}
+                                                  >
+                                                      {extraLabel}
+                                                  </text>
+                                              </g>
+                                          );
+                                      })()
+                                  )}
+                                  <text
+                                      x={chartWidth - 8}
+                                      y={chartHeight - paddingBottom - 26}
+                                      textAnchor="end"
+                                      style={{ fontSize: '10px', fontWeight: 700, fill: chartColors.label }}
+                                  >
+                                      Total
+                                  </text>
+                                  <text
+                                      x={chartWidth - 8}
+                                      y={chartHeight - paddingBottom - 14}
+                                      textAnchor="end"
+                                      style={{ fontSize: '11px', fontWeight: 800, fill: '#ef4444' }}
+                                  >
+                                      {formatCurrency(rightRulerTotal)}
+                                  </text>
+                                  <text
+                                      x={chartWidth - 8}
+                                      y={chartHeight - paddingBottom - 2}
+                                      textAnchor="end"
+                                      style={{ fontSize: '10px', fontWeight: 700, fill: chartColors.label }}
+                                  >
+                                      {paidLabel}
+                                  </text>
+                                  <text
+                                      x={chartWidth - 8}
+                                      y={chartHeight - paddingBottom + 10}
+                                      textAnchor="end"
+                                      style={{ fontSize: '11px', fontWeight: 800, fill: '#10b981' }}
+                                  >
+                                      {formatCurrency(rightRulerPaid)}
+                                  </text>
+
+                                  {dayLabelTicks.map(day => (
+                                      <text
+                                          key={`day-label-${day}`}
+                                          x={getX(day)}
+                                          y={chartHeight - paddingBottom + 11}
+                                          textAnchor="middle"
+                                          style={{ fontSize: '9px', fill: chartColors.label }}
+                                      >
+                                          {String(day).padStart(2, '0')}
+                                      </text>
+                                  ))}
+                                  {yTicks.map((tick, idx) => (
+                                      <text
+                                          key={`y-label-${idx}`}
+                                          x={paddingLeft - 10}
+                                          y={getY(tick) + 4}
+                                          textAnchor="end"
+                                          style={{ fontSize: '11px', fill: chartColors.label }}
+                                      >
+                                          {formatAxisValue(tick)}
+                                      </text>
+                                  ))}
+                              </svg>
+                              {hoveredPoint && (
+                                  <div
+                                      className="pointer-events-none absolute z-10 px-2 py-1 rounded-md border border-zinc-300/70 dark:border-zinc-700/70 bg-white/95 dark:bg-zinc-950/95 text-[10px] font-semibold text-zinc-700 dark:text-zinc-100 whitespace-nowrap shadow-sm"
+                                      style={{
+                                          left: hoveredPoint.x,
+                                          top: hoveredPoint.y - 8,
+                                          transform: 'translate(-50%, -100%)'
+                                      }}
+                                  >
+                                      {hoveredPoint.label}
+                                  </div>
+                              )}
+                              </div>
+                          </div>
+
+                          <aside className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/35 p-3 lg:w-[420px] lg:shrink-0 flex flex-col">
+                              <div className="grid grid-cols-3 gap-1.5 pr-1">
+                              {categoryButtons.map((item, index) => {
+                                  const accent =
+                                      item.category === 'Outros'
+                                          ? '#94a3b8'
+                                          : CATEGORY_TREND_COLORS[index % CATEGORY_TREND_COLORS.length];
+                                  const isActive = selectedCategoryKeys.includes(item.key);
+                                  return (
+                                      <button
+                                          key={`category-filter-${item.key}`}
+                                          type="button"
+                                          onClick={() => {
+                                              setHoveredPoint(null);
+                                              setSelectedCategoryKeys(prev => {
+                                                  if (prev.includes(item.key)) return prev.filter(key => key !== item.key);
+                                                  return [...prev, item.key];
+                                              });
+                                          }}
+                                          className="h-8 rounded-md border text-[10px] font-semibold px-2 transition flex items-center gap-2 min-w-0"
+                                          style={{
+                                              borderColor: isDarkMode ? '#3f3f46' : '#3f3f46',
+                                              backgroundColor: isActive ? '#111113' : '#09090b',
+                                              color: '#f4f4f5'
+                                          }}
+                                          title={item.category}
+                                      >
+                                          <span
+                                              className="h-3.5 w-3.5 rounded-[4px] border shrink-0"
+                                              style={{
+                                                  borderColor: withAlpha(accent, 0.9),
+                                                  backgroundColor: isActive ? withAlpha(accent, 0.92) : 'transparent',
+                                                  boxShadow: isActive ? `0 0 0 1px ${withAlpha(accent, 0.35)} inset` : undefined
+                                              }}
+                                          />
+                                          <span className="truncate">{item.category}</span>
+                                      </button>
+                                  );
+                              })}
+                              </div>
+                              <button
+                                  type="button"
+                                  onClick={() => {
+                                      setSelectedCategoryKeys(prev => (prev.length > 0 ? [] : allCategoryKeys));
+                                      setHoveredPoint(null);
+                                  }}
+                                  className="mt-2 h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 text-zinc-200 text-[10px] font-semibold hover:bg-zinc-800 transition"
+                                  disabled={allCategoryKeys.length === 0}
+                              >
+                                  {hasAnyCategorySelected ? 'Limpar seleção' : 'Selecionar todos'}
+                              </button>
+                          </aside>
+                      </div>
+                  </>
+              ) : (
+                  <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
+                      <PieChart size={40} className="mb-3 opacity-20" />
+                      <p className="text-sm text-center">
+                          {isIncomeMode
+                              ? 'Nenhuma entrada recebida encontrada no mês.'
+                              : 'Nenhuma despesa paga encontrada no mês.'}
+                      </p>
+                      {fallbackMode && (
+                          <button
+                              type="button"
+                              onClick={() => {
+                                  setMoneyFlowMode(fallbackMode);
+                                  setHoveredPoint(null);
+                              }}
+                              className="mt-3 h-8 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-[11px] font-semibold text-zinc-200 hover:bg-zinc-800 transition"
+                          >
+                              {fallbackMode === 'in' ? 'Ver Entradas' : 'Ver Saídas'}
+                          </button>
+                      )}
+                  </div>
+              )}
+          </section>
+      );
+  };
 
   const renderDashboardBlock = (blockId: DashboardBlockId) => {
       if (blockId === 'quick_access' && availableBlocks.quick_access) {
@@ -1320,7 +2398,10 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         onToggleCollapse={() => toggleCollapse('quick_access')}
                     >
                   <section>
-                      <div className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                      <div
+                          className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm"
+                          data-tour-anchor="dashboard-quick-actions"
+                      >
                           <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Acesso Rápido</h2>
                           <div className="grid grid-flow-col auto-cols-fr gap-3">
                               {quickActionItems.map((action) => (
@@ -1353,15 +2434,18 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                         style={{ order: orderMap.mei_limit }}
                     >
                   <section>
-                      <div className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}>
+                      <div
+                          className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}
+                          data-tour-anchor="dashboard-mei-limit"
+                      >
                           <div className="absolute inset-y-0 right-0 w-32 opacity-5 pointer-events-none">
                               <Building2 size={120} className="w-full h-full" />
                           </div>
 
                           <div className="relative flex flex-col gap-3">
-                              <div className="flex flex-col lg:flex-row gap-3 lg:items-start">
+                              <div className="flex flex-col xl:flex-row gap-3 xl:items-start">
                                   <div className="flex flex-1 items-start gap-3">
-                                      <div 
+                                      <div
                                           className={`relative w-16 h-16 rounded-2xl border ${mascotConfig.ringClass} flex items-center justify-center shadow-xl ${mascotConfig.auraClass} transition-all duration-500`}
                                           title={mascotConfig.tooltip}
                                       >
@@ -1375,19 +2459,14 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                               <h3 className="text-base font-bold text-zinc-900 dark:text-white">Faturamento Fiscal MEI (PJ)</h3>
                                           </div>
                                           <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xl">
-                                              {meiMode === 'annual'
-                                                  ? 'Acompanhe o seu faturamento anual e evite ultrapassar o limite de R$ 81.000,00 do regime MEI.'
-                                                  : 'Acompanhe o seu faturamento mensal e compare com a média mensal do limite do MEI.'}
+                                              Visão completa do limite fiscal com comparativo anual e mensal simultâneo.
                                           </p>
                                           <div className={`mt-2 text-xs font-semibold ${meiStatus.accentText}`}>
                                               {meiStatus.label}
                                           </div>
-                                          <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                                              {meiStatusDescription}
-                                          </p>
                                       </div>
                                   </div>
-                                  <div className={`w-full lg:w-72 rounded-2xl border ${meiStatus.calloutBorder} ${meiStatus.calloutBg} p-3 flex gap-2`}>
+                                  <div className={`w-full xl:w-80 rounded-2xl border ${meiStatus.calloutBorder} ${meiStatus.calloutBg} p-3 flex gap-2`}>
                                       {React.createElement(calloutIcon, { size: 24, className: `${meiStatus.accentText} shrink-0` })}
                                       <p className={`text-xs leading-relaxed ${meiStatus.calloutText}`}>
                                           {statusCalloutText}
@@ -1395,92 +2474,70 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                   </div>
                               </div>
 
-                              <div className="relative pt-7">
-                                  <div className="relative h-3 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                                      <div 
-                                          className={`absolute inset-y-0 left-0 bg-gradient-to-r ${meiStatus.gradient} transition-all duration-700 ease-out`}
-                                          style={{ width: `${progressVisualPercentage}%` }}
-                                      ></div>
-                                  </div>
-                                  <div
-                                      className="absolute -top-1 flex flex-col items-center transition-all duration-500"
-                                      style={{ left: `${progressLabelLeft}%`, transform: 'translateX(-50%)' }}
-                                  >
-                                      <div className="rounded-full border border-white/40 bg-white/95 px-3 py-1 text-[11px] font-bold text-zinc-900 shadow-lg">
-                                          {rawPercentage.toFixed(1)}%
-                                      </div>
-                                      <div className="h-2 w-2 -mt-1 rotate-45 border border-white/40 bg-white/95 shadow-md"></div>
-                                      <div className={`-mt-2 h-2 w-2 rounded-full bg-gradient-to-r ${meiStatus.gradient}`} />
-                                  </div>
-                                  {MEI_CHECKPOINTS.map((checkpoint) => {
-                                      const percent = checkpoint * 100;
-                                      const value = formatCurrency(meiLimit * checkpoint);
-                                      return (
-                                          <div
-                                              key={checkpoint}
-                                              className="absolute top-4 -translate-y-1/2 -translate-x-1/2 flex flex-col items-center"
-                                              style={{ left: `${percent}%` }}
-                                              title={`${percent}% do limite: ${value}`}
-                                          >
-                                              <div className="w-3 h-3 rounded-full border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 flex items-center justify-center">
-                                                  <div className="w-1.5 h-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600"></div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 xl:gap-3">
+                                  {meiSnapshots.map((snapshot) => (
+                                      <article key={snapshot.id} className="rounded-2xl border border-zinc-200/80 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 p-2.5 xl:p-3">
+                                          <div className="flex items-start justify-between gap-3">
+                                              <div>
+                                                  <p className="text-xs uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">
+                                                      {snapshot.title}
+                                                  </p>
+                                                  <p className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-1">
+                                                      {snapshot.statusDescription}
+                                                  </p>
+                                              </div>
+                                              <span className={`text-[10px] font-semibold px-2 py-1 rounded-full ${snapshot.status.badgeClass}`}>
+                                                  {snapshot.status.label}
+                                              </span>
+                                          </div>
+
+                                          <div className="relative mt-3 xl:mt-4 pt-5 xl:pt-6">
+                                              <div className="relative h-3 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                                                  <div
+                                                      className={`absolute inset-y-0 left-0 bg-gradient-to-r ${snapshot.status.gradient} transition-all duration-700 ease-out`}
+                                                      style={{ width: `${snapshot.progressVisualPercentage}%` }}
+                                                  ></div>
+                                              </div>
+                                              <div
+                                                  className="absolute -top-1 flex flex-col items-center transition-all duration-500"
+                                                  style={{ left: `${snapshot.progressLabelLeft}%`, transform: 'translateX(-50%)' }}
+                                              >
+                                                  <div className="rounded-full border border-white/40 bg-white/95 px-3 py-1 text-[11px] font-bold text-zinc-900 shadow-lg">
+                                                      {snapshot.rawPercentage.toFixed(1)}%
+                                                  </div>
+                                                  <div className="h-2 w-2 -mt-1 rotate-45 border border-white/40 bg-white/95 shadow-md"></div>
+                                                  <div className={`-mt-2 h-2 w-2 rounded-full bg-gradient-to-r ${snapshot.status.gradient}`} />
                                               </div>
                                           </div>
-                                      );
-                                  })}
-                                  <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
-                                      <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
-                                              {meiMode === 'annual' ? 'Faturado no ano' : 'Faturado no mês'}
-                                          </p>
-                                          <p className="text-lg font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiRevenue)}</p>
-                                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">{rawPercentage.toFixed(1)}% do limite</p>
-                                      </div>
-                                      <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
-                                              {meiStatus.level === 'over' ? 'Excedente sobre o limite' : 'Restante até o limite'}
-                                          </p>
-                                          <p className={`text-lg font-semibold mt-1 ${meiStatus.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
-                                              {formatCurrency(meiStatus.level === 'over' ? meiExcess : meiRemaining)}
-                                          </p>
-                                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
-                                              Limite {meiScopeLabel} de {formatCurrency(meiLimit)}
-                                          </p>
-                                      </div>
-                                      <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-100 dark:border-zinc-800">
-                                          <p className="text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">Limite MEI {meiScopeLabel}</p>
-                                          <p className="text-lg font-semibold text-zinc-900 dark:text-white mt-1">{formatCurrency(meiLimit)}</p>
-                                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
-                                              {meiMode === 'annual'
-                                                  ? 'Atualizado automaticamente pela legislação'
-                                                  : 'Estimativa mensal com base no limite anual'}
-                                          </p>
-                                      </div>
-                                  </div>
-                                  <div className="mt-3 grid w-full grid-cols-2 gap-2">
-                                      <button
-                                          type="button"
-                                          onClick={() => setMeiMode('annual')}
-                                          className={`h-8 w-full rounded-xl text-xs font-semibold border transition-all shadow-sm ${
-                                              meiMode === 'annual'
-                                                  ? 'border-indigo-200/70 bg-gradient-to-r from-indigo-100/80 to-white text-indigo-700 dark:border-indigo-500/40 dark:from-indigo-400/20 dark:to-indigo-300/10 dark:text-indigo-100'
-                                                  : 'border-zinc-200/70 bg-white/90 text-zinc-600 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-700/70 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:text-zinc-100 dark:hover:border-zinc-500'
-                                          }`}
-                                      >
-                                          Anual
-                                      </button>
-                                      <button
-                                          type="button"
-                                          onClick={() => setMeiMode('monthly')}
-                                          className={`h-8 w-full rounded-xl text-xs font-semibold border transition-all shadow-sm ${
-                                              meiMode === 'monthly'
-                                                  ? 'border-indigo-200/70 bg-gradient-to-r from-indigo-100/80 to-white text-indigo-700 dark:border-indigo-500/40 dark:from-indigo-400/20 dark:to-indigo-300/10 dark:text-indigo-100'
-                                                  : 'border-zinc-200/70 bg-white/90 text-zinc-600 hover:text-zinc-800 hover:border-zinc-300 dark:border-zinc-700/70 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:text-zinc-100 dark:hover:border-zinc-500'
-                                          }`}
-                                      >
-                                          Mensal
-                                      </button>
-                                  </div>
+
+                                          <div className="mt-4 xl:mt-5 grid grid-cols-3 gap-1.5 xl:gap-2">
+                                              <div className="p-2 xl:p-2.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#101014]">
+                                                  <p className="text-[10px] uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
+                                                      Faturado {snapshot.scopeLabel === 'anual' ? 'no ano' : 'no mês'}
+                                                  </p>
+                                                  <p className="text-[13px] xl:text-sm font-semibold text-zinc-900 dark:text-white mt-1">
+                                                      {formatCurrency(snapshot.revenue)}
+                                                  </p>
+                                              </div>
+                                              <div className="p-2 xl:p-2.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#101014]">
+                                                  <p className="text-[10px] uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
+                                                      {snapshot.status.level === 'over' ? 'Excedente' : 'Restante'}
+                                                  </p>
+                                                  <p className={`text-[13px] xl:text-sm font-semibold mt-1 ${snapshot.status.level === 'over' ? 'text-red-500 dark:text-red-400' : 'text-emerald-500 dark:text-emerald-400'}`}>
+                                                      {formatCurrency(snapshot.status.level === 'over' ? snapshot.excess : snapshot.remaining)}
+                                                  </p>
+                                              </div>
+                                              <div className="p-2 xl:p-2.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#101014]">
+                                                  <p className="text-[10px] uppercase text-zinc-500 dark:text-zinc-400 tracking-wide">
+                                                      Limite {snapshot.scopeLabel}
+                                                  </p>
+                                                  <p className="text-[13px] xl:text-sm font-semibold text-zinc-900 dark:text-white mt-1">
+                                                      {formatCurrency(snapshot.limit)}
+                                                  </p>
+                                              </div>
+                                          </div>
+                                      </article>
+                                  ))}
                               </div>
                           </div>
                       </div>
@@ -1520,11 +2577,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 label={blockLabels.expense_breakdown}
                 disabled={layoutLoading}
                 style={{ order: orderMap.expense_breakdown }}
-                isCollapsed={false}
-                onToggleCollapse={() => setExpandedPanel('expense_breakdown')}
-                renderCollapsedChildren
             >
-                  {renderExpenseBreakdownSection(visibleCategoryItems)}
+                  {renderExpenseBreakdownSection(categoryTotals.displayItems)}
           </SortableBlock>
           );
       }
@@ -1553,8 +2607,11 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   );
 
   const dashboardSubheader = (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
-          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+      <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 relative z-10 pt-6">
+          <div
+              className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4"
+              data-tour-anchor="dashboard-summary"
+          >
               <div className="space-y-2">
                   <div className="relative" ref={searchContainerRef}>
                       <SearchHelperBar
@@ -1698,7 +2755,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
           <div
               className="absolute left-1/2 -translate-x-1/2"
               style={{
-                  bottom: 'var(--mm-desktop-dock-height, 84px)',
+                  bottom: 'var(--mm-dock-height, var(--mm-desktop-dock-height, 84px))',
                   width: 'min(var(--mm-desktop-dock-width, calc(100% - 48px)), calc(100% - 24px))',
                   maxWidth: 'min(var(--mm-desktop-dock-width, calc(100% - 48px)), calc(100% - 24px))'
               }}
@@ -1715,7 +2772,12 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                           <X size={14} />
                       </button>
                   </div>
-                  <div className="max-h-[calc(100vh-260px)] overflow-y-auto overflow-x-hidden px-5 pb-4 pt-3">
+                  <div
+                      className="overflow-y-auto overflow-x-hidden px-5 pb-4 pt-3"
+                      style={{
+                          maxHeight: 'min(80vh, max(260px, calc(var(--mm-content-available-height, 720px) - 24px)))'
+                      }}
+                  >
                       {content}
                   </div>
               </div>
@@ -1723,21 +2785,24 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       </div>
   );
 
-  const rootOverflowClass = isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden';
-  const contentSpacingClass = isCompactHeight ? 'mt-[var(--mm-content-gap)] py-2' : 'mt-[var(--mm-content-gap)] py-3';
+  const contentSpacingClass = isCompactHeight ? 'mt-[var(--mm-content-gap)]' : 'mt-[var(--mm-content-gap)]';
 
   return (
-    <div className={`min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${rootOverflowClass}`}>
+    <div className="h-full min-h-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 flex flex-col">
         {dashboardSubheader}
-        <div className={`dashboard-desktop max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ${contentSpacingClass} space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500`}>
-            <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-                <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
-                    <div className="flex flex-col gap-3">
-                        {visibleOrder.map((blockId) => renderDashboardBlock(blockId))}
-                    </div>
-                </SortableContext>
-            </DndContext>
-        </div>
+        <main
+            className={`max-w-7xl mx-auto w-full px-4 sm:px-6 ${contentSpacingClass} flex-1 min-h-0`}
+        >
+            <div className="dashboard-desktop flex h-full min-h-0 flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+                    <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
+                        <div className="flex min-h-0 flex-col gap-3">
+                            {visibleOrder.map((blockId) => renderDashboardBlock(blockId))}
+                        </div>
+                    </SortableContext>
+                </DndContext>
+            </div>
+        </main>
         {expandedPanel === 'credit_cards' &&
             renderDockSheet('Faturas dos Cartões', renderCreditCardsSection(creditCards, 'expanded'))}
         {expandedPanel === 'expense_breakdown' &&

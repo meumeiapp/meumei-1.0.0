@@ -1,0 +1,8 @@
+Agência DK - 2026-03-11
+UID/License: 9nenft1OJpadIE8064wHq4KEefq2
+Total de logs: 0
+Inserções: 0
+Exclusões: 0
+Outros: 0
+
+ActionTypes:

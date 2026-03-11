@@ -37,6 +37,16 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const isMobile = useIsMobile();
   const canAdjustAccount = (account?: Account | null) => Boolean(account && !account.locked);
+  const selectChangedAccounts = (baseAccounts: Account[], nextAccounts: Account[]) => {
+      const baseById = new Map(baseAccounts.map(account => [account.id, account]));
+      return nextAccounts.filter(account => {
+          const previous = baseById.get(account.id);
+          if (!previous) return true;
+          const previousBalance = Number(previous.currentBalance || 0);
+          const nextBalance = Number(account.currentBalance || 0);
+          return Math.abs(previousBalance - nextBalance) > 0.009;
+      });
+  };
 
   // Filter expenses based on the viewDate's month and year
   const filteredExpenses = expenses.filter(exp => {
@@ -83,7 +93,10 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
           });
 
           if (accountsChanged) {
-              onUpdateAccounts(newAccounts);
+              const changedAccounts = selectChangedAccounts(accounts, newAccounts);
+              if (changedAccounts.length) {
+                  onUpdateAccounts(changedAccounts);
+              }
           }
       }
 

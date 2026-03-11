@@ -20,6 +20,7 @@ export default function Landing() {
   });
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [termsError, setTermsError] = useState("");
+  const [emailError, setEmailError] = useState("");
   const [planChoice, setPlanChoice] = useState<PlanChoice>("annual");
   const [cookieChoice, setCookieChoice] = useState<"accepted" | "declined" | null>(() => {
     if (typeof window === "undefined") return null;
@@ -140,19 +141,34 @@ export default function Landing() {
     return `https://${functionsRegion}-${firebaseProjectId}.cloudfunctions.net/createCheckoutSessionV2`;
   };
 
+  const validateLeadFields = () => {
+    const leadEmail = (leadEmailState || localStorage.getItem("leadEmail") || "").trim();
+    let hasError = false;
+    if (!leadEmail) {
+      setEmailError("Informe seu e-mail para continuar.");
+      hasError = true;
+    } else {
+      setEmailError("");
+    }
+    if (!termsAccepted) {
+      setTermsError("Você precisa aceitar os Termos de Uso e a Política de Privacidade para continuar.");
+      hasError = true;
+    } else if (termsError) {
+      setTermsError("");
+    }
+    return { isValid: !hasError, leadEmail };
+  };
+
   const handleSubscribe = async (event?: MouseEvent<HTMLButtonElement>) => {
     event?.preventDefault();
     if (isLoading) return;
     setSubscribeError("");
-    if (!termsAccepted) {
-      setTermsError("Você precisa aceitar os Termos de Uso e a Política de Privacidade para continuar.");
-      return;
-    }
+    const { isValid, leadEmail } = validateLeadFields();
+    if (!isValid) return;
     if (planChoice === "trial") {
-      await handleTrialRequest();
+      await handleTrialRequest(leadEmail);
       return;
     }
-    const leadEmail = (leadEmailState || localStorage.getItem("leadEmail") || "").trim();
     const checkoutEndpoint = resolveCheckoutEndpoint();
     if (!checkoutEndpoint) {
       try {
@@ -169,7 +185,7 @@ export default function Landing() {
     try {
       const payload = {
         data: {
-          email: leadEmail || undefined,
+          email: leadEmail,
           plan: planChoice,
           success_url: `${window.location.origin}/?checkout=success`,
           cancel_url: `${window.location.origin}/?checkout=cancel`
@@ -192,21 +208,10 @@ export default function Landing() {
     }
   };
 
-  const handleTrialRequest = async () => {
+  const handleTrialRequest = async (leadEmail: string) => {
     if (trialStatus === "loading") return;
     setTrialMessage("");
     setTrialLoginUrl("");
-    if (!termsAccepted) {
-      setTermsError("Você precisa aceitar os Termos de Uso e a Política de Privacidade para continuar.");
-      return;
-    }
-    if (termsError) setTermsError("");
-    const leadEmail = (leadEmailState || localStorage.getItem("leadEmail") || "").trim();
-    if (!leadEmail) {
-      setTrialStatus("error");
-      setTrialMessage("Informe seu e-mail para receber o teste grátis.");
-      return;
-    }
     setTrialStatus("loading");
     try {
       const result = await betaKeysService.requestTrialKey({
@@ -301,10 +306,10 @@ export default function Landing() {
   );
   const cookieBanner = cookieChoice === null ? (
     <div
-      className="fixed bottom-4 left-1/2 z-[9999] w-[min(100%-0.5rem,1200px)] md:w-[min(100%-2rem,72rem)] -translate-x-1/2 pointer-events-auto"
+      className="fixed bottom-3 left-3 right-3 z-[9999] pointer-events-none md:left-auto md:right-6 md:w-[420px]"
       style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
     >
-      <div className="rounded-2xl border border-white/15 bg-black px-3 py-2 text-[11px] text-zinc-200 shadow-[0_24px_80px_rgba(0,0,0,0.75)] md:px-6 md:py-4 md:text-sm">
+      <div className="pointer-events-auto rounded-2xl border border-white/15 bg-black/95 px-3 py-2 text-[11px] text-zinc-200 shadow-[0_24px_80px_rgba(0,0,0,0.75)] md:px-4 md:py-3 md:text-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-4">
           <div className="space-y-1">
             <div className="font-semibold text-white">Cookies e Privacidade</div>
@@ -368,7 +373,7 @@ export default function Landing() {
   ];
 
   return (
-    <div className="h-screen text-white font-sans selection:bg-teal-500/30 overflow-x-hidden overflow-y-auto landing-scroll-surface flex flex-col relative bg-gradient-to-br from-[#05060c] via-[#0b1430] to-[#1a0b2f]">
+    <div className={`h-screen text-white font-sans selection:bg-teal-500/30 overflow-x-hidden overflow-y-auto landing-scroll-surface flex flex-col relative bg-gradient-to-br from-[#05060c] via-[#0b1430] to-[#1a0b2f] ${cookieChoice === null ? 'pb-24 md:pb-8' : ''}`}>
       {/* BACKGROUND (same as login) */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute inset-0 opacity-80 bg-[radial-gradient(circle_at_16%_18%,rgba(34,211,238,0.4),transparent_45%),radial-gradient(circle_at_82%_20%,rgba(16,185,129,0.28),transparent_50%),radial-gradient(circle_at_50%_88%,rgba(236,72,153,0.3),transparent_55%)]" />
@@ -421,7 +426,7 @@ export default function Landing() {
                 App financeiro feito para MEI
                 <span className="hidden md:inline"> • versão 1.0.0</span>
               </p>
-              <h1 className="order-1 md:order-1 text-[clamp(1.28rem,6.9vw,1.78rem)] tracking-[-0.018em] sm:text-5xl md:text-7xl lg:text-8xl font-bold leading-[1.06] text-white max-w-4xl mx-auto text-center font-space-grotesk">
+              <h1 className="order-1 md:order-1 text-[clamp(1.28rem,6.9vw,1.78rem)] tracking-[-0.018em] sm:text-5xl md:text-[3.65rem] lg:text-[4.15rem] font-bold leading-[1.06] md:leading-[1.1] text-white max-w-4xl md:max-w-none mx-auto text-center font-space-grotesk">
                 <span className="block">Organize seu MEI sem planilhas</span>
                 <span
                   className="block bg-gradient-to-r from-sky-400 via-rose-500 to-purple-500 bg-clip-text text-transparent"
@@ -450,7 +455,7 @@ export default function Landing() {
                   {trialStatus === "loading" ? "Gerando teste grátis..." : "Teste grátis por 7 dias"}
                 </button>
                 <div className="mt-2 text-[11px] text-zinc-300 text-center">
-                  Sem compromisso. Cancelamento simples.
+                  Sem compromisso.
                 </div>
                 {trialMessage && (
                   <div
@@ -575,7 +580,7 @@ export default function Landing() {
               <div className="absolute top-0 right-0 w-72 h-72 bg-teal-500/10 blur-[90px] rounded-full hidden md:block"></div>
               <div className="relative z-10">
                 <div className="hidden md:flex w-12 h-12 rounded-2xl bg-white/5 border border-white/10 items-center justify-center text-2xl mb-6">🚀</div>
-                <h3 className="text-xl md:text-2xl font-bold mb-2 md:mb-3">Emissão de DAS em 1 clique</h3>
+                <h3 className="text-xl md:text-2xl font-bold mb-2 md:mb-3">Emissão de DAS facilitada.</h3>
                 <p className="text-zinc-300 text-sm md:text-base max-w-xl">
                   Não perca tempo no site do governo. Gere sua guia mensal e organize seus pagamentos com consistência.
                 </p>
@@ -687,7 +692,8 @@ export default function Landing() {
                       </div>
                       <div className="mt-1 md:mt-0 md:text-right md:border-l md:border-white/15 md:pl-6">
                         <p className="text-[12px] leading-[1.35] text-white/75">
-                          Experimente 7 dias grátis e veja seu MEI sob controle já no primeiro acesso.
+                          <span className="block">Teste grátis por 7 dias.</span>
+                          <span className="block">Seu MEI sob controle desde o início.</span>
                         </p>
                         <button
                           type="button"
@@ -771,7 +777,43 @@ export default function Landing() {
             </div>
           </div>
           <div className="w-full max-w-5xl mx-auto">
-            <div className="grid gap-3 md:gap-4 md:grid-cols-2 xl:grid-cols-3 items-stretch">
+            <div className="md:hidden grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setPlanChoice("annual")}
+                className={`inline-flex items-center justify-center rounded-xl border px-2 py-2 text-[11px] font-bold uppercase tracking-[0.1em] transition ${
+                  planChoice === "annual"
+                    ? "border-emerald-300/70 bg-emerald-400/15 text-white shadow-[0_10px_24px_rgba(16,185,129,0.22)]"
+                    : "border-white/20 bg-white/5 text-zinc-200"
+                }`}
+              >
+                Anual
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlanChoice("monthly")}
+                className={`inline-flex items-center justify-center rounded-xl border px-2 py-2 text-[11px] font-bold uppercase tracking-[0.1em] transition ${
+                  planChoice === "monthly"
+                    ? "border-purple-300/70 bg-purple-400/15 text-white shadow-[0_10px_24px_rgba(168,85,247,0.22)]"
+                    : "border-white/20 bg-white/5 text-zinc-200"
+                }`}
+              >
+                Mensal
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlanChoice("trial")}
+                className={`inline-flex items-center justify-center rounded-xl border px-2 py-2 text-[11px] font-bold uppercase tracking-[0.1em] transition ${
+                  planChoice === "trial"
+                    ? "border-cyan-300/70 bg-cyan-400/15 text-white shadow-[0_10px_24px_rgba(34,211,238,0.22)]"
+                    : "border-white/20 bg-white/5 text-zinc-200"
+                }`}
+              >
+                Grátis 7 dias
+              </button>
+            </div>
+
+            <div className="hidden md:grid gap-3 md:gap-4 md:grid-cols-2 xl:grid-cols-3 items-stretch">
               <div className={`rounded-3xl border border-white/10 bg-[#0c0c12]/80 p-4 md:p-6 shadow-[0_20px_60px_rgba(0,0,0,0.45)] flex h-full flex-col ${planChoice === "annual" ? "ring-2 ring-emerald-400/60" : ""}`}>
                 <div className="md:hidden grid grid-cols-[1fr_auto_1fr] items-start gap-2 min-h-[34px]">
                   <div className="text-[10px] uppercase tracking-[0.25em] leading-[1.2] text-zinc-300">
@@ -896,9 +938,22 @@ export default function Landing() {
               <div className="mt-2 flex flex-wrap items-end gap-2">
                 <span className="text-2xl md:text-3xl font-extrabold text-white">{planCopy[planChoice].price}</span>
                 <span className="text-sm text-zinc-300">{planCopy[planChoice].cadence}</span>
-                <span className="ml-auto text-[11px] uppercase tracking-[0.3em] text-emerald-200/70">
-                  {planCopy[planChoice].badge}
-                </span>
+                <div className="ml-auto text-right">
+                  {planChoice === "annual" ? (
+                    <>
+                      <span className="inline-flex items-center rounded-full border border-emerald-300/40 bg-emerald-400/15 px-2.5 py-1 text-[10px] md:text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200">
+                        Mais vantajoso
+                      </span>
+                      <div className="mt-1 text-[11px] md:text-xs font-semibold text-emerald-200">
+                        Economize R$ 120,00 por ano
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-[11px] uppercase tracking-[0.3em] text-emerald-200/70">
+                      {planCopy[planChoice].badge}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="mt-2 text-sm text-zinc-100">
                 {planCopy[planChoice].headline}
@@ -913,9 +968,11 @@ export default function Landing() {
                   ? "Plano mensal com cobrança recorrente, ideal para quem quer flexibilidade e liberdade para cancelar quando quiser."
                   : "Acesso grátis por 7 dias para testar a plataforma antes de contratar um plano."}
               </div>
-              <div className="mt-3 text-xs font-semibold text-emerald-200">
-                Teste grátis por 7 dias — reembolso integral garantido conforme o Código de Defesa do Consumidor
-              </div>
+              {planChoice !== "trial" && (
+                <div className="mt-3 text-xs font-semibold text-emerald-200">
+                  Teste grátis por 7 dias — reembolso integral garantido
+                </div>
+              )}
             </div>
 
             <form
@@ -924,24 +981,33 @@ export default function Landing() {
                 e.preventDefault();
                 handleSubscribe();
               }}
-              className="mt-4 flex flex-col gap-3 md:flex-row md:items-stretch w-full"
+              className="mt-4 flex flex-col gap-3 md:flex-row md:items-start w-full"
             >
-              <input
-                id="lead-email"
-                type="email"
-                placeholder="Seu melhor e-mail"
-                value={leadEmailState}
-                onChange={(e) => {
-                  setLeadEmailState(e.target.value);
-                  localStorage.setItem("leadEmail", e.target.value);
-                }}
-                className="flex-1 bg-white/10 px-4 py-3 text-white placeholder:text-zinc-300 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60 rounded-xl border border-white/20"
-                aria-label="E-mail"
-              />
+              <div className="flex-1">
+                <input
+                  id="lead-email"
+                  type="email"
+                  placeholder="Seu melhor e-mail"
+                  value={leadEmailState}
+                  onChange={(e) => {
+                    const nextEmail = e.target.value;
+                    setLeadEmailState(nextEmail);
+                    localStorage.setItem("leadEmail", nextEmail);
+                    if (emailError && nextEmail.trim()) setEmailError("");
+                  }}
+                  className={`w-full bg-white/10 px-4 py-3 text-white placeholder:text-zinc-300 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60 rounded-xl border ${
+                    emailError
+                      ? "border-rose-400/80 focus-visible:ring-rose-400/70"
+                      : "border-white/20 focus-visible:ring-teal-400/60"
+                  }`}
+                  aria-label="E-mail"
+                />
+                {emailError && <div className="mt-1 text-xs text-rose-300">{emailError}</div>}
+              </div>
               <button
                 type="submit"
                 disabled={isLoading || trialStatus === "loading"}
-                className="bg-transparent text-white/75 px-4 py-3 min-h-[48px] rounded-xl text-xs md:text-sm font-semibold transition-all border border-white/20 hover:text-white hover:border-white/40 whitespace-nowrap disabled:opacity-60 disabled:hover:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60"
+                className="md:self-start bg-transparent text-white/75 px-4 py-3 min-h-[48px] rounded-xl text-xs md:text-sm font-semibold transition-all border border-white/20 hover:text-white hover:border-white/40 whitespace-nowrap disabled:opacity-60 disabled:hover:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60"
               >
                 {isLoading || trialStatus === "loading"
                   ? "..."
@@ -954,7 +1020,7 @@ export default function Landing() {
             </form>
 
             <div className="w-full space-y-2 mt-3">
-              <label className="flex items-start gap-3 text-xs text-zinc-300">
+              <label className={`flex items-start gap-3 text-xs ${termsError ? "text-rose-200" : "text-zinc-300"}`}>
                 <input
                   type="checkbox"
                   checked={termsAccepted}
@@ -962,7 +1028,9 @@ export default function Landing() {
                     setTermsAccepted(e.target.checked);
                     if (e.target.checked) setTermsError("");
                   }}
-                  className="mt-0.5 h-4 w-4 rounded border-white/30 bg-white/10 text-teal-400 focus:ring-teal-400/60"
+                  className={`mt-0.5 h-4 w-4 rounded bg-white/10 text-teal-400 ${
+                    termsError ? "border-rose-400/80 focus:ring-rose-400/70" : "border-white/30 focus:ring-teal-400/60"
+                  }`}
                 />
                 <span>
                   Li e concordo com os{" "}
@@ -1019,7 +1087,7 @@ export default function Landing() {
             <div className="rounded-2xl bg-[#0d0d13]/80 border border-white/15 p-4 md:p-6 shadow-[0_15px_50px_rgba(0,0,0,0.55)]">
               <div className="text-[13px] md:text-sm font-bold text-white">Existe reembolso?</div>
               <div className="text-zinc-300 text-[12px] md:text-sm mt-1.5 md:mt-2 leading-[1.35] md:leading-normal">
-                Sim. Você tem 7 dias para solicitar reembolso integral, conforme o Código de Defesa do Consumidor.
+                Sim. Você tem 7 dias para solicitar reembolso integral caso não esteja satisfeito.
               </div>
             </div>
 

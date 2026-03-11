@@ -1,0 +1,8 @@
+Agência DK - Auditoria 2026-03-11
+UID/License: 9nenft1OJpadIE8064wHq4KEefq2
+Total de logs no dia: 0
+Inserções: 0
+Exclusões: 0
+Outros eventos: 0
+
+Contagem por actionType:

@@ -1,0 +1,118 @@
+AGÊNCIA DK
+VITALÍCIO
+
+agencia.dk22@gmail.com
+
+1.0.0 Beta
+meumei
+MÊS ATUAL
+Março De 2026
+
+Contas Bancárias
+
+7 contas
+
+CONTAS
+
+7
+
+SALDO TOTAL
+
+R$ 12.954,63
+
+SALDO ATUAL
+
+R$ 12.954,63
+
+Auditoria
+Nova Conta
+Selecionar todos
+0 selecionados
+|
+Soma: R$ 12.954,63
+
+DINHEIRO
+
+VALOR
+
+R$ 19,62
+
+PF
+Dinheiro (Espécie)
+
+MP ALE
+
+VALOR
+
+R$ 4.968,68
+
+PF
+Rendimentos
+
+MP DK
+
+VALOR
+
+R$ 38,51
+
+PJ
+Rendimentos
+
+SICREDI
+
+VALOR
+
+R$ 57,22
+
+PF
+Conta Bancária
+
+MP NATI
+
+VALOR
+
+R$ 7.859,60
+
+PF
+Rendimentos
+
+NUBANK PJ
+
+VALOR
+
+R$ 0,00
+
+PJ
+Conta Bancária
+
+CORA
+
+VALOR
+
+R$ 11,00
+
+PJ
+Conta Bancária
++
+ADICIONAR CONTA
++
+ADICIONAR CONTA
++
+ADICIONAR CONTA
++
+ADICIONAR CONTA
++
+ADICIONAR CONTA
+Início
+Contas
+Entradas
+Fixa
+Variável
+Pessoal
+Rend.
+Faturas
+Relatórios
+DAS
+Agenda
+Auditoria
+Calc.

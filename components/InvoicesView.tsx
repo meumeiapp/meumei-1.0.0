@@ -4,7 +4,12 @@ import { CreditCard as CardIcon, Calendar, CheckSquare, Square, DollarSign, Wall
 import { Expense, CreditCard, Account } from '../types';
 import PayInvoiceModal from './PayInvoiceModal';
 import NewCreditCardModal from './NewCreditCardModal';
-import { filterCardExpensesForInvoices, groupCardExpensesByInvoiceMonth } from '../services/invoiceUtils';
+import {
+  filterCardExpensesForInvoices,
+  groupCardExpensesByInvoiceMonth,
+  isCreditPaymentMethod,
+  resolveExpenseCardId
+} from '../services/invoiceUtils';
 import CardTag from './CardTag';
 import { getCardColor, withAlpha } from '../services/cardColorUtils';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
@@ -62,6 +67,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [expandedMonthKey, setExpandedMonthKey] = useState<string | null>(null);
   const [expandedExpenseId, setExpandedExpenseId] = useState<string | null>(null);
   const [isCardsModalOpen, setIsCardsModalOpen] = useState(false);
+  const [isInvoiceMonthsSheetOpen, setIsInvoiceMonthsSheetOpen] = useState(false);
   const { highlightTarget, setHighlightTarget } = useGlobalActions();
   const [highlightedCardId, setHighlightedCardId] = useState<string | null>(null);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
@@ -83,7 +89,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           const headerBottom = headerNode.getBoundingClientRect().bottom;
           const sectionTop = sectionNode.getBoundingClientRect().top;
           const gap = Math.round(sectionTop - headerBottom);
-          const desired = 5;
+          const desired = 0;
           setTopAdjust((prev) => {
               const nextAdjust = Math.max(0, gap - desired + prev);
               return prev === nextAdjust ? prev : nextAdjust;
@@ -119,13 +125,14 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const allCardExpensesByMonth = useMemo(() => {
       const map = new Map<string, { total: number; cardIds: Set<string> }>();
       expenses.forEach(exp => {
-          if (!exp.cardId) return;
+          const expenseCardId = resolveExpenseCardId(exp as Expense & { creditCardId?: string });
+          if (!expenseCardId || !isCreditPaymentMethod(exp.paymentMethod)) return;
           const date = new Date(exp.dueDate + 'T12:00:00');
           if (date.getFullYear() !== calendarYear) return;
           const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
           const entry = map.get(key) || { total: 0, cardIds: new Set<string>() };
           entry.total += exp.amount;
-          entry.cardIds.add(exp.cardId);
+          entry.cardIds.add(expenseCardId);
           map.set(key, entry);
       });
       return map;
@@ -134,6 +141,11 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const needsScroll = Boolean(expandedMonthKey);
 
   useEffect(() => {
+      if (!isMobile) {
+          document.documentElement.classList.remove('lock-scroll');
+          document.body.classList.remove('lock-scroll');
+          return;
+      }
       const shouldLock = !needsScroll;
       document.documentElement.classList.toggle('lock-scroll', shouldLock);
       document.body.classList.toggle('lock-scroll', shouldLock);
@@ -141,7 +153,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           document.documentElement.classList.remove('lock-scroll');
           document.body.classList.remove('lock-scroll');
       };
-  }, [needsScroll]);
+  }, [isMobile, needsScroll]);
 
   useEffect(() => {
       if (Object.keys(groupedExpenses).length === 0) {
@@ -158,7 +170,61 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const selectedCard = safeCreditCards.find(c => c.id === selectedCardId);
   const selectedCardColor = selectedCard ? getCardColor(selectedCard) : '#6366f1';
   const editExpenseLabel = getPrimaryActionLabel('Despesa', true);
-  const pendingTotal = pendingCardExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+  const pendingByCardStats = useMemo(() => {
+      const stats = new Map<string, { pendingTotal: number; pendingCount: number; openMonths: number }>();
+      const monthsByCard = new Map<string, Set<string>>();
+
+      safeCreditCards.forEach((card) => {
+          stats.set(card.id, { pendingTotal: 0, pendingCount: 0, openMonths: 0 });
+      });
+
+      expenses.forEach((exp) => {
+          const cardId = resolveExpenseCardId(exp as Expense & { creditCardId?: string });
+          if (!cardId || !isCreditPaymentMethod(exp.paymentMethod) || exp.status !== 'pending') return;
+
+          const base = stats.get(cardId) || { pendingTotal: 0, pendingCount: 0, openMonths: 0 };
+          base.pendingTotal += exp.amount;
+          base.pendingCount += 1;
+          stats.set(cardId, base);
+
+          const monthKey = typeof exp.dueDate === 'string' && exp.dueDate.length >= 7
+              ? exp.dueDate.slice(0, 7)
+              : new Date(exp.date + 'T12:00:00').toISOString().slice(0, 7);
+          const monthSet = monthsByCard.get(cardId) || new Set<string>();
+          monthSet.add(monthKey);
+          monthsByCard.set(cardId, monthSet);
+      });
+
+      monthsByCard.forEach((months, cardId) => {
+          const base = stats.get(cardId) || { pendingTotal: 0, pendingCount: 0, openMonths: 0 };
+          base.openMonths = months.size;
+          stats.set(cardId, base);
+      });
+
+      return stats;
+  }, [expenses, safeCreditCards]);
+  const pendingSelectableIdsByCard = useMemo(() => {
+      const map = new Map<string, string[]>();
+      safeCreditCards.forEach((card) => map.set(card.id, []));
+
+      expenses.forEach((exp) => {
+          const cardId = resolveExpenseCardId(exp as Expense & { creditCardId?: string });
+          if (!cardId || !isCreditPaymentMethod(exp.paymentMethod)) return;
+          if (exp.status !== 'pending' || exp.locked) return;
+          const current = map.get(cardId) || [];
+          current.push(exp.id);
+          map.set(cardId, current);
+      });
+
+      return map;
+  }, [expenses, safeCreditCards]);
+  const groupedPendingExpenses = useMemo(() => {
+      const groups = groupCardExpensesByInvoiceMonth(pendingCardExpenses);
+      return Object.keys(groups).sort().reduce((obj, key) => {
+          obj[key] = groups[key];
+          return obj;
+      }, {} as Record<string, Expense[]>);
+  }, [pendingCardExpenses]);
 
   useEffect(() => {
       if (editingExpense) {
@@ -173,6 +239,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   useEffect(() => {
       if (safeCreditCards.length === 0) {
           if (selectedCardId) setSelectedCardId('');
+          setIsInvoiceMonthsSheetOpen(false);
           return;
       }
       if (!selectedCardId || !safeCreditCards.some(card => card.id === selectedCardId)) {
@@ -233,6 +300,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           setIsPayModalOpen(false);
           setIsEditModalOpen(false);
           setIsCardModalOpen(false);
+          setIsInvoiceMonthsSheetOpen(false);
+          setExpandedMonthKey(null);
       };
       window.addEventListener('mm:mobile-dock-click', handleDockClick);
       return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
@@ -361,60 +430,124 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       value.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
 
   const headerWrapperClass = 'space-y-2';
-  const mobileCardRadius = isMobile ? 'rounded-none' : 'rounded-2xl';
-  const mobileCardRadiusSm = isMobile ? 'rounded-none' : 'rounded-xl';
-  const mobileRowRadius = isMobile ? 'rounded-none' : 'rounded-md';
+  const mobileCardRadius = isMobile ? 'rounded-xl' : 'rounded-2xl';
+  const mobileCardRadiusSm = isMobile ? 'rounded-xl' : 'rounded-xl';
+  const mobileRowRadius = isMobile ? 'rounded-xl' : 'rounded-md';
 
   const mainWrapperClass = isMobile
     ? 'space-y-6'
-    : 'max-w-7xl mx-auto px-4 sm:px-6 space-y-6 mt-[var(--mm-content-gap)]';
+    : 'w-full px-4 sm:px-6 space-y-6 mt-[var(--mm-content-gap)] flex-1 min-h-0';
   const editFieldId = (suffix: string) =>
     `invoice-edit-${editingExpense?.id || 'current'}-${suffix}`;
+  const openInvoicesForCard = (cardId: string) => {
+      const isCardSwitch = cardId !== selectedCardId;
+      setSelectedCardId(cardId);
+      if (isCardSwitch) setSelectedExpenseIds([]);
+      setExpandedMonthKey(null);
+      setExpandedExpenseId(null);
+      setIsInvoiceMonthsSheetOpen(true);
+  };
 
   const cardSelectorSection = isMobile ? (
-      <div
-          id="card-highlight-bar"
-          className={`${mobileCardRadius} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-1.5 shadow-sm ${
-              highlightedCardId === selectedCardId ? 'ring-2 ring-indigo-400/70 shadow-indigo-500/20' : ''
-          }`}
-      >
-          <label className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-0.5 block">
-            Cartão selecionado
-          </label>
+      <div className="space-y-3">
+          <div className="px-4 pt-2">
+              <div
+                  id="card-highlight-bar"
+                  className={`rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400 ${
+                      highlightedCardId === selectedCardId ? 'ring-2 ring-indigo-400/70 shadow-indigo-500/20' : ''
+                  }`}
+              >
+                  <div className="flex items-center justify-between gap-2">
+                      <span>Toque em um cartão para abrir as faturas em aberto por mês.</span>
+                      <span className="font-semibold">{safeCreditCards.length} cartões</span>
+                  </div>
+              </div>
+          </div>
           {safeCreditCards.length === 0 ? (
-              <div className="text-sm text-zinc-500 dark:text-zinc-400 px-2 py-2">
-                  Nenhum cartão cadastrado.
+              <div className="px-4">
+                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                      Nenhum cartão cadastrado.
+                  </div>
               </div>
           ) : (
-              <div className="space-y-1">
+              <div className="px-4 grid grid-cols-2 gap-2">
                   {safeCreditCards.map((card) => {
-                      const isSelected = card.id === selectedCardId;
+                      const cardColor = getCardColor(card);
+                      const stats = pendingByCardStats.get(card.id) || { pendingTotal: 0, pendingCount: 0, openMonths: 0 };
+                      const selectableIds = pendingSelectableIdsByCard.get(card.id) || [];
+                      const hasSelectable = selectableIds.length > 0;
+                      const isCardActive = card.id === selectedCardId;
+                      const isCardFullySelected =
+                          isCardActive && hasSelectable && selectableIds.every((id) => selectedExpenseIds.includes(id));
+                      const isCardPartiallySelected =
+                          isCardActive &&
+                          selectableIds.some((id) => selectedExpenseIds.includes(id)) &&
+                          !isCardFullySelected;
+                      const isExpanded = isInvoiceMonthsSheetOpen && selectedCardId === card.id;
                       const limitLabel =
                           typeof card.limit === 'number' && card.limit > 0
                               ? `R$ ${formatCurrency(card.limit)}`
                               : 'Sem limite';
-                      const cardColor = getCardColor(card);
                       return (
-                          <button
-                              key={card.id}
-                              type="button"
-                              onClick={() => {
-                                  setSelectedCardId(card.id);
-                                  setSelectedExpenseIds([]);
-                              }}
-                              className={`w-full px-3 py-1.5 flex items-center justify-between gap-3 text-left ${mobileRowRadius} border transition`}
-                              style={{
-                                  backgroundColor: withAlpha(cardColor, isSelected ? 0.2 : 0.1),
-                                  borderColor: withAlpha(cardColor, isSelected ? 0.6 : 0.25)
-                              }}
-                          >
-                              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                                  {card.name}
-                              </span>
-                              <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 shrink-0">
-                                  {limitLabel}
-                              </span>
-                          </button>
+                          <div key={card.id} className="min-w-0">
+                              <div
+                                  className={`relative overflow-hidden rounded-xl border transition-all duration-200 ${
+                                      isExpanded
+                                          ? 'border-indigo-400/70 shadow-[0_10px_24px_rgba(99,102,241,0.2)]'
+                                          : 'border-zinc-200/80 dark:border-zinc-800/70'
+                                  }`}
+                                  style={{
+                                      background: `linear-gradient(160deg, ${withAlpha(cardColor, 0.24)} 0%, ${withAlpha(cardColor, 0.1)} 54%, ${withAlpha('#09090b', 0.78)} 100%)`,
+                                      boxShadow: isExpanded ? undefined : `0 8px 20px ${withAlpha(cardColor, 0.15)}`
+                                  }}
+                              >
+                                  <div className="pointer-events-none absolute right-2 bottom-1 z-0 text-white/15">
+                                      <CardIcon size={44} strokeWidth={1.5} />
+                                  </div>
+                                  <div className="absolute right-2 top-2 z-20">
+                                      <input
+                                          type="checkbox"
+                                          checked={isCardFullySelected}
+                                          ref={(node) => {
+                                              if (node) node.indeterminate = isCardPartiallySelected;
+                                          }}
+                                          onChange={() => {
+                                              setSelectedCardId(card.id);
+                                              setExpandedMonthKey(null);
+                                              setExpandedExpenseId(null);
+                                              setSelectedExpenseIds(isCardFullySelected ? [] : selectableIds);
+                                          }}
+                                          onClick={(event) => event.stopPropagation()}
+                                          disabled={!hasSelectable}
+                                          className="h-4 w-4 accent-indigo-500"
+                                          aria-label={`Selecionar faturas pendentes do cartão ${card.name}`}
+                                      />
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={() => openInvoicesForCard(card.id)}
+                                      className="relative z-10 w-full px-3 py-3 text-left"
+                                      aria-label={`Abrir faturas do cartão ${card.name}`}
+                                  >
+                                      <p className="pr-7 text-sm font-semibold truncate text-zinc-100">
+                                          {card.name}
+                                      </p>
+                                      <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-zinc-400">Em aberto</p>
+                                      <p className={`mt-1 text-lg font-bold ${stats.pendingTotal > 0 ? 'text-rose-300' : 'text-zinc-300'}`}>
+                                          R$ {stats.pendingTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      </p>
+                                      <div className="mt-2 flex items-center gap-1.5">
+                                          <span className="inline-flex items-center rounded-full border border-white/15 bg-black/25 px-2 py-0.5 text-[10px] font-semibold text-zinc-200 truncate max-w-[88px]">
+                                              {card.brand || 'Cartão'}
+                                          </span>
+                                          <span className="inline-flex items-center rounded-full border border-white/15 bg-black/25 px-2 py-0.5 text-[10px] font-semibold text-zinc-200">
+                                              {stats.openMonths} meses
+                                          </span>
+                                      </div>
+                                      <p className="mt-1 text-[10px] text-zinc-300/80 truncate">Limite: {limitLabel}</p>
+                                  </button>
+                              </div>
+                          </div>
                       );
                   })}
               </div>
@@ -495,11 +628,11 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   </div>
               </div>
 
-              <div className={`grid ${onOpenAudit ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+              <div className="flex flex-wrap items-center justify-center gap-2">
                   {onOpenAudit && (
                       <button
                           onClick={onOpenAudit}
-                          className={`flex items-center justify-center gap-2 ${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-[var(--mm-view-accent)] hover:border-[var(--mm-view-accent)] transition`}
+                          className={`mm-btn-base mm-btn-secondary ${mobileCardRadiusSm} min-w-[168px] px-6`}
                           title="Auditoria do dia"
                       >
                           <History size={14} />
@@ -509,10 +642,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   <button
                       onClick={() => setIsPayModalOpen(true)}
                       disabled={selectedExpenseIds.length === 0}
-                      className={`flex items-center justify-center gap-2 ${mobileCardRadius} py-2.5 text-sm font-semibold transition ${
-                        selectedExpenseIds.length > 0
-                          ? 'bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white shadow-lg shadow-blue-900/20'
-                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
+                      className={`mm-btn-base ${mobileCardRadius} min-w-[152px] px-5 ${
+                        selectedExpenseIds.length > 0 ? 'mm-btn-primary mm-btn-primary-rose' : 'mm-btn-secondary'
                       }`}
                   >
                       Pagar Fatura
@@ -520,7 +651,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   {!isMobile && (
                       <button
                           onClick={handleOpenNewCard}
-                          className="w-full rounded-2xl bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white font-semibold py-2.5 text-sm shadow-lg shadow-[var(--mm-view-accent)]/20 flex items-center justify-center gap-2"
+                          data-tour-anchor="cards-new"
+                          className="mm-btn-base mm-btn-primary mm-btn-primary-rose min-w-[220px] px-8"
                       >
                           Novo Cartão
                       </button>
@@ -531,7 +663,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   );
 
   const summarySection = isMobile ? headerSection : (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
+      <div className="w-full px-4 sm:px-6 relative z-10 pt-6">
         <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
               {headerSection}
           </div>
@@ -550,7 +682,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   {!isMobile && (
                       <button
                           onClick={handleOpenNewCard}
-                          className="flex items-center gap-2 bg-[var(--mm-view-accent)] hover:bg-[var(--mm-view-accent-strong)] text-white px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors shadow-lg shadow-blue-900/20"
+                          data-tour-anchor="cards-new"
+                          className="mm-btn-base mm-btn-primary mm-btn-primary-rose px-4 text-xs"
                       >
                           Novo Cartão
                       </button>
@@ -805,6 +938,131 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           )}
       </>
   );
+  const mobileOpenMonthCards = Object.keys(groupedPendingExpenses).map((monthKey) => {
+      const monthExpenses = groupedPendingExpenses[monthKey] || [];
+      if (monthExpenses.length === 0) return null;
+      const totalMonth = monthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+      const idsInMonth = monthExpenses.filter(exp => !exp.locked).map(exp => exp.id);
+      const allSelected = idsInMonth.length > 0 && idsInMonth.every(id => selectedExpenseIds.includes(id));
+      const partialSelected = idsInMonth.some(id => selectedExpenseIds.includes(id)) && !allSelected;
+      const monthName = formatMonthKey(monthKey);
+
+      return (
+          <button
+              key={monthKey}
+              type="button"
+              onClick={() => setExpandedMonthKey(monthKey)}
+              className="w-full rounded-xl border px-3 py-2 text-left transition"
+              style={{
+                  backgroundColor: withAlpha(selectedCardColor, 0.2),
+                  borderColor: withAlpha(selectedCardColor, 0.35)
+              }}
+          >
+              <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">
+                          {monthName}
+                      </p>
+                      <p className="text-[11px] text-white/70">
+                          {partialSelected ? 'Parcial selecionado' : `${monthExpenses.length} lançamentos pendentes`}
+                      </p>
+                  </div>
+                  <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={(event) => {
+                          event.stopPropagation();
+                          toggleSelectMonth(monthKey);
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                      className="h-4 w-4 shrink-0"
+                      style={{ accentColor: selectedCardColor }}
+                      aria-label={`Selecionar faturas de ${monthName}`}
+                  />
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-white/60">Total em aberto</span>
+                  <span className="text-sm font-bold text-rose-300">
+                      R$ {totalMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+              </div>
+          </button>
+      );
+  });
+  const hasMobileOpenMonthCards = mobileOpenMonthCards.some(Boolean);
+  const invoiceMonthsSheet = isMobile && isInvoiceMonthsSheetOpen ? (
+      <div className="fixed inset-0 z-[1150]">
+          <button
+              type="button"
+              onClick={() => setIsInvoiceMonthsSheetOpen(false)}
+              className="absolute inset-0 bg-black/70"
+              aria-label="Fechar meses em aberto"
+          />
+          <div
+              className="absolute left-0 right-0 rounded-t-3xl border border-white/10 bg-[#0b0b10] text-white shadow-2xl flex flex-col"
+              style={{
+                  bottom: 'var(--mm-mobile-dock-height, 68px)',
+                  maxHeight: 'min(72vh, 560px)'
+              }}
+          >
+              <div className="px-3 pt-2 pb-2 border-b border-white/10">
+                  <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                          <p className="text-sm font-semibold truncate">{selectedCard?.name || 'Faturas em aberto'}</p>
+                          <p className="text-xs text-white/70">
+                              {selectedCard?.brand || 'Cartão'} • {hasMobileOpenMonthCards ? 'Meses em aberto' : 'Sem pendências'}
+                          </p>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => setIsInvoiceMonthsSheetOpen(false)}
+                          className="h-8 w-8 rounded-full bg-white/10 text-white/80 hover:text-white flex items-center justify-center"
+                          aria-label="Fechar meses em aberto"
+                      >
+                          <X size={16} />
+                      </button>
+                  </div>
+              </div>
+              <div className="flex-1 overflow-auto px-3 pt-2 pb-4">
+                  {hasMobileOpenMonthCards ? (
+                      <div className="space-y-2">
+                          {mobileOpenMonthCards}
+                      </div>
+                  ) : (
+                      <div className="rounded-xl border border-dashed border-white/20 px-3 py-3 text-sm text-white/70">
+                          Sem faturas em aberto para este cartão.
+                      </div>
+                  )}
+              </div>
+              <div className="border-t border-white/10 px-3 py-2">
+                  <div className="mb-2 flex items-center justify-between text-[11px] text-white/70">
+                      <span>{selectedExpenseIds.length} selecionados</span>
+                      <span>
+                          Total: R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                  </div>
+                  <button
+                      type="button"
+                      onClick={() => {
+                          if (selectedExpenseIds.length === 0) return;
+                          setIsInvoiceMonthsSheetOpen(false);
+                          setIsPayModalOpen(true);
+                      }}
+                      disabled={selectedExpenseIds.length === 0}
+                      className={`w-full rounded-xl border py-3 text-sm font-semibold transition ${
+                          selectedExpenseIds.length > 0
+                              ? 'border-rose-500/40 bg-rose-600 text-white hover:bg-rose-500'
+                              : 'border-white/15 bg-white/5 text-white/40 cursor-not-allowed'
+                      }`}
+                  >
+                      {selectedExpenseIds.length > 0
+                          ? `Pagar R$ ${selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                          : 'Selecione faturas para pagar'}
+                  </button>
+              </div>
+          </div>
+      </div>
+  ) : null;
 
   const expandedMonthExpenses = expandedMonthKey ? groupedExpenses[expandedMonthKey] || [] : [];
   const expandedMonthTotal = expandedMonthExpenses.reduce((acc, curr) => acc + curr.amount, 0);
@@ -1340,47 +1598,51 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
               ? `Pagar R$ ${selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
               : 'Pagar fatura';
       const mobileHeader = (
-          <div className="space-y-2">
+          <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
                   <div className="h-8 w-8" aria-hidden="true" />
                   <div className="min-w-0 text-center">
                       <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Faturas</p>
-                      <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
+                      <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
                           {selectedCard?.name || 'Selecione um cartão'}
                       </p>
                   </div>
                   <div className="min-w-[32px]" />
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
-                      <p className="text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
-                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+              <div className="grid grid-cols-2 gap-2">
+                  <div className={`${mobileCardRadiusSm} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
+                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
                           R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                   </div>
-                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
-                      <p className="text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
-                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">{selectedExpenseIds.length}</p>
+                  <div className={`${mobileCardRadiusSm} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
+                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{selectedExpenseIds.length}</p>
                   </div>
-                  <button
-                      type="button"
-                      onClick={() => setIsCardsModalOpen(true)}
-                      className={`${mobileCardRadiusSm} border bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center text-white`}
-                      style={{ borderColor: 'var(--mm-view-accent)', backgroundColor: 'var(--mm-view-accent)' }}
-                  >
-                      <p className="text-sm uppercase tracking-wide">Cartões</p>
-                      <p className="text-sm font-semibold">Cadastrados</p>
-                  </button>
               </div>
 
-              <div />
+              <div className="grid grid-cols-1 gap-2">
+                  <button
+                      type="button"
+                      onClick={handleOpenNewCard}
+                      className="w-full rounded-xl mm-mobile-primary-cta text-white font-semibold py-2.5 text-sm shadow-lg transition active:scale-[0.98]"
+                      style={{
+                          borderColor: 'var(--mm-view-accent)',
+                          backgroundColor: 'var(--mm-view-accent)',
+                          boxShadow: '0 10px 20px color-mix(in oklab, var(--mm-view-accent) 25%, transparent)'
+                      }}
+                  >
+                      Novo cartão
+                  </button>
+              </div>
           </div>
       );
 
       return (
           <>
-              <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+              <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
                   <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
                       {headerFill.height > 0 && (
                           <div
@@ -1396,7 +1658,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                               ref={subHeaderRef}
                               className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
-                              <div className="px-3 pb-3 pt-2">
+                              <div className="mm-mobile-subheader-pad mm-mobile-subheader-pad-tight">
                                   {mobileHeader}
                               </div>
                           </div>
@@ -1417,15 +1679,11 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                     </MobileFullWidthSection>
                                 )}
                               </div>
-                              {invoiceListSection && (
-                                  <MobileFullWidthSection contentClassName="px-0 pt-[5px] pb-0">
-                                      {invoiceListSection}
-                                  </MobileFullWidthSection>
-                              )}
                           </div>
                       </div>
                   </div>
               </div>
+              {invoiceMonthsSheet}
               <div
                   className="fixed left-0 right-0 z-40"
                   style={{ bottom: 'var(--mm-mobile-dock-height, 68px)' }}
@@ -1433,15 +1691,15 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-white/95 dark:bg-[#111114]/95 backdrop-blur px-2 pt-1.5 pb-0">
                       <div className="grid grid-cols-2 gap-2">
                           <button
-                              onClick={handleOpenNewCard}
-                              className="rounded-none border border-rose-400/50 bg-rose-950/30 py-3 text-sm font-semibold text-rose-200 hover:bg-rose-900/40 transition"
+                              onClick={() => setIsCardsModalOpen(true)}
+                              className="rounded-xl border border-rose-400/50 bg-rose-950/30 py-3 text-sm font-semibold text-rose-200 hover:bg-rose-900/40 transition"
                           >
-                              Novo cartão
+                              Editar Cartões
                           </button>
                           <button
                               onClick={() => setIsPayModalOpen(true)}
                               disabled={selectedExpenseIds.length === 0}
-                              className={`rounded-none border border-rose-500/40 py-3 text-sm font-semibold transition ${
+                              className={`rounded-xl border border-rose-500/40 py-3 text-sm font-semibold transition ${
                                   selectedExpenseIds.length > 0
                                       ? 'bg-rose-600 text-white hover:bg-rose-500'
                                       : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
@@ -1458,7 +1716,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   }
 
   return (
-    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
+    <div className="h-full min-h-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 flex flex-col">
       {summarySection}
       {mainSection}
       {modals}

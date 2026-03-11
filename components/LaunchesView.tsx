@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowDownUp, ArrowUpCircle, Repeat, ShoppingCart, User } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDownUp, ArrowUpCircle, Repeat, ShoppingCart, SlidersHorizontal, User } from 'lucide-react';
 import { Account, CreditCard, Expense, ExpenseType, ExpenseTypeOption, Income } from '../types';
 import useIsMobile from '../hooks/useIsMobile';
 import MobileFullWidthSection from './mobile/MobileFullWidthSection';
@@ -7,6 +7,7 @@ import MobileTransactionDrawer from './mobile/MobileTransactionDrawer';
 import { getReportSummary } from '../services/reportService';
 
 type LaunchKind = 'all' | 'income' | 'expense';
+type LaunchSort = 'date_desc' | 'amount_desc' | 'amount_asc';
 
 interface LaunchItem {
   id: string;
@@ -65,6 +66,15 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
   const [drawerItem, setDrawerItem] = useState<LaunchItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LaunchItem | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [expenseSubtypeFilter, setExpenseSubtypeFilter] = useState<'all' | ExpenseType>('all');
+  const [sortMode, setSortMode] = useState<LaunchSort>('date_desc');
+  const subHeaderRef = useRef<HTMLDivElement | null>(null);
+  const firstSectionRef = useRef<HTMLDivElement | null>(null);
+  const [subHeaderHeight, setSubHeaderHeight] = useState(0);
+  const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
+  const [topAdjust, setTopAdjust] = useState(0);
   const expenseTypeColorById = useMemo(() => {
     const map = new Map<ExpenseType, string>();
     (expenseTypeOptions || []).forEach(option => {
@@ -141,7 +151,29 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
       .sort((a, b) => b.timestamp - a.timestamp);
   }, [expenses, incomes, creditCards, viewDate]);
 
-  const visibleItems = launchItems.filter(item => (filter === 'all' ? true : item.kind === filter));
+  const visibleItems = useMemo(() => {
+    const normalizedSearch = searchText.trim().toLowerCase();
+    const byFilter = launchItems.filter(item => (filter === 'all' ? true : item.kind === filter));
+    const bySubtype =
+      expenseSubtypeFilter === 'all'
+        ? byFilter
+        : byFilter.filter(item => item.kind === 'expense' && item.subtype === expenseSubtypeFilter);
+    const bySearch = normalizedSearch
+      ? bySubtype.filter(item => item.title.toLowerCase().includes(normalizedSearch))
+      : bySubtype;
+
+    const sorted = [...bySearch];
+    if (sortMode === 'amount_desc') {
+      sorted.sort((a, b) => b.amount - a.amount);
+      return sorted;
+    }
+    if (sortMode === 'amount_asc') {
+      sorted.sort((a, b) => a.amount - b.amount);
+      return sorted;
+    }
+    sorted.sort((a, b) => b.timestamp - a.timestamp);
+    return sorted;
+  }, [expenseSubtypeFilter, filter, launchItems, searchText, sortMode]);
   const selectableIds = visibleItems.filter(item => !item.locked).map(item => item.id);
   const selectedCount = selectedIds.length;
   const displayCount = selectedCount > 0 ? selectedCount : visibleItems.length;
@@ -167,16 +199,61 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
   }, [selectableIds.join('|')]);
 
   useEffect(() => {
-    if (!isMobile || typeof window === 'undefined') return;
-    const handleDockClick = () => {
+      if (!isMobile || typeof window === 'undefined') return;
+      const handleDockClick = () => {
       setDrawerItem(null);
       setDeleteTarget(null);
       setBulkDeleteOpen(false);
       setSelectedIds([]);
       setFilter('all');
+      setIsFiltersOpen(false);
     };
     window.addEventListener('mm:mobile-dock-click', handleDockClick);
     return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+  }, [isMobile]);
+
+  useLayoutEffect(() => {
+    const headerNode = subHeaderRef.current;
+    const sectionNode = firstSectionRef.current;
+    if (!headerNode || !sectionNode) return;
+
+    const measureGap = () => {
+      const headerBottom = headerNode.getBoundingClientRect().bottom;
+      const sectionTop = sectionNode.getBoundingClientRect().top;
+      const gap = Math.round(sectionTop - headerBottom);
+      const desired = 0;
+      setTopAdjust((prev) => {
+        const nextAdjust = Math.max(0, gap - desired + prev);
+        return prev === nextAdjust ? prev : nextAdjust;
+      });
+    };
+
+    measureGap();
+    window.addEventListener('resize', measureGap);
+    return () => window.removeEventListener('resize', measureGap);
+  }, [subHeaderHeight, topAdjust]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const node = subHeaderRef.current;
+    if (!node) return;
+
+    const updateMetrics = () => {
+      const rect = node.getBoundingClientRect();
+      const height = Math.round(rect.height);
+      setSubHeaderHeight((prev) => (prev === height ? prev : height));
+      const fillHeight = Math.max(0, Math.round(rect.top));
+      setHeaderFill((prev) => (prev.top === 0 && prev.height === fillHeight ? prev : { top: 0, height: fillHeight }));
+    };
+
+    updateMetrics();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateMetrics) : null;
+    observer?.observe(node);
+    window.addEventListener('resize', updateMetrics);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateMetrics);
+    };
   }, [isMobile]);
 
   const toggleSelectAll = () => {
@@ -283,6 +360,108 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
     : drawerExpense
     ? `R$ ${drawerExpense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
     : undefined;
+  const activeFiltersCount =
+    (searchText.trim() ? 1 : 0) +
+    (expenseSubtypeFilter !== 'all' ? 1 : 0) +
+    (sortMode !== 'date_desc' ? 1 : 0);
+
+  const clearAdvancedFilters = () => {
+    setSearchText('');
+    setExpenseSubtypeFilter('all');
+    setSortMode('date_desc');
+  };
+
+  const mobileHeader = (
+    <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
+      <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
+        <div className="h-8 w-8" aria-hidden="true" />
+        <div className="min-w-0 text-center">
+          <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Lançamentos</p>
+        </div>
+        <div className="h-8 w-8" aria-hidden="true" />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-[#101014]/70 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Visão Caixa</p>
+          <div className="mt-2 flex items-center justify-between text-[11px]">
+            <span className="text-zinc-500 dark:text-zinc-400">Entrou</span>
+            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+              {formatCurrencyCompact(useSelectedTotals ? selectedTotals.income : caixaSummary.totalReceitas)}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[11px]">
+            <span className="text-zinc-500 dark:text-zinc-400">Saiu</span>
+            <span className="font-semibold text-rose-500 dark:text-rose-400">
+              {formatCurrencyCompact(useSelectedTotals ? selectedTotals.expense : caixaSummary.totalDespesas)}
+            </span>
+          </div>
+        </div>
+        <div className="rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-[#101014]/70 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Visão Competência</p>
+          <div className="mt-2 flex items-center justify-between text-[11px]">
+            <span className="text-zinc-500 dark:text-zinc-400">Entrou</span>
+            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+              {formatCurrencyCompact(useSelectedTotals ? selectedTotals.income : competenciaSummary.totalReceitas)}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[11px]">
+            <span className="text-zinc-500 dark:text-zinc-400">Saiu</span>
+            <span className="font-semibold text-rose-500 dark:text-rose-400">
+              {formatCurrencyCompact(useSelectedTotals ? selectedTotals.expense : competenciaSummary.totalDespesas)}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {([
+          { key: 'all', label: 'Todos' },
+          { key: 'income', label: 'Entradas' },
+          { key: 'expense', label: 'Saídas' }
+        ] as const).map(option => {
+          const isActive = filter === option.key;
+          const activeClass =
+            option.key === 'all'
+              ? 'border-amber-400/80 bg-amber-400 text-zinc-900'
+              : option.key === 'income'
+              ? 'border-emerald-500/80 bg-emerald-600 text-white'
+              : 'border-rose-500/80 bg-rose-600 text-white';
+          const inactiveClass =
+            option.key === 'all'
+              ? 'border-amber-300/35 text-amber-500 dark:text-amber-300 hover:border-amber-300/60'
+              : option.key === 'income'
+              ? 'border-emerald-400/30 text-emerald-600 dark:text-emerald-300 hover:border-emerald-400/60'
+              : 'border-rose-400/30 text-rose-600 dark:text-rose-300 hover:border-rose-400/60';
+          return (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => setFilter(option.key)}
+              className={`rounded-xl border px-2 py-2 text-[11px] font-semibold transition ${
+                isActive
+                  ? activeClass
+                  : `bg-transparent ${inactiveClass}`
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={() => setIsFiltersOpen(true)}
+        className="w-full rounded-xl border border-indigo-200/70 dark:border-indigo-700/60 bg-indigo-50/90 dark:bg-indigo-900/20 px-3 py-2 text-[11px] font-semibold text-indigo-700 dark:text-indigo-200 transition hover:bg-indigo-100 dark:hover:bg-indigo-900/30 flex items-center justify-center gap-2"
+      >
+        <SlidersHorizontal size={14} />
+        Filtros
+        {activeFiltersCount > 0 && (
+          <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] text-white">
+            {activeFiltersCount}
+          </span>
+        )}
+      </button>
+    </div>
+  );
 
   if (!isMobile) {
     return (
@@ -299,84 +478,39 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
     <>
       <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
         <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
+          {headerFill.height > 0 && (
+            <div
+              className="fixed left-0 right-0 z-20 bg-white dark:bg-[#151517] backdrop-blur-xl"
+              style={{ top: headerFill.top, height: headerFill.height }}
+            />
+          )}
           <div
-            className="absolute left-0 right-0 bottom-0 overflow-hidden"
+            className="fixed left-0 right-0 z-30"
+            style={{ top: 'var(--mm-mobile-top, 0px)' }}
+          >
+            <div
+              ref={subHeaderRef}
+              className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
+            >
+              <div className="mm-mobile-subheader-pad mm-mobile-subheader-pad-tight">
+                {mobileHeader}
+              </div>
+            </div>
+          </div>
+          <div
+            className="h-full overflow-y-auto px-0 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+72px)]"
             style={{
-              top: 'max(0px, calc(var(--mm-mobile-top, 0px) - 70px))'
+              paddingTop: subHeaderHeight
+                ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px - ${topAdjust}px)`
+                : 'calc(var(--mm-mobile-top, 0px))'
             }}
           >
-            <div className="h-full overflow-y-auto flex flex-col">
-              <MobileFullWidthSection contentClassName="px-4 py-3" backgroundClassName="bg-white/90 dark:bg-[#151517]/90">
-                <div className="space-y-3">
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-zinc-900 dark:text-white">Lançamentos</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-[#101014]/70 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Visão Caixa</p>
-                      <div className="mt-2 flex items-center justify-between text-[11px]">
-                        <span className="text-zinc-500 dark:text-zinc-400">Entrou</span>
-                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                        {formatCurrencyCompact(useSelectedTotals ? selectedTotals.income : caixaSummary.totalReceitas)}
-                      </span>
-                      </div>
-                      <div className="mt-1 flex items-center justify-between text-[11px]">
-                        <span className="text-zinc-500 dark:text-zinc-400">Saiu</span>
-                      <span className="font-semibold text-rose-500 dark:text-rose-400">
-                        {formatCurrencyCompact(useSelectedTotals ? selectedTotals.expense : caixaSummary.totalDespesas)}
-                      </span>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-[#101014]/70 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Visão Competência</p>
-                      <div className="mt-2 flex items-center justify-between text-[11px]">
-                        <span className="text-zinc-500 dark:text-zinc-400">Entrou</span>
-                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                        {formatCurrencyCompact(useSelectedTotals ? selectedTotals.income : competenciaSummary.totalReceitas)}
-                      </span>
-                      </div>
-                      <div className="mt-1 flex items-center justify-between text-[11px]">
-                        <span className="text-zinc-500 dark:text-zinc-400">Saiu</span>
-                      <span className="font-semibold text-rose-500 dark:text-rose-400">
-                        {formatCurrencyCompact(useSelectedTotals ? selectedTotals.expense : competenciaSummary.totalDespesas)}
-                      </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </MobileFullWidthSection>
-
-              <div className="px-4 py-3">
-                <div className="grid grid-cols-3 gap-2">
-                  {([
-                    { key: 'all', label: 'Todos' },
-                    { key: 'income', label: 'Entradas' },
-                    { key: 'expense', label: 'Saídas' }
-                  ] as const).map(option => {
-                    const isActive = filter === option.key;
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        onClick={() => setFilter(option.key)}
-                        className={`rounded-xl border px-2 py-2 text-[11px] font-semibold transition ${
-                          isActive
-                            ? 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-[#151517] text-zinc-900 dark:text-white'
-                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <MobileFullWidthSection
-                className="flex-1"
-                contentClassName="px-4 py-3 flex flex-col h-full pb-[calc(env(safe-area-inset-bottom)+88px)]"
-                backgroundClassName="bg-white/90 dark:bg-[#151517]/90"
-              >
+            <div className="space-y-0">
+              <div ref={firstSectionRef}>
+                <MobileFullWidthSection
+                  contentClassName="mm-mobile-section-pad mm-mobile-section-pad-tight-top pb-3 flex flex-col"
+                  backgroundClassName="bg-white/90 dark:bg-[#151517]/90"
+                >
                 <div className="mb-2 flex items-center justify-between text-xs font-semibold text-zinc-400">
                   <button
                     type="button"
@@ -455,11 +589,12 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
                     })}
                   </div>
                 )}
-                <div className="flex-1" aria-hidden="true" />
+                <div className="h-1" aria-hidden="true" />
               </MobileFullWidthSection>
             </div>
           </div>
         </div>
+      </div>
       </div>
 
       <MobileTransactionDrawer
@@ -539,6 +674,144 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
                 className="flex-1 py-2 rounded-xl font-semibold text-white bg-red-600"
               >
                 Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isFiltersOpen && (
+        <div className="fixed inset-0 z-[1450]">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setIsFiltersOpen(false)}
+            aria-label="Fechar filtros"
+          />
+          <div
+            className="absolute left-0 right-0 rounded-t-3xl border border-zinc-200/60 dark:border-zinc-700/60 bg-white dark:bg-[#111114] px-3 pt-3 pb-3 shadow-2xl"
+            style={{ bottom: 'var(--mm-mobile-dock-height, 68px)' }}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-zinc-900 dark:text-white">Filtros</p>
+              <button
+                type="button"
+                onClick={() => setIsFiltersOpen(false)}
+                className="text-xs font-semibold text-zinc-500 dark:text-zinc-400"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Buscar</label>
+                <input
+                  type="text"
+                  value={searchText}
+                  onChange={(event) => setSearchText(event.target.value)}
+                  placeholder="Pesquisar lançamento..."
+                  className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                />
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Tipo</p>
+                <div className="mt-1 grid grid-cols-3 gap-2">
+                  {([
+                    { key: 'all', label: 'Todos' },
+                    { key: 'income', label: 'Entradas' },
+                    { key: 'expense', label: 'Saídas' }
+                  ] as const).map(option => {
+                    const active = filter === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setFilter(option.key)}
+                        className={`rounded-xl border px-2 py-2 text-[11px] font-semibold transition ${
+                          active
+                            ? 'border-indigo-500/70 bg-indigo-600 text-white'
+                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Tipo de despesa</p>
+                <div className="mt-1 grid grid-cols-2 gap-2">
+                  {([
+                    { key: 'all', label: 'Todas' },
+                    { key: 'fixed', label: 'Fixas' },
+                    { key: 'personal', label: 'Pessoais' },
+                    { key: 'variable', label: 'Variáveis' }
+                  ] as const).map(option => {
+                    const active = expenseSubtypeFilter === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setExpenseSubtypeFilter(option.key)}
+                        className={`rounded-xl border px-2 py-2 text-[11px] font-semibold transition ${
+                          active
+                            ? 'border-rose-500/60 bg-rose-600 text-white'
+                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Ordenação</p>
+                <div className="mt-1 grid grid-cols-3 gap-2">
+                  {([
+                    { key: 'date_desc', label: 'Recentes' },
+                    { key: 'amount_desc', label: 'Maior valor' },
+                    { key: 'amount_asc', label: 'Menor valor' }
+                  ] as const).map(option => {
+                    const active = sortMode === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setSortMode(option.key)}
+                        className={`rounded-xl border px-2 py-2 text-[11px] font-semibold transition ${
+                          active
+                            ? 'border-emerald-500/60 bg-emerald-600 text-white'
+                            : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={clearAdvancedFilters}
+                className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-2 text-sm font-semibold text-zinc-600 dark:text-zinc-300"
+              >
+                Limpar
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFiltersOpen(false)}
+                className="rounded-xl border border-indigo-500/40 bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+              >
+                Aplicar
               </button>
             </div>
           </div>

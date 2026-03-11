@@ -1,0 +1,127 @@
+{
+  "baseUrl": "http://127.0.0.1:4177",
+  "loginEmail": "qa.screenshots.bot@example.com",
+  "generatedAt": "2026-03-06T19:34:25.090Z",
+  "tag": "line-gap-check",
+  "outDir": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z",
+  "items": [
+    {
+      "id": "home",
+      "labelRegex": {},
+      "screen": "dashboard",
+      "text": {},
+      "file": "01-home.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z/01-home.png",
+      "metrics": {
+        "viewportH": 844,
+        "mmMobileTop": 63,
+        "subHeaderTop": null,
+        "subHeaderHeight": null,
+        "contentTop": null,
+        "ctaTop": 226,
+        "ctaHeight": 40
+      }
+    },
+    {
+      "id": "launches",
+      "labelRegex": {},
+      "text": {},
+      "file": "02-launches.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z/02-launches.png",
+      "metrics": {
+        "viewportH": 844,
+        "mmMobileTop": 63,
+        "subHeaderTop": 63,
+        "subHeaderHeight": 197,
+        "contentTop": 262,
+        "ctaTop": null,
+        "ctaHeight": null
+      }
+    },
+    {
+      "id": "accounts",
+      "labelRegex": {},
+      "screen": "accounts",
+      "text": {},
+      "file": "03-accounts.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z/03-accounts.png",
+      "metrics": {
+        "viewportH": 844,
+        "mmMobileTop": 63,
+        "subHeaderTop": 63,
+        "subHeaderHeight": 197,
+        "contentTop": 262,
+        "ctaTop": 161,
+        "ctaHeight": 40
+      }
+    },
+    {
+      "id": "yields",
+      "labelRegex": {},
+      "screen": "yields",
+      "text": {},
+      "file": "04-yields.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z/04-yields.png",
+      "metrics": {
+        "viewportH": 844,
+        "mmMobileTop": 63,
+        "subHeaderTop": 63,
+        "subHeaderHeight": 197,
+        "contentTop": 262,
+        "ctaTop": 161,
+        "ctaHeight": 40
+      }
+    },
+    {
+      "id": "invoices",
+      "labelRegex": {},
+      "screen": "invoices",
+      "text": {},
+      "file": "05-invoices.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z/05-invoices.png",
+      "metrics": {
+        "viewportH": 844,
+        "mmMobileTop": 63,
+        "subHeaderTop": 63,
+        "subHeaderHeight": 197,
+        "contentTop": null,
+        "ctaTop": 161,
+        "ctaHeight": 40
+      }
+    },
+    {
+      "id": "reports",
+      "labelRegex": {},
+      "screen": "reports",
+      "text": {},
+      "file": "06-reports.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z/06-reports.png",
+      "metrics": {
+        "viewportH": 844,
+        "mmMobileTop": 63,
+        "subHeaderTop": 63,
+        "subHeaderHeight": 197,
+        "contentTop": 262,
+        "ctaTop": null,
+        "ctaHeight": null
+      }
+    },
+    {
+      "id": "agenda",
+      "labelRegex": {},
+      "screen": "agenda",
+      "text": {},
+      "file": "07-agenda.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-line-gap-check-2026-03-06T19-34-25-089Z/07-agenda.png",
+      "metrics": {
+        "viewportH": 844,
+        "mmMobileTop": 63,
+        "subHeaderTop": 63,
+        "subHeaderHeight": 197,
+        "contentTop": 262,
+        "ctaTop": 161,
+        "ctaHeight": 40
+      }
+    }
+  ]
+}

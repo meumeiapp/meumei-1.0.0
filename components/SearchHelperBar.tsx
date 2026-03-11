@@ -56,7 +56,21 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   const [assistantSuggestions, setAssistantSuggestions] = useState<string[]>([]);
   const [currentTip, setCurrentTip] = useState<HelperTip | null>(() => pickHelperTip(signals));
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [assistantCollapsed, setAssistantCollapsed] = useState(false);
+  const [assistantCollapsed, setAssistantCollapsed] = useState(true);
+  const assistantCollapsedRef = useRef(true);
+  const assistantCollapsedBeforeTourRef = useRef<boolean | null>(null);
+  const [floatingAssistantAnchor, setFloatingAssistantAnchor] = useState<{
+    right: number;
+    bottomCollapsed: number;
+    bottomExpanded: number;
+    widthCollapsed: number;
+    widthExpanded: number;
+  } | null>(null);
+  const [floatingExpandOrigin, setFloatingExpandOrigin] = useState<{
+    right: number;
+    bottom: number;
+  } | null>(null);
+  const floatingInitializedRef = useRef(false);
 
   const isDesktop = variant === 'desktop';
   const isSubheader = appearance === 'subheader';
@@ -125,6 +139,86 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
     if (effectiveMode !== 'assistant') return;
     inputRef.current?.focus();
   }, [effectiveMode]);
+
+  useEffect(() => {
+    assistantCollapsedRef.current = assistantCollapsed;
+  }, [assistantCollapsed]);
+
+  useEffect(() => {
+    if (!showFloatingAssistant) {
+      floatingInitializedRef.current = false;
+      setFloatingExpandOrigin(null);
+      return;
+    }
+    if (floatingInitializedRef.current) return;
+    setAssistantCollapsed(true);
+    floatingInitializedRef.current = true;
+  }, [showFloatingAssistant]);
+
+  useEffect(() => {
+    if (!showFloatingAssistant || typeof window === 'undefined') return;
+
+    const measureFloatingAnchor = () => {
+      const widthExpanded = Math.max(300, Math.min(380, Math.round(window.innerWidth * 0.26)));
+      const widthCollapsed = Math.max(190, Math.min(220, Math.round(window.innerWidth * 0.16)));
+      const clampedRight = Math.max(12, Math.min(18, window.innerWidth - widthExpanded - 12));
+      const fixedBottom = 0;
+      const next = {
+        right: clampedRight,
+        bottomCollapsed: fixedBottom,
+        bottomExpanded: fixedBottom,
+        widthCollapsed,
+        widthExpanded
+      };
+      setFloatingAssistantAnchor(prev => {
+        if (
+          prev &&
+          prev.right === next.right &&
+          prev.bottomCollapsed === next.bottomCollapsed &&
+          prev.bottomExpanded === next.bottomExpanded &&
+          prev.widthCollapsed === next.widthCollapsed &&
+          prev.widthExpanded === next.widthExpanded
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    };
+
+    measureFloatingAnchor();
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measureFloatingAnchor) : null;
+    resizeObserver?.observe(document.body);
+    window.addEventListener('resize', measureFloatingAnchor);
+    window.visualViewport?.addEventListener('resize', measureFloatingAnchor);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', measureFloatingAnchor);
+      window.visualViewport?.removeEventListener('resize', measureFloatingAnchor);
+    };
+  }, [showFloatingAssistant]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleTourCollapse = () => {
+      if (assistantCollapsedBeforeTourRef.current === null) {
+        assistantCollapsedBeforeTourRef.current = assistantCollapsedRef.current;
+      }
+      setAssistantCollapsed(true);
+    };
+    const handleTourRestore = () => {
+      if (assistantCollapsedBeforeTourRef.current === null) return;
+      setAssistantCollapsed(assistantCollapsedBeforeTourRef.current);
+      assistantCollapsedBeforeTourRef.current = null;
+    };
+
+    window.addEventListener('mm:tour-helper-collapse', handleTourCollapse);
+    window.addEventListener('mm:tour-helper-restore', handleTourRestore);
+    return () => {
+      window.removeEventListener('mm:tour-helper-collapse', handleTourCollapse);
+      window.removeEventListener('mm:tour-helper-restore', handleTourRestore);
+    };
+  }, []);
 
   const handleModeChange = (next: 'search' | 'assistant') => {
     if (isFloatingAssistant) return;
@@ -207,6 +301,24 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
   const handleAssistantClose = () => {
     setAssistantCollapsed(false);
     onAssistantClose?.();
+  };
+
+  const handleFloatingAssistantExpand = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (typeof window !== 'undefined') {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const nextRight = Math.max(12, Math.round(window.innerWidth - rect.right));
+      const nextBottom = Math.max(12, Math.round(window.innerHeight - rect.bottom));
+      setFloatingExpandOrigin({ right: nextRight, bottom: nextBottom });
+    }
+    setAssistantCollapsed(false);
+  };
+
+  const handleRestartFirstAccessTour = () => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('mm:first-access-tour-restart'));
+    setAssistantError('');
+    setAssistantAnswer('Guia de primeiro acesso reiniciado com sucesso.');
+    setAssistantSuggestions([]);
   };
 
   return (
@@ -343,14 +455,27 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
         (typeof document !== 'undefined'
           ? createPortal(
               <div
-                className="fixed right-6 z-[1100] w-[min(92vw,360px)]"
-                style={{ bottom: desktopFooterOffset }}
+                className="fixed z-[1100] transition-all duration-300 ease-out"
+                style={{
+                  right: floatingAssistantAnchor
+                    ? `${assistantCollapsed ? floatingAssistantAnchor.right : floatingExpandOrigin?.right ?? floatingAssistantAnchor.right}px`
+                    : '12px',
+                  left: 'auto',
+                  width: floatingAssistantAnchor
+                    ? `${assistantCollapsed ? floatingAssistantAnchor.widthCollapsed : floatingAssistantAnchor.widthExpanded}px`
+                    : assistantCollapsed
+                      ? '208px'
+                      : 'min(92vw, 360px)',
+                  bottom: floatingAssistantAnchor
+                    ? `${assistantCollapsed ? floatingAssistantAnchor.bottomCollapsed : floatingExpandOrigin?.bottom ?? floatingAssistantAnchor.bottomExpanded}px`
+                    : desktopFooterOffset
+                }}
               >
                 {assistantCollapsed ? (
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setAssistantCollapsed(false)}
+                      onClick={handleFloatingAssistantExpand}
                       className="flex-1 rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white/95 dark:bg-[#0f0f12] px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-white/80 shadow-2xl flex items-center justify-between"
                       aria-label="Abrir ajudante"
                     >
@@ -453,6 +578,15 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                           {assistantAnswer && <p className="whitespace-pre-line">{assistantAnswer}</p>}
                         </div>
                       )}
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={handleRestartFirstAccessTour}
+                          className="w-full rounded-full border border-cyan-300/40 bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-500/20 dark:border-cyan-400/30 dark:text-cyan-300"
+                        >
+                          Reiniciar guia de primeiro acesso
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

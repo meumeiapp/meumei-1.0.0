@@ -1,0 +1,15 @@
+{
+  "baseUrl": "http://127.0.0.1:4176",
+  "generatedAt": "2026-03-06T15:13:40.038Z",
+  "outDir": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-swipe-debug-2026-03-06T15-13-35-136Z",
+  "midState": {
+    "transform": "translate3d(0px, 0px, 0px)",
+    "transition": null,
+    "indicatorText": null
+  },
+  "afterState": {
+    "transform": "translate3d(0px, 0px, 0px)",
+    "transition": null,
+    "indicatorText": null
+  }
+}

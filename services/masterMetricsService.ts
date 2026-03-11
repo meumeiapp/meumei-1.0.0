@@ -11,6 +11,20 @@ export type MasterMetrics = {
   betaKeysUsed: number;
   stripeAnnualCount: number;
   stripeMonthlyCount: number;
+  userGrowthMonthly?: Array<{
+    periodKey: string;
+    label: string;
+    newUsers: number;
+    cumulativeUsers: number;
+  }>;
+  userGrowthAnnual?: Array<{
+    periodKey: string;
+    label: string;
+    newUsers: number;
+    cumulativeUsers: number;
+  }>;
+  growthCurrentMonthKey?: string;
+  growthCurrentYearKey?: string;
   lastUpdatedAtMs?: number | null;
 };
 

@@ -131,7 +131,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
       const headerBottom = headerNode.getBoundingClientRect().bottom;
       const sectionTop = sectionNode.getBoundingClientRect().top;
       const gap = Math.round(sectionTop - headerBottom);
-      const desired = 5;
+      const desired = 0;
       const nextAdjust = Math.max(0, gap - desired + topAdjust);
       setTopAdjust(prev => (prev === nextAdjust ? prev : nextAdjust));
     };
@@ -186,7 +186,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
     new Date(`${value}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 
   const mobileHeader = (
-    <div className="space-y-1.5">
+    <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
       <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
         <div className="h-8 w-8" aria-hidden="true" />
         <div className="min-w-0 text-center">
@@ -198,20 +198,20 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
         <div className="min-w-[32px]" />
       </div>
 
-      <div className="grid grid-cols-3 gap-1.5">
-        <div className="rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
           <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Patrimônio</p>
           <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
             {formatCurrency(totalInvested)}
           </p>
         </div>
-        <div className="rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
+        <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
           <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Mês</p>
           <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
             {formatCurrency(monthlyTotal)}
           </p>
         </div>
-        <div className="rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
+        <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
           <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Variação</p>
           <p
             className={`text-[12px] font-semibold truncate ${
@@ -233,7 +233,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
           <button
             type="button"
             onClick={onOpenAudit}
-            className="flex items-center justify-center gap-2 rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-3 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+            className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-3 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
           >
             <History size={14} />
             Auditoria
@@ -242,7 +242,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
         <button
           type="button"
           onClick={onAddYield}
-          className="w-full rounded-none bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 text-sm flex items-center justify-center gap-2"
+          className="w-full rounded-xl mm-mobile-primary-cta bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-indigo-900/20 transition active:scale-[0.98] flex items-center justify-center gap-2"
         >
           Novo Rendimento
         </button>
@@ -251,7 +251,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
   );
 
   return (
-    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+    <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
       <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
         {headerFill.height > 0 && (
           <div
@@ -267,7 +267,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
             ref={subHeaderRef}
             className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
           >
-            <div className="px-3 pb-0 pt-2">
+            <div className="mm-mobile-subheader-pad mm-mobile-subheader-pad-tight">
               {mobileHeader}
             </div>
           </div>
@@ -282,7 +282,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
         >
           <div className="space-y-0">
             <div ref={firstSectionRef}>
-              <MobileFullWidthSection contentClassName="px-3 pt-[5px] pb-3">
+              <MobileFullWidthSection contentClassName="mm-mobile-section-pad mm-mobile-section-pad-tight-top">
                 <div>
                   <div className="flex items-center justify-between">
                     <div>
@@ -327,7 +327,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
 
 
 
-            <MobileFullWidthSection contentClassName="px-3 py-3" withDivider={false}>
+            <MobileFullWidthSection contentClassName="mm-mobile-section-pad" withDivider={false}>
               <div ref={historyRef}>
                 <p className="text-sm font-semibold text-zinc-900 dark:text-white">Detalhamento por conta</p>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Toque para ver detalhes.</p>
@@ -445,14 +445,14 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
               <button
                 type="button"
                 onClick={onOpenCalculator}
-                className="w-full min-h-[44px] flex items-center justify-center rounded-none border border-indigo-400/50 bg-indigo-950/30 py-3 text-sm font-semibold text-indigo-200 hover:bg-indigo-900/40 transition"
+                className="w-full rounded-xl border border-indigo-400/50 bg-indigo-950/30 py-3 text-sm font-semibold text-indigo-200 hover:bg-indigo-900/40 transition"
               >
                 Simular
               </button>
               <button
                 type="button"
                 onClick={onOpenGoal}
-                className="w-full min-h-[44px] flex items-center justify-center rounded-none border border-indigo-500/40 py-3 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
+                className="w-full rounded-xl border border-indigo-500/40 py-3 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
               >
                 Meta
               </button>

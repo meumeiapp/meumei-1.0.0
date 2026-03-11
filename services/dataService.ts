@@ -16,7 +16,7 @@ import {
     serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { Account, Expense, Income, CreditCard, CompanyInfo, LicenseRecord, LockedReason, AgendaItem } from '../types';
+import { Account, Expense, Income, CreditCard, CompanyInfo, LicenseRecord, LockedReason, AgendaItem, Transfer } from '../types';
 import { normalizeExpenseStatus, normalizeIncomeStatus } from '../utils/statusUtils';
 import { logPermissionDenied } from '../utils/firestoreLogger';
 import { guardUserPath } from '../utils/pathGuard';
@@ -29,9 +29,11 @@ const COLLECTIONS = {
     ACCOUNTS: 'accounts',
     EXPENSES: 'expenses',
     INCOMES: 'incomes',
+    TRANSFERS: 'transfers',
     CREDIT_CARDS: 'credit_cards',
     INVOICES: 'invoices',
-    AGENDA: 'agenda'
+    AGENDA: 'agenda',
+    FEEDBACK_MESSAGES: 'feedback_messages'
 };
 
 type BalanceHistoryEntry = NonNullable<Account['balanceHistory']>[number];
@@ -86,6 +88,13 @@ const toNumber = (value: unknown): number | null => {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+};
+
+const normalizeTransferStatus = (value: unknown): Transfer['status'] => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'pending') return 'pending';
+    if (normalized === 'canceled' || normalized === 'cancelled') return 'canceled';
+    return 'completed';
 };
 
 const decryptNumberSafe = async (licenseId: string, encrypted: string, fieldName: string) => {
@@ -158,6 +167,9 @@ export const getExpensesCollectionRef = (licenseId: string) =>
 export const getIncomesCollectionRef = (licenseId: string) =>
     collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.INCOMES);
 
+export const getTransfersCollectionRef = (licenseId: string) =>
+    collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.TRANSFERS);
+
 export const getAgendaCollectionRef = (licenseId: string) =>
     collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.AGENDA);
 
@@ -166,6 +178,9 @@ export const getInvoicesCollectionRef = (licenseId: string) =>
 
 export const getCreditCardsCollectionRef = (licenseId: string) =>
     collection(db, COLLECTIONS.LICENSES, licenseId, COLLECTIONS.CREDIT_CARDS);
+
+export const getFeedbackMessagesCollectionRef = (uid: string) =>
+    collection(db, COLLECTIONS.LICENSES, uid, COLLECTIONS.FEEDBACK_MESSAGES);
 
 const licenseCollectionDoc = (licenseId: string, collectionName: string, docId: string) => {
     return doc(db, COLLECTIONS.LICENSES, licenseId, collectionName, docId);
@@ -502,6 +517,95 @@ const decryptIncomeDoc = async (
     return { id: docSnap.id, ...(rest as Income), status: normalizedStatus, amount };
 };
 
+const decryptTransferDoc = async (
+    licenseId: string,
+    licenseEpoch: number,
+    docSnap: Awaited<ReturnType<typeof getDocs>>['docs'][number]
+): Promise<Transfer> => {
+    const data = docSnap.data() as Record<string, any>;
+    const ref = docSnap.ref;
+    const itemEpoch = typeof data.cryptoEpoch === 'number' ? data.cryptoEpoch : 0;
+    if (itemEpoch !== licenseEpoch) {
+        logEpochMismatch({ entity: 'transfer', id: docSnap.id, itemEpoch, licenseEpoch });
+        const { amountEncrypted: _ae, ...rest } = data;
+        return {
+            id: docSnap.id,
+            ...(rest as Transfer),
+            fromAccountId:
+                typeof data.fromAccountId === 'string'
+                    ? data.fromAccountId
+                    : (typeof data.sourceAccountId === 'string' ? data.sourceAccountId : ''),
+            toAccountId:
+                typeof data.toAccountId === 'string'
+                    ? data.toAccountId
+                    : (typeof data.destinationAccountId === 'string' ? data.destinationAccountId : ''),
+            status: normalizeTransferStatus(rest.status),
+            amount: 0,
+            locked: true,
+            lockedReason: 'epoch_mismatch'
+        };
+    }
+
+    const amountEncrypted = typeof data.amountEncrypted === 'string' ? data.amountEncrypted : null;
+    const amountPlain = toNumber(data.amount);
+    let amount = 0;
+    let lockedReason: LockedReason | undefined;
+
+    if (amountEncrypted) {
+        const result = await decryptNumberSafe(licenseId, amountEncrypted, 'transfers.amount');
+        if (!result.ok) {
+            amount = 0;
+            lockedReason = result.reason;
+        } else {
+            amount = result.value;
+            if (data.amount !== undefined) {
+                await setDoc(ref, { amount: deleteField(), updatedAt: serverTimestamp() }, { merge: true });
+                console.info('[crypto][migrate]', { path: ref.path, field: 'amount' });
+            }
+        }
+    } else if (amountPlain !== null) {
+        const encryptedResult = await encryptNumberSafe(licenseId, amountPlain, 'transfers.amount');
+        if (!encryptedResult.ok) {
+            amount = 0;
+            lockedReason = 'decrypt_failed';
+        } else {
+            amount = amountPlain;
+            await setDoc(
+                ref,
+                { amountEncrypted: encryptedResult.value, amount: deleteField(), updatedAt: serverTimestamp(), cryptoEpoch: licenseEpoch },
+                { merge: true }
+            );
+            console.info('[crypto][migrate]', { path: ref.path, field: 'amount' });
+        }
+    }
+
+    const { amountEncrypted: _ae, ...rest } = data;
+    const normalized: Transfer = {
+        id: docSnap.id,
+        ...(rest as Transfer),
+        fromAccountId:
+            typeof data.fromAccountId === 'string'
+                ? data.fromAccountId
+                : (typeof data.sourceAccountId === 'string' ? data.sourceAccountId : ''),
+        toAccountId:
+            typeof data.toAccountId === 'string'
+                ? data.toAccountId
+                : (typeof data.destinationAccountId === 'string' ? data.destinationAccountId : ''),
+        status: normalizeTransferStatus(rest.status),
+        amount
+    };
+
+    if (lockedReason) {
+        return {
+            ...normalized,
+            locked: true,
+            lockedReason
+        };
+    }
+
+    return normalized;
+};
+
 const buildAccountPayload = async (licenseId: string, licenseEpoch: number, acc: Account) => {
     const payload: Record<string, any> = { ...acc, licenseId };
     delete payload.locked;
@@ -602,6 +706,26 @@ const buildIncomePayload = async (licenseId: string, licenseEpoch: number, inc: 
     const amount = toNumber(inc.amount);
     if (amount !== null) {
         const encryptedResult = await encryptNumberSafe(licenseId, amount, 'incomes.amount');
+        if (!encryptedResult.ok) {
+            return null;
+        }
+        payload.amountEncrypted = encryptedResult.value;
+        delete payload.amount;
+    }
+    return sanitizeData(payload);
+};
+
+const buildTransferPayload = async (licenseId: string, licenseEpoch: number, transfer: Transfer) => {
+    const payload: Record<string, any> = { ...transfer, licenseId };
+    delete payload.locked;
+    delete payload.lockedReason;
+    payload.cryptoEpoch = licenseEpoch;
+    payload.status = normalizeTransferStatus(transfer.status);
+    payload.fromAccountId = String(transfer.fromAccountId || '').trim();
+    payload.toAccountId = String(transfer.toAccountId || '').trim();
+    const amount = toNumber(transfer.amount);
+    if (amount !== null) {
+        const encryptedResult = await encryptNumberSafe(licenseId, amount, 'transfers.amount');
         if (!encryptedResult.ok) {
             return null;
         }
@@ -733,6 +857,45 @@ export const dataService = {
             console.error("Erro ao salvar empresa:", error);
             throw error;
         }
+    },
+
+    async submitUserFeedback(
+        uid: string,
+        payload: {
+            type: 'bug' | 'improvement';
+            message: string;
+            platform?: 'mobile' | 'desktop';
+            appVersion?: string;
+            reporterEmail?: string | null;
+            companyName?: string | null;
+        }
+    ): Promise<string | null> {
+        if (!uid) return null;
+        const path = `users/${uid}/${COLLECTIONS.FEEDBACK_MESSAGES}`;
+        if (!guardUserPath(uid, path, 'feedback_submit')) return null;
+
+        const feedbackRef = doc(getFeedbackMessagesCollectionRef(uid));
+        const trimmedMessage = String(payload.message || '').trim();
+        if (!trimmedMessage) return null;
+
+        const type = payload.type === 'bug' ? 'bug' : 'improvement';
+        await setDoc(
+            feedbackRef,
+            sanitizeData({
+                type,
+                message: trimmedMessage.slice(0, 2000),
+                status: 'new',
+                platform: payload.platform || null,
+                appVersion: payload.appVersion || null,
+                reporterEmail: payload.reporterEmail || null,
+                companyName: payload.companyName || null,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                createdAtClientMs: Date.now()
+            }),
+            { merge: false }
+        );
+        return feedbackRef.id;
     },
 
     // --- REALTIME SUBSCRIPTIONS ---
@@ -879,6 +1042,56 @@ export const dataService = {
                     licenseId
                 });
                 logReadFailed(COLLECTIONS.INCOMES, (error as any)?.message || 'Erro ao assinar receitas');
+                onError?.(error);
+            }
+        );
+        return () => {
+            unsubscribe();
+        };
+    },
+
+    subscribeTransfers(
+        licenseId: string,
+        params: { licenseEpoch: number },
+        onData: (transfers: Transfer[]) => void,
+        onError?: (error: unknown) => void
+    ) {
+        let hasLoggedSupport = false;
+        const path = `users/${licenseId}/${COLLECTIONS.TRANSFERS}`;
+        if (!guardUserPath(licenseId, path, 'transfers_subscribe')) {
+            onData([]);
+            return () => {};
+        }
+        logUsingPath(path, 'primary');
+        const q = query(getTransfersCollectionRef(licenseId));
+        const unsubscribe = onSnapshot(
+            q,
+            async (snapshot) => {
+                try {
+                    const items = await Promise.all(
+                        snapshot.docs.map(docSnap => decryptTransferDoc(licenseId, params.licenseEpoch, docSnap))
+                    );
+                    onData(items);
+                    if (!hasLoggedSupport) {
+                        hasLoggedSupport = true;
+                        void supportAccessService.logSupportRead(licenseId, {
+                            collection: COLLECTIONS.TRANSFERS,
+                            count: items.length
+                        });
+                    }
+                } catch (error) {
+                    onError?.(error);
+                }
+            },
+            (error) => {
+                logPermissionDenied({
+                    step: 'transfers_subscribe',
+                    path,
+                    operation: 'query',
+                    error,
+                    licenseId
+                });
+                logReadFailed(COLLECTIONS.TRANSFERS, (error as any)?.message || 'Erro ao assinar transferências');
                 onError?.(error);
             }
         );
@@ -1231,6 +1444,70 @@ export const dataService = {
         if (!guardUserPath(licenseId, path, 'income_delete')) return;
         await deleteDoc(licenseCollectionDoc(licenseId, COLLECTIONS.INCOMES, id));
         console.info('[sync][write] income ok', { id, licenseId, action: 'delete' });
+    },
+
+    // --- TRANSFERS ---
+
+    async getTransfers(licenseId: string, licenseEpoch: number): Promise<Transfer[]> {
+        let snapshot;
+        const path = `users/${licenseId}/${COLLECTIONS.TRANSFERS}`;
+        if (!guardUserPath(licenseId, path, 'transfers_get')) return [];
+        try {
+            logUsingPath(path, 'primary');
+            snapshot = await getDocs(getTransfersCollectionRef(licenseId));
+        } catch (error: any) {
+            logPermissionDenied({
+                step: 'transfers_get',
+                path,
+                operation: 'getDocs',
+                error,
+                licenseId
+            });
+            logReadFailed(COLLECTIONS.TRANSFERS, error?.message || 'Erro ao ler transferências');
+        }
+        const docs = snapshot?.docs ?? [];
+        logReadOk(COLLECTIONS.TRANSFERS, docs.length);
+        void supportAccessService.logSupportRead(licenseId, { collection: COLLECTIONS.TRANSFERS, count: docs.length });
+        return Promise.all(docs.map(docSnap => decryptTransferDoc(licenseId, licenseEpoch, docSnap)));
+    },
+
+    async upsertTransfer(transfer: Transfer, licenseId: string, licenseEpoch: number): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.TRANSFERS}/${transfer.id}`;
+        if (!guardUserPath(licenseId, path, 'transfer_upsert')) return;
+        const payload = await buildTransferPayload(licenseId, licenseEpoch, transfer);
+        if (!payload) {
+            console.warn('[crypto][warn] write blocked', { entity: 'transfer', id: transfer.id });
+            return;
+        }
+        await setDoc(
+            licenseCollectionDoc(licenseId, COLLECTIONS.TRANSFERS, transfer.id),
+            payload
+        );
+        console.info('[sync][write] transfer ok', { id: transfer.id, licenseId });
+    },
+
+    async upsertTransfers(transfers: Transfer[], licenseId: string, licenseEpoch: number): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.TRANSFERS}`;
+        if (!guardUserPath(licenseId, path, 'transfers_upsert_batch')) return;
+        const batch = writeBatch(db);
+        for (const transfer of transfers) {
+            const ref = licenseCollectionDoc(licenseId, COLLECTIONS.TRANSFERS, transfer.id);
+            const payload = await buildTransferPayload(licenseId, licenseEpoch, transfer);
+            if (!payload) {
+                console.warn('[crypto][warn] write blocked', { entity: 'transfer', id: transfer.id });
+                continue;
+            }
+            batch.set(ref, payload);
+        }
+        await batch.commit();
+        console.info('[sync][write] transfer ok', { count: transfers.length, licenseId, mode: 'batch' });
+    },
+
+    async deleteTransfer(id: string, licenseId: string): Promise<void> {
+        const path = `users/${licenseId}/${COLLECTIONS.TRANSFERS}/${id}`;
+        if (!guardUserPath(licenseId, path, 'transfer_delete')) return;
+        await deleteDoc(licenseCollectionDoc(licenseId, COLLECTIONS.TRANSFERS, id));
+        console.info('[sync][write] transfer ok', { id, licenseId, action: 'delete' });
     },
 
     // --- CREDIT CARDS ---

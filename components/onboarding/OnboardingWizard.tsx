@@ -22,7 +22,7 @@ interface OnboardingWizardProps {
   isBusy?: boolean;
 }
 
-const TOTAL_STEPS = 2;
+const TOTAL_STEPS = 1;
 const DEFAULT_NATURE: Account['nature'] = 'PJ';
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
@@ -41,6 +41,11 @@ const resolveTodayISO = () => {
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+};
+
+const resolveYearStartISO = (dateISO: string) => {
+  const [year] = dateISO.split('-');
+  return `${year}-01-01`;
 };
 
 const parseCurrency = (value: string) => {
@@ -83,6 +88,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 }) => {
   const [step, setStep] = useState(1);
   const todayISO = useMemo(() => resolveTodayISO(), []);
+  const yearStartISO = useMemo(() => resolveYearStartISO(todayISO), [todayISO]);
   const [companyName, setCompanyName] = useState(companyInfo.name || '');
   const [companyCnpj, setCompanyCnpj] = useState(companyInfo.cnpj || '');
   const [companyAddress, setCompanyAddress] = useState(companyInfo.address || '');
@@ -168,6 +174,8 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const canProceedStep1 =
     Boolean(companyName.trim()) &&
     Boolean(startDate) &&
+    startDate >= yearStartISO &&
+    startDate <= todayISO &&
     Boolean(companyCnpj.trim()) &&
     Boolean(companyAddress.trim()) &&
     Boolean(companyPhone.trim()) &&
@@ -181,14 +189,20 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
     setError(null);
     if (step === 1) {
       if (!canProceedStep1) {
-        setError('Preencha os dados da empresa para continuar.');
+        setError('Preencha os dados obrigatórios e selecione uma data entre 01/01 deste ano e hoje.');
         console.info('[onboarding] validation', { step, valid: false, reason: 'company_fields' });
         return;
       }
-      if (startDate !== todayISO) {
-        setError('O controle financeiro começa a partir de hoje. Lançamentos retroativos não são permitidos.');
-        console.info('[onboarding] validation', { step, valid: false, reason: 'start_date' });
-        setStartDate(todayISO);
+      if (startDate < yearStartISO || startDate > todayISO) {
+        setError('A data de início deve estar entre 01/01 deste ano e hoje.');
+        console.info('[onboarding] validation', {
+          step,
+          valid: false,
+          reason: 'start_date_range',
+          startDate,
+          yearStartISO,
+          todayISO
+        });
         return;
       }
       const nextCompany: CompanyInfo = {
@@ -204,7 +218,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
       };
       console.info('[onboarding] company_save', { name: nextCompany.name, startDate: nextCompany.startDate });
       await onUpdateCompany(nextCompany);
-      setStep(2);
+      await onComplete();
       return;
     }
     if (step === 2) {
@@ -377,28 +391,13 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
               <input
                 type="date"
                 value={startDate}
-                min={todayISO}
+                min={yearStartISO}
                 max={todayISO}
-                onChange={(e) => {
-                  const nextValue = e.target.value;
-                  if (nextValue !== todayISO) {
-                    setStartDate(todayISO);
-                    setError('O controle financeiro começa a partir de hoje. Lançamentos retroativos não são permitidos.');
-                    return;
-                  }
-                  setStartDate(nextValue);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Tab') return;
-                  event.preventDefault();
-                  setStartDate(todayISO);
-                  setError('O controle financeiro começa a partir de hoje. Lançamentos retroativos não são permitidos.');
-                }}
-                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-[#16161b] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 [color-scheme:dark] cursor-not-allowed"
-                readOnly
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#101014] px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
               />
               <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-                O controle financeiro começa a partir de hoje. Lançamentos retroativos não são permitidos.
+                Você pode escolher qualquer data deste ano até hoje. Datas futuras não são permitidas.
               </p>
             </div>
           </div>
@@ -707,10 +706,10 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           <button
             type="button"
             onClick={handleNext}
-            disabled={(step === 1 && !canProceedStep1) || (step === 2 && !canProceedStep2) || isBusy}
+            disabled={!canProceedStep1 || isBusy}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 text-sm font-semibold shadow-lg shadow-indigo-500/20 transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {step === 2 ? 'Ir para o painel' : 'Continuar'}
+            Ir para o painel
             <ArrowRight size={16} />
           </button>
         </div>

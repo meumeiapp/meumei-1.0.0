@@ -74,26 +74,29 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
   const primaryLabel = getPrimaryActionLabel('Rendimento', isEditing);
   const fieldIdPrefix = initialData?.date ? `yield-${initialData.date}` : 'yield-new';
   const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
-  const dockFieldClass =
-    'w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+  const desktopDockFieldClass =
+    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+  const mobileFieldClass =
+    'w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500';
+  const dockFieldClass = isDockDesktop ? desktopDockFieldClass : mobileFieldClass;
   const labelClass = isDockDesktop
     ? modalLabelClass
     : isMobile
-      ? 'text-sm uppercase tracking-wide font-light text-white/70'
+      ? 'text-[10px] uppercase tracking-[0.12em] font-semibold text-white/65'
       : modalLabelClass;
-  const mobileModalInputClass = isMobile
-    ? 'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400'
-    : modalInputClass;
+  const mobileModalInputClass = isMobile ? mobileFieldClass : modalInputClass;
   const inputBaseClass = isDockDesktop
-    ? `${dockFieldClass} focus:ring-indigo-500/40`
-    : `${mobileModalInputClass} ${isMobile ? 'pr-8 placeholder:uppercase placeholder:font-light' : ''}`;
+    ? `${desktopDockFieldClass} focus:ring-indigo-500/40`
+    : `${mobileModalInputClass} ${isMobile ? 'pr-8' : ''}`;
   const selectBaseClass = isDockDesktop
-    ? `${dockFieldClass} focus:ring-indigo-500/40 text-left`
-    : `${mobileModalInputClass} text-left`;
+    ? `${desktopDockFieldClass} focus:ring-indigo-500/40 text-left`
+    : `${mobileModalInputClass} pr-8 text-left`;
   const mobileModalTextareaClass = isMobile ? `${mobileModalInputClass} resize-none` : modalTextareaClass;
   const textareaBaseClass = isDockDesktop
-    ? `${dockFieldClass} focus:ring-indigo-500/40 min-h-[64px] resize-none`
-    : `${mobileModalTextareaClass} ${isMobile ? 'placeholder:uppercase placeholder:font-light' : ''}`;
+    ? `${desktopDockFieldClass} focus:ring-indigo-500/40 min-h-[64px] resize-none`
+    : `${mobileModalTextareaClass} min-h-[84px]`;
+  const fieldStackClass = isMobile ? 'space-y-1.5' : 'space-y-0.5';
+  const fieldsGridClass = isMobile ? 'gap-2' : 'gap-0.5 sm:gap-3';
 
   const handleSave = async () => {
     const uid = authUser?.uid || '';
@@ -185,8 +188,8 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
 
   const formFields = (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-0.5 sm:gap-3">
-        <div className="space-y-0.5">
+      <div className={`grid grid-cols-1 md:grid-cols-2 ${fieldsGridClass}`}>
+        <div className={fieldStackClass}>
           <label htmlFor={fieldId('date')} className={labelClass}>
             Data do Rendimento
           </label>
@@ -199,7 +202,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
           />
         </div>
 
-        <div className="space-y-0.5">
+        <div className={fieldStackClass}>
           <label htmlFor={fieldId('account')} className={labelClass}>
             Conta
           </label>
@@ -207,7 +210,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
             value={accountId}
             onChange={setAccountId}
             options={accountOptions}
-            placeholder="SELECIONE"
+            placeholder="Selecione"
             disabled={isEditing}
             buttonClassName={`${selectBaseClass} ${isEditing ? 'opacity-60 cursor-not-allowed' : ''}`}
             listClassName="max-h-56"
@@ -215,7 +218,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
         </div>
       </div>
 
-      <div className="space-y-0.5">
+      <div className={fieldStackClass}>
         <label htmlFor={fieldId('amount')} className={labelClass}>
           Valor Rendido (R$)
         </label>
@@ -237,7 +240,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
         )}
       </div>
 
-      <div className="space-y-0.5">
+      <div className={fieldStackClass}>
         <label htmlFor={fieldId('notes')} className={labelClass}>
           Observações
         </label>
@@ -245,7 +248,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
           id={fieldId('notes')}
           name="notes"
           rows={3}
-          placeholder="INFORMAÇÕES ADICIONAIS..."
+          placeholder="Informações adicionais..."
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           className={textareaBaseClass}
@@ -303,7 +306,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
     const mobilePrimaryLabel = 'Salvar';
     const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
     return (
-      <div className="fixed inset-0 z-[1200]">
+      <div className="fixed inset-0 z-[1200]" data-modal-root="true">
         <button
           type="button"
           onClick={onClose}
@@ -315,27 +318,27 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
           className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
           style={{ top: 0, bottom: dockOffset }}
         >
-          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+          <div className="px-3 pt-2.5 pb-2.5 bg-[#0b0b10] border-b border-white/10">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <TrendingUp size={16} className="text-white" />
-                  <p className="text-[13px] font-semibold text-white truncate">{headerTitle}</p>
+                  <p className="text-[15px] font-semibold text-white truncate">{headerTitle}</p>
                 </div>
-                <p className="text-[9px] text-white/70">Preencha os dados para registrar o rendimento.</p>
+                <p className="text-[11px] text-white/70">Preencha os dados para registrar o rendimento.</p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                className="h-8 w-8 rounded-xl bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                 aria-label="Fechar rendimento"
               >
                 <X size={16} />
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-hidden px-3 pt-1 pb-16">
-            <div className="px-3 py-1.5 space-y-0.5">
+          <div className="flex-1 overflow-hidden px-3 pt-2 pb-16">
+            <div className="px-3 py-2.5 space-y-2">
               {formFields}
             </div>
           </div>
@@ -343,14 +346,14 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-none border border-indigo-400/50 bg-indigo-950/30 py-3 text-sm font-semibold text-indigo-200 hover:bg-indigo-900/40 transition"
+              className="rounded-xl border border-indigo-400/50 bg-indigo-950/30 py-3 text-sm font-semibold text-indigo-200 hover:bg-indigo-900/40 transition"
             >
               Cancelar
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="rounded-none border border-indigo-500/40 py-3 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
+              className="rounded-xl border border-indigo-500/40 py-3 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
             >
               {mobilePrimaryLabel}
             </button>
@@ -362,7 +365,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
 
   if (isDock) {
     return (
-      <div className="fixed inset-0 z-[1200]">
+      <div className="fixed inset-0 z-[1200]" data-modal-root="true">
         <button
           type="button"
           onClick={onClose}

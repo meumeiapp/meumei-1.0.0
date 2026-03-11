@@ -1,10 +1,11 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { X, Edit2, Plus, Home, ShoppingCart, User, Trash2, ChevronDown } from 'lucide-react';
+import { X, Edit2, Plus, Home, ShoppingCart, User, Trash2, ChevronDown, Camera, Loader2, Sparkles } from 'lucide-react';
 import { Expense, Account, CreditCard as CreditCardType, ExpenseType, ExpenseTypeOption } from '../types';
 import CardTag from './CardTag';
 import { getAccountColor, getCardColor } from '../services/cardColorUtils';
 import { categoryService } from '../services/categoryService';
+import { isCreditPaymentMethod, resolveExpenseCardId } from '../services/invoiceUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { getPrimaryActionLabel } from '../utils/formLabels';
 import useIsMobile from '../hooks/useIsMobile';
@@ -12,6 +13,7 @@ import SelectDropdown from './common/SelectDropdown';
 import WheelDatePicker from './common/WheelDatePicker';
 import { modalInputClass, modalLabelClass, modalTextareaClass } from './ui/PremiumModal';
 import { PREMIUM_COLOR_PRESETS } from './ui/colorPresets';
+import { scanExpenseReceiptImage, type ExpenseReceiptDraft } from '../services/expenseReceiptScannerService';
 
 interface NewExpenseModalProps {
   isOpen: boolean;
@@ -39,6 +41,53 @@ interface NewExpenseModalProps {
   defaultDate?: Date; // New prop
   minDate: string;
 }
+
+const fileToDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Falha ao ler imagem.'));
+    reader.readAsDataURL(file);
+  });
+
+const downscaleImageDataUrl = (
+  dataUrl: string,
+  options?: { maxSide?: number; quality?: number }
+) =>
+  new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const maxSide = options?.maxSide ?? 1600;
+        const quality = options?.quality ?? 0.84;
+        const sourceWidth = image.naturalWidth || image.width;
+        const sourceHeight = image.naturalHeight || image.height;
+        if (!sourceWidth || !sourceHeight) {
+          resolve(dataUrl);
+          return;
+        }
+
+        const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+        const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+        const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          resolve(dataUrl);
+          return;
+        }
+        context.drawImage(image, 0, 0, targetWidth, targetHeight);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    image.onerror = () => reject(new Error('Falha ao processar imagem.'));
+    image.src = dataUrl;
+  });
 
 const NewExpenseModal: React.FC<NewExpenseModalProps> = ({ 
   isOpen, 
@@ -72,12 +121,17 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const [date, setDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
-  const isCredit = paymentMethod === 'Crédito';
+  const isCredit = isCreditPaymentMethod(paymentMethod);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [selectedCardId, setSelectedCardId] = useState('');
   const [status, setStatus] = useState<'pending' | 'paid'>('pending');
   const [notes, setNotes] = useState('');
   const [taxStatus, setTaxStatus] = useState<'PJ' | 'PF' | ''>('');
+  const receiptInputRef = useRef<HTMLInputElement | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
+  const [receiptScanMessage, setReceiptScanMessage] = useState('');
+  const [receiptScanError, setReceiptScanError] = useState('');
+  const [isScanningReceipt, setIsScanningReceipt] = useState(false);
   const { user: authUser } = useAuth();
   const modalRootRef = useRef<HTMLDivElement | null>(null);
   const availableAccounts = accounts.filter(acc => !acc.locked);
@@ -86,24 +140,30 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const isDock = variant === 'dock';
   const isDockDesktop = isDock && !isMobile;
   const isMobileInline = isMobile && isInline;
-  const contentPadding = isInline
+  const contentPadding = isMobileInline
+    ? 'px-3 py-2.5'
+    : isInline
     ? 'px-3 py-1.5'
     : isMobile
-      ? 'px-2 py-1.5'
+      ? 'px-3 py-2'
       : isDockDesktop
         ? 'px-4 py-4'
         : 'px-8 py-8';
-  const footerPadding = isInline
+  const footerPadding = isMobileInline
+    ? 'px-3 py-2'
+    : isInline
     ? 'p-2'
     : isMobile
       ? 'px-3 py-2'
       : isDockDesktop
         ? 'pt-3'
         : 'px-8 py-6';
-  const contentSpacing = isInline
+  const contentSpacing = isMobileInline
+    ? 'space-y-2'
+    : isInline
     ? 'space-y-0.5'
     : isMobile
-      ? 'space-y-0.5'
+      ? 'space-y-2'
       : isDockDesktop
         ? 'space-y-4'
         : 'space-y-6';
@@ -131,6 +191,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const [lastInstallmentDate, setLastInstallmentDate] = useState('');
   const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
   const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
+  const [tourSimulationStepId, setTourSimulationStepId] = useState<string | null>(null);
   const hasInitializedRef = useRef(false);
   const lastInitialIdRef = useRef<string | null>(null);
   const [isManagingTypes, setIsManagingTypes] = useState(false);
@@ -182,31 +243,51 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   };
   
   const config = getModalConfig();
+  const mobileFocusToneClass =
+    expenseType === 'fixed'
+      ? 'focus:border-amber-400/60 focus:ring-amber-500/30'
+      : expenseType === 'personal'
+        ? 'focus:border-cyan-400/60 focus:ring-cyan-500/30'
+        : expenseType === 'variable'
+          ? 'focus:border-rose-400/60 focus:ring-rose-500/30'
+          : 'focus:border-indigo-400/60 focus:ring-indigo-500/30';
   const isCompact = isInline || isMobile;
-  const compactLabelClass = 'text-sm uppercase tracking-wide font-light text-white/70';
+  const compactLabelClass = 'text-[10px] uppercase tracking-[0.12em] font-semibold text-white/65';
   const labelClass = isDockDesktop ? modalLabelClass : compactLabelClass;
   const dockFieldClass =
     'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2';
   const mobileInlineInputClass =
-    'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400';
+    `w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:ring-2 ${mobileFocusToneClass} placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500`;
   const mobileModalInputClass = isMobile
-    ? (isMobileInline ? mobileInlineInputClass : 'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400')
+    ? (isMobileInline ? mobileInlineInputClass : `w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:ring-2 ${mobileFocusToneClass} placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500`)
     : modalInputClass;
   const mobileModalTextareaClass = isMobile ? `${mobileModalInputClass} resize-none` : modalTextareaClass;
   const inputBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 pr-8 placeholder:uppercase placeholder:font-light`
-    : `${mobileModalInputClass} ${config.colorClass} pr-8 placeholder:uppercase placeholder:font-light`;
+    : `${mobileModalInputClass} pr-8`;
   const selectBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 text-left`
-    : `${mobileModalInputClass} ${config.colorClass} text-left`;
-  const compactSelectClass = `${selectBaseClass} text-sm`;
+    : `${mobileModalInputClass} pr-8 text-left`;
+  const compactSelectClass = `${selectBaseClass} text-[13px]`;
   const textareaBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light min-h-[64px] resize-none`
-    : `${mobileModalTextareaClass} ${config.colorClass} placeholder:uppercase placeholder:font-light`;
+    : `${mobileModalTextareaClass} min-h-[84px]`;
   const entityName = config.title.replace(/^Nova\s+/i, '').trim();
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
   const fieldIdPrefix = initialData?.id ? `expense-${initialData.id}` : 'expense-new';
   const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
+  const isTourSimulationSession = Boolean(tourSimulationStepId);
+
+  const detectTourSimulationStep = () => {
+      if (typeof document === 'undefined') return null;
+      const steps = ['fixed-expenses', 'variable-expenses', 'personal-expenses'];
+      for (const step of steps) {
+          if (document.querySelector(`[data-tour-overlay="true"][data-tour-step="${step}"]`)) {
+              return step;
+          }
+      }
+      return null;
+  };
 
   const categoryOptions = useMemo(() => {
       const options = [] as { value: string; label: string; disabled?: boolean }[];
@@ -214,7 +295,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
           options.push({ value: category, label: category });
       }
       if (categories.length === 0) {
-          options.push({ value: '', label: 'SEM CATEGORIAS, CRIE UMA', disabled: true });
+          options.push({ value: '', label: 'Sem categorias, crie uma', disabled: true });
       }
       categories.forEach((cat) => options.push({ value: cat, label: cat }));
       return options;
@@ -266,8 +347,15 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
         setNewCategoryName('');
         setIsInstallmentModalOpen(false);
         setIsNotesModalOpen(false);
+        setTourSimulationStepId(null);
+        setReceiptPreviewUrl('');
+        setReceiptScanMessage('');
+        setReceiptScanError('');
+        setIsScanningReceipt(false);
         return;
     }
+
+    setTourSimulationStepId(detectTourSimulationStep());
 
     const currentInitialId = initialData?.id ?? null;
     const shouldInit = !hasInitializedRef.current || lastInitialIdRef.current !== currentInitialId;
@@ -277,14 +365,18 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
     lastInitialIdRef.current = currentInitialId;
 
     if (initialData) {
+        const initialCardId = resolveExpenseCardId(initialData as Expense & { creditCardId?: string });
+        const normalizedPaymentMethod = isCreditPaymentMethod(initialData.paymentMethod)
+            ? 'Crédito'
+            : (initialData.paymentMethod || '');
         setDescription(initialData.description);
         setAmount(initialData.amount.toString());
         setCategory(initialData.category);
         setDate(clampToMinDate(initialData.date));
         setDueDate(clampToMinDate(initialData.dueDate));
-        setPaymentMethod(initialData.paymentMethod || '');
+        setPaymentMethod(normalizedPaymentMethod);
         setSelectedAccountId(initialData.accountId || '');
-        setSelectedCardId(initialData.cardId || '');
+        setSelectedCardId(initialCardId || '');
         setStatus(initialData.status);
         setNotes(initialData.notes || '');
         setTaxStatus(initialData.taxStatus || '');
@@ -331,6 +423,13 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
     setInstallmentValueType('parcel');
     setApplyScope('single');
   }, [isOpen, initialData, defaultDate, minDate]);
+
+  useEffect(() => {
+    if (!isOpen || !isTourSimulationSession) return;
+    const handleTourEnd = () => onClose();
+    window.addEventListener('mm:first-access-tour-ended', handleTourEnd);
+    return () => window.removeEventListener('mm:first-access-tour-ended', handleTourEnd);
+  }, [isOpen, isTourSimulationSession, onClose]);
 
   useEffect(() => {
     if (!isInline && isOpen) {
@@ -392,7 +491,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   // ... (rest of the component logic remains unchanged) ...
   // --- Auto-Calculate Due Date for Credit Cards (FIXED LOGIC) ---
   useEffect(() => {
-      if (paymentMethod === 'Crédito' && selectedCardId && date) {
+      if (isCredit && selectedCardId && date) {
           const card = creditCards.find(c => c.id === selectedCardId);
           if (card) {
               const launchDate = new Date(date + 'T12:00:00'); 
@@ -431,7 +530,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
               setStatus('pending'); 
           }
       }
-  }, [paymentMethod, selectedCardId, date, creditCards]);
+  }, [isCredit, selectedCardId, date, creditCards]);
 
   // --- Calculate Installment Dates Summary ---
   useEffect(() => {
@@ -453,7 +552,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
       setPaymentMethod(newMethod);
 
       // AUTOMATIC STATUS LOGIC
-      if (newMethod === 'Crédito' || newMethod === 'Boleto') {
+      if (isCreditPaymentMethod(newMethod) || newMethod === 'Boleto') {
           setStatus('pending');
       } else {
           setStatus('paid');
@@ -461,6 +560,87 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   };
   const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) =>
       handlePaymentMethodSelect(e.target.value);
+
+  const applyReceiptDraft = (draft: ExpenseReceiptDraft) => {
+    if (draft.description) {
+      setDescription(draft.description);
+    }
+
+    if (typeof draft.amount === 'number' && Number.isFinite(draft.amount) && draft.amount > 0) {
+      setAmount(String(Number(draft.amount.toFixed(2))));
+    }
+
+    if (draft.category) {
+      setCategory(draft.category);
+    }
+
+    if (draft.date) {
+      const normalizedLaunchDate = clampToMinDate(draft.date);
+      setDate(normalizedLaunchDate);
+      if (!dueDate || dueDate === date) {
+        setDueDate(normalizedLaunchDate);
+      }
+    }
+
+    if (draft.dueDate) {
+      setDueDate(clampToMinDate(draft.dueDate));
+    }
+
+    if (draft.paymentMethod) {
+      handlePaymentMethodSelect(draft.paymentMethod);
+    }
+
+    if (draft.taxStatus) {
+      setTaxStatus(draft.taxStatus);
+    }
+
+    if (draft.notes) {
+      setNotes(prev => (prev ? `${prev}\n${draft.notes}` : draft.notes || ''));
+    }
+  };
+
+  const handleReceiptCaptureClick = () => {
+    if (isScanningReceipt) return;
+    setReceiptScanError('');
+    receiptInputRef.current?.click();
+  };
+
+  const handleReceiptFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    event.target.value = '';
+    setReceiptScanError('');
+    setReceiptScanMessage('Processando imagem...');
+    setIsScanningReceipt(true);
+
+    try {
+      const rawDataUrl = await fileToDataUrl(file);
+      const compactDataUrl =
+        file.size > 1_500_000
+          ? await downscaleImageDataUrl(rawDataUrl, { maxSide: 1600, quality: 0.84 })
+          : rawDataUrl;
+      setReceiptPreviewUrl(compactDataUrl);
+
+      const scanResult = await scanExpenseReceiptImage(compactDataUrl);
+      if (!scanResult.ok || !scanResult.data) {
+        throw new Error(scanResult.message || 'Não foi possível ler o comprovante.');
+      }
+
+      applyReceiptDraft(scanResult.data);
+
+      const confidenceText =
+        typeof scanResult.data.confidence === 'number'
+          ? `Confiabilidade ${(scanResult.data.confidence * 100).toFixed(0)}%.`
+          : 'Confira e ajuste os dados, se necessário.';
+      setReceiptScanMessage(`Comprovante lido com sucesso. ${confidenceText}`);
+    } catch (error: any) {
+      setReceiptScanMessage('');
+      setReceiptScanError(error?.message || 'Falha ao ler comprovante.');
+    } finally {
+      setIsScanningReceipt(false);
+    }
+  };
 
   const handleAddCategory = () => {
     const rawName = newCategoryName;
@@ -724,6 +904,17 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
       const descriptionUpper = normalizedDescription.toUpperCase();
       const categoryUpper = normalizedCategory.toUpperCase();
       const notesUpper = normalizedNotes ? normalizedNotes.toUpperCase() : '';
+      const currentCardId = initialData
+          ? resolveExpenseCardId(initialData as Expense & { creditCardId?: string })
+          : undefined;
+      const resolvedCardId = isCredit ? (selectedCardId || currentCardId || undefined) : undefined;
+      if (isCredit && !resolvedCardId) {
+          alert('Selecione um cartão de crédito antes de salvar.');
+          return;
+      }
+      const resolvedAccountId = !isCredit
+          ? (selectedAccountId || initialData?.accountId || undefined)
+          : undefined;
       const baseExpense = {
           id: initialData?.id,
           description: descriptionUpper,
@@ -731,14 +922,27 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
           date,
           type: expenseType || undefined,
           paymentMethod,
-          accountId: !isCredit ? selectedAccountId : undefined,
-          cardId: isCredit ? selectedCardId : undefined,
+          accountId: resolvedAccountId,
+          cardId: resolvedCardId,
           status,
           notes: notesUpper,
           taxStatus: resolvedTaxStatus
       };
 
       console.info('[form-save]', { entityName, isEditing, primaryLabel });
+
+      const activeTourStep = tourSimulationStepId || detectTourSimulationStep();
+      if (activeTourStep) {
+          if (typeof window !== 'undefined') {
+              window.dispatchEvent(
+                  new CustomEvent('mm:tour-expense-simulated', {
+                      detail: { stepId: activeTourStep }
+                  })
+              );
+          }
+          onClose();
+          return;
+      }
 
       // LOGIC: Check supportsInstallments instead of just isCredit
       if (supportsInstallments && isInstallment && !initialData) {
@@ -791,6 +995,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   const headerIcon = React.isValidElement(config.icon)
     ? React.cloneElement(config.icon, { className: 'text-white' })
     : config.icon;
+  const saveButtonLabel = isTourSimulationSession ? 'Salvar' : primaryLabel;
 
   const amountTextClass = config.colorClass.split(' ')[0];
   const formContent = (
@@ -828,7 +1033,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsManagingTypes(true)}
-                  className={`text-[9px] font-bold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
+                  className={`text-[10px] font-semibold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
                 >
                   <Edit2 size={10} /> Editar
                 </button>
@@ -843,15 +1048,64 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                   : []),
                 ...enabledTypeOptions.map(option => ({ value: option.id, label: option.label }))
               ]}
-              placeholder="SELECIONE"
+              placeholder="Selecione"
               buttonClassName={selectBaseClass}
               listClassName="max-h-56"
-              placeholderClassName="text-[9px] font-light uppercase"
+              placeholderClassName="text-[11px] font-normal text-zinc-400"
             />
             {isTypeMissing && (
               <p className="text-[11px] text-rose-500">
                 Selecione um tipo para continuar.
               </p>
+            )}
+          </div>
+        )}
+
+        {isMobile && !isEditing && (
+          <div className="space-y-1">
+            <input
+              ref={receiptInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handleReceiptFileChange}
+            />
+            <button
+              type="button"
+              onClick={handleReceiptCaptureClick}
+              disabled={isScanningReceipt}
+              className={`${selectBaseClass} flex items-center justify-center gap-2 w-full`}
+            >
+              {isScanningReceipt ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Lendo comprovante...
+                </>
+              ) : (
+                <>
+                  <Camera size={14} />
+                  Fotografar comprovante
+                </>
+              )}
+            </button>
+            {receiptPreviewUrl && (
+              <div className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 p-2">
+                <img
+                  src={receiptPreviewUrl}
+                  alt="Prévia do comprovante"
+                  className="h-24 w-full rounded-lg object-cover"
+                />
+              </div>
+            )}
+            {receiptScanMessage && (
+              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <Sparkles size={12} />
+                {receiptScanMessage}
+              </p>
+            )}
+            {receiptScanError && (
+              <p className="text-[11px] text-rose-500">{receiptScanError}</p>
             )}
           </div>
         )}
@@ -867,7 +1121,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             data-preserve-case="true"
-            placeholder="EX: ALUGUEL, SUPERMERCADO, NETFLIX..."
+            placeholder="Ex.: Aluguel, supermercado, Netflix..."
             className={inputBaseClass}
           />
         </div>
@@ -882,7 +1136,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 type="number" 
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="EX: R$0,00"
+                placeholder="Ex.: R$ 0,00"
                 className={`${inputBaseClass} font-bold ${amountTextClass}`}
             />
         </div>
@@ -895,7 +1149,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 <button 
                     type="button"
                     onClick={() => setIsManagingCategories(true)}
-                    className={`text-[9px] font-bold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
+                    className={`text-[10px] font-semibold flex items-center gap-1 transition-colors ${config.colorClass.split(' ')[0]}`}
                 >
                     <Edit2 size={10} /> Editar
                 </button>
@@ -931,7 +1185,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                                     name="categoryNew"
                                     autoFocus
                                     type="text" 
-                                    placeholder={categoryError || 'NOVA CATEGORIA...'}
+                                    placeholder={categoryError || 'Nova categoria...'}
                                     value={newCategoryName}
                                     onChange={(e) => {
                                       setNewCategoryName(e.target.value);
@@ -1011,11 +1265,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                         ...(category && !categories.includes(category) ? [{ value: category, label: category }] : []),
                         ...categories.map(cat => ({ value: cat, label: cat }))
                     ]}
-                    placeholder={categories.length === 0 ? 'SEM CATEGORIAS, CRIE UMA' : 'SELECIONE'}
+                    placeholder={categories.length === 0 ? 'Sem categorias, crie uma' : 'Selecione'}
                     disabled={categories.length === 0}
                     buttonClassName={selectBaseClass}
                     listClassName="max-h-56"
-                    placeholderClassName="text-[9px] font-light uppercase"
+                    placeholderClassName="text-[11px] font-normal text-zinc-400"
                 />
             )}
         </div>
@@ -1042,7 +1296,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 value={paymentMethod}
                 onChange={handlePaymentMethodSelect}
                 options={paymentMethodOptions}
-                placeholder="SELECIONE"
+                placeholder="Selecione"
                 buttonClassName={selectBaseClass}
                 listClassName="max-h-56"
             />
@@ -1062,7 +1316,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                 placeholder={
                     paymentAccountOptions.length === 1 && paymentAccountOptions[0].disabled
                         ? paymentAccountOptions[0].label
-                        : 'SELECIONE'
+                        : 'Selecione'
                 }
                 disabled={paymentAccountOptions.length === 0 || paymentAccountOptions.every(option => option.disabled)}
                 buttonClassName={selectBaseClass}
@@ -1124,7 +1378,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
               className={`${selectBaseClass} flex items-center justify-between w-full`}
             >
               Despesa Parcelada
-              <span className="text-[9px]">Adicionar</span>
+              <span className="text-[10px]">Adicionar</span>
             </button>
           )}
         </div>
@@ -1176,7 +1430,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             className={`${selectBaseClass} flex items-center justify-between w-full`}
           >
             Observações
-            <span className="text-[9px]">Adicionar</span>
+            <span className="text-[10px]">Adicionar</span>
           </button>
         </div>
 
@@ -1241,7 +1495,7 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
                             { value: 'PJ', label: 'PJ' },
                             { value: 'PF', label: 'PF' }
                           ]}
-                          placeholder="SELECIONE"
+                          placeholder="Selecione"
                           buttonClassName={compactSelectClass}
                           listClassName="max-h-40"
                         />
@@ -1466,12 +1720,13 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
             </button>
             <button
               onClick={handleSave}
+              data-tour-action={isTourSimulationSession ? 'tour-expense-save' : undefined}
               disabled={isTypeMissing}
               className={`h-10 sm:h-11 px-5 sm:px-6 rounded-lg sm:rounded-xl text-sm sm:text-base text-white font-bold transition-all active:scale-95 ${config.btnClass} ${
                 isTypeMissing ? 'opacity-60 cursor-not-allowed' : ''
               } ${isDockDesktop ? 'w-full' : ''}`}
             >
-              {primaryLabel}
+              {saveButtonLabel}
             </button>
           </div>
         </div>
@@ -1500,7 +1755,11 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   if (isDock) {
     if (!isOpen) return null;
     return (
-      <div className="fixed inset-0 z-[1200]">
+      <div
+        className="fixed inset-0 z-[1200]"
+        data-modal-root="true"
+        data-tour-anchor={isOpen ? 'expenses-new-expense-modal' : undefined}
+      >
         <button
           type="button"
           onClick={onClose}
@@ -1511,7 +1770,16 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
           className={
             isMobile
               ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
-              : 'absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+              : 'absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+          }
+          style={
+            isMobile
+              ? undefined
+              : {
+                  bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)',
+                  maxHeight:
+                    'max(320px, calc(var(--mm-content-available-height, 720px) - 20px))'
+                }
           }
         >
           {isDockDesktop && (
@@ -1537,23 +1805,25 @@ const NewExpenseModal: React.FC<NewExpenseModalProps> = ({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[1200]"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose();
-        }
-      }}
-      tabIndex={-1}
-      data-modal-root="true"
-      ref={modalRootRef}
-    >
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
-      <div className="relative flex h-full w-full items-stretch justify-center px-4 sm:px-6 lg:px-10">
-        <div className="relative w-full h-full max-w-5xl bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all border border-white/10 dark:border-zinc-800/60 overflow-y-auto">
-          {formContent}
+    <div data-tour-anchor={isOpen ? 'expenses-new-expense-modal' : undefined}>
+      <div
+        className="fixed inset-0 z-[1200]"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+        tabIndex={-1}
+        data-modal-root="true"
+        ref={modalRootRef}
+      >
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
+        <div className="relative flex h-full w-full items-stretch justify-center px-4 sm:px-6 lg:px-10">
+          <div className="relative w-full h-full max-w-5xl bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all border border-white/10 dark:border-zinc-800/60 overflow-y-auto">
+            {formContent}
+          </div>
         </div>
       </div>
     </div>

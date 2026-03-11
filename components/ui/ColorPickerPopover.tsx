@@ -67,7 +67,7 @@ const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
       >
         <span className="flex items-center gap-3">
           <span
-            className="h-6 w-6 rounded-lg border border-white/40 shadow-sm"
+            className="h-6 w-6 rounded-full border border-white/40 shadow-sm"
             style={{ backgroundColor: value }}
           />
           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
@@ -93,7 +93,7 @@ const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                   type="button"
                   onClick={() => onChange(color)}
                   aria-label={`Selecionar cor ${color}`}
-                  className={`h-9 w-9 rounded-lg border transition flex items-center justify-center ${
+                  className={`h-9 w-9 rounded-full border transition flex items-center justify-center ${
                     isSelected
                       ? 'border-indigo-500 ring-2 ring-indigo-400/50'
                       : 'border-zinc-200 dark:border-zinc-700 hover:border-indigo-300'

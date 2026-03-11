@@ -10,6 +10,7 @@ export type EntitlementRecord = {
   subscriptionCurrentPeriodEndMs?: number | null;
   createdAtMs?: number | null;
   updatedAtMs?: number | null;
+  manualPlanDays?: number | null;
   lifetime?: boolean;
 };
 

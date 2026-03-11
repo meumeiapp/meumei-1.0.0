@@ -135,18 +135,17 @@ if (swSupported) {
       if (!channel) return;
       channel.postMessage({ type, source: clientId, ...(payload || {}) });
     };
-    let registration: ServiceWorkerRegistration | undefined;
-    let reloading = false;
-    let updateListenerAttached = false;
-
-    const reloadOnce = (reason: string) => {
-      if (reloading) return;
-      reloading = true;
-      if (reason !== 'controller_change') {
-        console.info('[pwa][sw] reload', { reason });
-      }
-      window.location.reload();
+    const updateReadyEventName = 'meumei:pwa-update-ready';
+    const notifyUpdateReady = (reason: string) => {
+      console.info('[pwa][sw] update_ready', { reason });
+      try {
+        sessionStorage.setItem('meumei_sw_update_ready', '1');
+        sessionStorage.setItem('meumei_sw_update_reason', reason);
+      } catch {}
+      window.dispatchEvent(new CustomEvent(updateReadyEventName, { detail: { reason } }));
     };
+    let registration: ServiceWorkerRegistration | undefined;
+    let updateListenerAttached = false;
 
     const checkForUpdate = async (reason: string) => {
       if (!registration) return;
@@ -158,10 +157,9 @@ if (swSupported) {
       }
     };
 
-    let updateSW: any = () => {};
     import('virtual:pwa-register')
       .then(({ registerSW }) => {
-        updateSW = registerSW({
+        registerSW({
           immediate: true,
           onRegisteredSW(swUrl, reg) {
             registration = reg;
@@ -201,11 +199,8 @@ if (swSupported) {
           },
           onNeedRefresh() {
             console.info('[pwa][sw] update_available');
-            broadcast('please_reload', { reason: 'update_available' });
-            updateSW(true);
-            if (registration?.waiting) {
-              registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-            }
+            notifyUpdateReady('update_available');
+            broadcast('update_ready', { reason: 'update_available' });
           }
         });
       })
@@ -221,17 +216,20 @@ if (swSupported) {
 
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       console.info('[pwa] controllerchange');
-      broadcast('update_applied');
-      reloadOnce('controller_change');
+      notifyUpdateReady('controller_change');
+      broadcast('update_ready', { reason: 'controller_change' });
     });
 
     if (channel) {
       channel.onmessage = (event) => {
-        const payload = event.data as { type?: string; source?: string } | null;
+        const payload = event.data as { type?: string; source?: string; reason?: string } | null;
         if (!payload?.type || payload.source === clientId) return;
-        if (payload.type === 'please_reload' || payload.type === 'update_applied') {
-          console.info('[pwa][sw] broadcast_reload', { type: payload.type });
-          reloadOnce(`broadcast_${payload.type}`);
+        if (
+          payload.type === 'update_ready' ||
+          payload.type === 'please_reload' ||
+          payload.type === 'update_applied'
+        ) {
+          notifyUpdateReady(payload.reason || `broadcast_${payload.type}`);
         }
       };
     }

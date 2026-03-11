@@ -1,0 +1,101 @@
+{
+  "baseUrl": "http://127.0.0.1:4173",
+  "loginEmail": "qa.screenshots.bot@example.com",
+  "generatedAt": "2026-03-11T13:51:55.664Z",
+  "outDir": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z",
+  "captures": [
+    {
+      "fileName": "01-home.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/01-home.png",
+      "note": "Tela Início (dashboard)"
+    },
+    {
+      "fileName": "02-launches.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/02-launches.png",
+      "note": "Tela Lançamentos"
+    },
+    {
+      "fileName": "03-accounts.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/03-accounts.png",
+      "note": "Tela Contas"
+    },
+    {
+      "fileName": "04-yields.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/04-yields.png",
+      "note": "Tela Rendimentos"
+    },
+    {
+      "fileName": "05-invoices.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/05-invoices.png",
+      "note": "Tela Faturas"
+    },
+    {
+      "fileName": "06-reports.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/06-reports.png",
+      "note": "Tela Relatórios"
+    },
+    {
+      "fileName": "07-agenda.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/07-agenda.png",
+      "note": "Tela Agenda"
+    },
+    {
+      "fileName": "10-income-form.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/10-income-form.png",
+      "note": "Formulário Nova Entrada"
+    },
+    {
+      "fileName": "11-income-select-tax-status-open.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/11-income-select-tax-status-open.png",
+      "note": "Seletor Natureza Fiscal (Entrada) aberto"
+    },
+    {
+      "fileName": "13-income-select-payment-method-open.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/13-income-select-payment-method-open.png",
+      "note": "Seletor Forma de Pagamento (Entrada) aberto"
+    },
+    {
+      "fileName": "15-dashboard-after-income-close.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/15-dashboard-after-income-close.png",
+      "note": "Dashboard após fechar Nova Entrada"
+    },
+    {
+      "fileName": "20-expense-form.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/20-expense-form.png",
+      "note": "Formulário Nova Despesa"
+    },
+    {
+      "fileName": "21-expense-select-type-open.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/21-expense-select-type-open.png",
+      "note": "Seletor Tipo de despesa (Saída) aberto"
+    },
+    {
+      "fileName": "23-expense-select-payment-method-open.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/23-expense-select-payment-method-open.png",
+      "note": "Seletor Forma de Pagamento (Saída) aberto"
+    },
+    {
+      "fileName": "25-dashboard-after-expense-close.png",
+      "filePath": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/mobile-lists-drawers-2026-03-11T13-51-55-664Z/25-dashboard-after-expense-close.png",
+      "note": "Dashboard após fechar Nova Despesa"
+    }
+  ],
+  "skips": [
+    {
+      "fileName": "12-income-select-category-open.png",
+      "reason": "botao desabilitado para /Categoria/i"
+    },
+    {
+      "fileName": "14-income-select-account-open.png",
+      "reason": "botao desabilitado para /Conta de Destino/i"
+    },
+    {
+      "fileName": "22-expense-select-category-open.png",
+      "reason": "botao desabilitado para /Categoria/i"
+    },
+    {
+      "fileName": "24-expense-select-account-open.png",
+      "reason": "botao desabilitado para /Conta de Pagamento/i"
+    }
+  ]
+}

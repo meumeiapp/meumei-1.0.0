@@ -22,6 +22,15 @@ export interface CompoundCalculatorResult {
   totalInterest: number;
   periodMonths: number;
   series: Array<{ month: number; invested: number; total: number }>;
+  inputs: {
+    initialInvestment: number;
+    monthlyContribution: number;
+    rate: number;
+    ratePeriod: RatePeriod;
+    duration: number;
+    durationUnit: DurationUnit;
+    monthlyRate: number;
+  };
 }
 
 interface CompoundInterestCalculatorModalProps {
@@ -205,7 +214,16 @@ const CompoundInterestCalculatorModal: React.FC<CompoundInterestCalculatorModalP
       totalInvested,
       totalInterest,
       periodMonths: months,
-      series
+      series,
+      inputs: {
+        initialInvestment: initial,
+        monthlyContribution: monthly,
+        rate,
+        ratePeriod,
+        duration,
+        durationUnit,
+        monthlyRate
+      }
     };
 
     setResult(calcResult);

@@ -1,7 +1,7 @@
-import type { Account, Expense, Income } from '../types';
+import type { Account, Expense, Income, Transfer } from '../types';
 import type { YieldRecord } from './yieldsService';
 
-type BalanceTrailType = 'base' | 'income' | 'expense' | 'yield';
+type BalanceTrailType = 'base' | 'income' | 'expense' | 'transfer' | 'yield';
 
 export type BalanceTrailEntry = {
   type: BalanceTrailType;
@@ -19,6 +19,7 @@ export type RealBalanceDebug = {
 export type RealBalanceStats = {
   incomes: number;
   expenses: number;
+  transfers: number;
   yields: number;
   cutoff: string;
 };
@@ -35,6 +36,7 @@ type ComputeParams = {
   accounts: Account[];
   incomes: Income[];
   expenses: Expense[];
+  transfers: Transfer[];
   yields: YieldRecord[];
   viewDate: Date;
   options?: {
@@ -123,6 +125,7 @@ export const computeRealBalances = ({
   accounts,
   incomes,
   expenses,
+  transfers,
   yields,
   viewDate,
   options
@@ -137,6 +140,7 @@ export const computeRealBalances = ({
     accounts: accounts.length,
     incomes: incomes.length,
     expenses: expenses.length,
+    transfers: transfers.length,
     yields: yields.length
   });
 
@@ -170,6 +174,7 @@ export const computeRealBalances = ({
 
   let countedIncomes = 0;
   let countedExpenses = 0;
+  let countedTransfers = 0;
   let countedYields = 0;
 
   incomes.forEach(income => {
@@ -179,7 +184,8 @@ export const computeRealBalances = ({
     const parsed = parseDate(dateValue);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
     const anchorDate = anchorByAccountId[income.accountId];
-    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
+    // Dates are day-granular, so transactions on the anchor day are already reflected in anchor.value.
+    if (anchorDate && parsed.getTime() <= anchorDate.getTime()) return;
     const amount = roundToCents(income.amount);
     const next = roundToCents((byAccountId[income.accountId] || 0) + amount);
     byAccountId[income.accountId] = next;
@@ -207,7 +213,7 @@ export const computeRealBalances = ({
     const parsed = parseDate(dateValue);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
     const anchorDate = anchorByAccountId[expense.accountId];
-    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
+    if (anchorDate && parsed.getTime() <= anchorDate.getTime()) return;
     const amount = roundToCents(expense.amount);
     const next = roundToCents((byAccountId[expense.accountId] || 0) - amount);
     byAccountId[expense.accountId] = next;
@@ -222,12 +228,60 @@ export const computeRealBalances = ({
     });
   });
 
+  transfers.forEach(transfer => {
+    if (transfer.status !== 'completed') return;
+    if (!transfer.fromAccountId || !transfer.toAccountId) return;
+    if (transfer.fromAccountId === transfer.toAccountId) return;
+    if (!accountIds.has(transfer.fromAccountId) || !accountIds.has(transfer.toAccountId)) return;
+    const parsed = parseDate(transfer.date);
+    if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
+
+    const amount = roundToCents(transfer.amount);
+    if (amount <= 0) return;
+
+    let applied = false;
+
+    const fromAnchorDate = anchorByAccountId[transfer.fromAccountId];
+    if (!fromAnchorDate || parsed.getTime() > fromAnchorDate.getTime()) {
+      const nextFrom = roundToCents((byAccountId[transfer.fromAccountId] || 0) - amount);
+      byAccountId[transfer.fromAccountId] = nextFrom;
+      applied = true;
+      pushTrail(transfer.fromAccountId, {
+        type: 'transfer',
+        id: transfer.id,
+        date: transfer.date,
+        amount,
+        sign: -1,
+        reason: 'transfer_out'
+      });
+    }
+
+    const toAnchorDate = anchorByAccountId[transfer.toAccountId];
+    if (!toAnchorDate || parsed.getTime() > toAnchorDate.getTime()) {
+      const nextTo = roundToCents((byAccountId[transfer.toAccountId] || 0) + amount);
+      byAccountId[transfer.toAccountId] = nextTo;
+      applied = true;
+      pushTrail(transfer.toAccountId, {
+        type: 'transfer',
+        id: transfer.id,
+        date: transfer.date,
+        amount,
+        sign: 1,
+        reason: 'transfer_in'
+      });
+    }
+
+    if (applied) {
+      countedTransfers += 1;
+    }
+  });
+
   yields.forEach(yieldRecord => {
     if (!yieldRecord.accountId || !accountIds.has(yieldRecord.accountId)) return;
     const parsed = parseDate(yieldRecord.date);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
     const anchorDate = anchorByAccountId[yieldRecord.accountId];
-    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
+    if (anchorDate && parsed.getTime() <= anchorDate.getTime()) return;
     const amount = roundToCents(yieldRecord.amount);
     const next = roundToCents((byAccountId[yieldRecord.accountId] || 0) + amount);
     byAccountId[yieldRecord.accountId] = next;
@@ -262,6 +316,7 @@ export const computeRealBalances = ({
     stats: {
       incomes: countedIncomes,
       expenses: countedExpenses,
+      transfers: countedTransfers,
       yields: countedYields,
       cutoff: cutoffLabel
     },

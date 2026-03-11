@@ -9,6 +9,7 @@ import useIsMobile from '../hooks/useIsMobile';
 import SelectDropdown from './common/SelectDropdown';
 import WheelDatePicker from './common/WheelDatePicker';
 import { modalInputClass, modalLabelClass, modalTextareaClass } from './ui/PremiumModal';
+import { TOUR_SIMULATED_ACCOUNT_PREFIX } from '../services/tourSimulationService';
 
 interface NewIncomeModalProps {
   isOpen: boolean;
@@ -28,6 +29,25 @@ interface NewIncomeModalProps {
   defaultDate?: Date; // New prop
   minDate: string;
 }
+
+type TourIncomeAutofillStage =
+  | 'description'
+  | 'amount'
+  | 'tax-status'
+  | 'category-manager'
+  | 'category-name'
+  | 'category-add'
+  | 'competence-date'
+  | 'payment-method'
+  | 'account'
+  | 'received-date'
+  | 'installment-open'
+  | 'installment-count'
+  | 'installment-value-parcel'
+  | 'notes-open'
+  | 'notes-write'
+  | 'notes-save'
+  | 'save';
 
 const NewIncomeModal: React.FC<NewIncomeModalProps> = ({ 
   isOpen, 
@@ -62,35 +82,49 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const [taxStatus, setTaxStatus] = useState<'PJ' | 'PF' | ''>('');
   const [isNotesOpen, setIsNotesOpen] = useState(true);
   const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
+  const [isTourSimulationSession, setIsTourSimulationSession] = useState(false);
+  const tourAutoFillTimersRef = useRef<number[]>([]);
+  const hasTourAutoFilledRef = useRef(false);
+  const hasTourEditAutoFilledRef = useRef(false);
+  const handleSaveRef = useRef<() => void>(() => {});
   const hasInitializedRef = useRef(false);
   const lastInitialIdRef = useRef<string | null>(null);
   const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
   const { user: authUser } = useAuth();
   const modalRootRef = useRef<HTMLDivElement | null>(null);
-  const availableAccounts = accounts.filter(acc => !acc.locked);
+  const availableAccounts = useMemo(
+    () => accounts.filter(acc => !acc.locked),
+    [accounts]
+  );
   const isMobile = useIsMobile();
   const isInline = variant === 'inline';
   const isDock = variant === 'dock';
   const isDockDesktop = isDock && !isMobile;
   const isMobileInline = isMobile && isInline;
-  const contentPadding = isInline
+  const contentPadding = isMobileInline
+    ? 'px-3 py-2.5'
+    : isInline
     ? 'px-3 py-1.5'
     : isMobile
-      ? 'px-2 py-1.5'
+      ? 'px-3 py-2'
       : isDockDesktop
         ? 'px-4 py-4'
         : 'px-8 py-8';
-  const footerPadding = isInline
+  const footerPadding = isMobileInline
+    ? 'px-3 py-2'
+    : isInline
     ? 'p-2'
     : isMobile
       ? 'px-2.5 py-1.5'
       : isDockDesktop
         ? 'pt-3'
         : 'px-8 py-6';
-  const contentSpacing = isInline
+  const contentSpacing = isMobileInline
+    ? 'space-y-2'
+    : isInline
     ? 'space-y-0.5'
     : isMobile
-      ? 'space-y-0.5'
+      ? 'space-y-2'
       : isDockDesktop
         ? 'space-y-4'
         : 'space-y-6';
@@ -99,6 +133,26 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const primaryLabel = getPrimaryActionLabel(entityName, isEditing);
   const fieldIdPrefix = initialData?.id ? `income-${initialData.id}` : 'income-new';
   const fieldId = (suffix: string) => `${fieldIdPrefix}-${suffix}`;
+
+  const detectTourSimulationMode = () => {
+      if (typeof document === 'undefined') return false;
+      return Boolean(document.querySelector('[data-tour-overlay="true"][data-tour-step="incomes"]'));
+  };
+
+  const emitTourAutofillStage = (stage: TourIncomeAutofillStage) => {
+      if (typeof window === 'undefined') return;
+      window.dispatchEvent(
+          new CustomEvent('mm:tour-income-autofill-stage', {
+              detail: { stage }
+          })
+      );
+  };
+
+  const clearTourAutoFillTimers = () => {
+      if (typeof window === 'undefined') return;
+      tourAutoFillTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      tourAutoFillTimersRef.current = [];
+  };
 
   // Category Management State
   const [isManagingCategories, setIsManagingCategories] = useState(false);
@@ -168,12 +222,18 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) {
+        clearTourAutoFillTimers();
+        hasTourAutoFilledRef.current = false;
+        hasTourEditAutoFilledRef.current = false;
         hasInitializedRef.current = false;
         lastInitialIdRef.current = initialData?.id ?? null;
         setIsManagingCategories(false);
         setNewCategoryName('');
+        setIsTourSimulationSession(false);
         return;
     }
+
+    setIsTourSimulationSession(detectTourSimulationMode());
 
     const currentInitialId = initialData?.id ?? null;
     const shouldInit = !hasInitializedRef.current || lastInitialIdRef.current !== currentInitialId;
@@ -233,6 +293,17 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   }, [isOpen, initialData, defaultDate, minDate]);
 
   useEffect(() => {
+    if (!isOpen || !isTourSimulationSession) return;
+    const handleTourEnd = () => onClose();
+    window.addEventListener('mm:first-access-tour-ended', handleTourEnd);
+    return () => window.removeEventListener('mm:first-access-tour-ended', handleTourEnd);
+  }, [isOpen, isTourSimulationSession, onClose]);
+
+  useEffect(() => {
+    return () => clearTourAutoFillTimers();
+  }, []);
+
+  useEffect(() => {
     if (!isInline && isOpen) {
       requestAnimationFrame(() => {
         modalRootRef.current?.focus();
@@ -264,8 +335,6 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   };
   const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) =>
       handlePaymentMethodSelect(e.target.value);
-
-  if (!isOpen) return null;
 
   const handleAddCategory = async () => {
     const rawName = newCategoryName;
@@ -442,7 +511,9 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     const normalizedDescription = description.trim().replace(/\s+/g, ' ');
     const normalizedCategory = category.trim().replace(/\s+/g, ' ');
     const normalizedNotes = notes.trim();
-    if (!normalizedDescription || !amount || !date || !selectedAccountId) return;
+    const shouldSimulateOnly = isTourSimulationSession || detectTourSimulationMode();
+    const effectiveAccountId = selectedAccountId || (shouldSimulateOnly ? '__tour_account_virtual__' : '');
+    if (!normalizedDescription || !amount || !date || !effectiveAccountId) return;
     if (date < minDate) {
         alert('A data da entrada não pode ser anterior ao mês de abertura da empresa.');
         return;
@@ -465,7 +536,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         category: categoryUpper,
         date, 
         competenceDate: competenceDate || date,
-        accountId: selectedAccountId,
+        accountId: effectiveAccountId,
         status, 
         paymentMethod,
         notes: notesUpper,
@@ -473,6 +544,42 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     };
 
     console.info('[form-save]', { entityName, isEditing, primaryLabel });
+
+    if (shouldSimulateOnly) {
+        const numericAmount = parseFloat(amount.replace(',', '.')) || 0;
+        let simulatedAmount = numericAmount;
+        let simulatedDescription = descriptionUpper;
+        let simulatedInstallmentPayload: Partial<Income> = {};
+
+        if (isInstallment && !initialData) {
+            simulatedAmount = installmentValueType === 'total'
+                ? (numericAmount / installmentCount)
+                : numericAmount;
+            simulatedDescription = `${descriptionUpper} (1/${installmentCount})`;
+            simulatedInstallmentPayload = {
+                installments: true,
+                installmentNumber: 1,
+                totalInstallments: installmentCount,
+                installmentGroupId: `tour-income-group-${Date.now()}`
+            };
+        }
+
+        if (typeof window !== 'undefined') {
+            const simulatedIncomePayload = {
+                ...baseIncome,
+                ...simulatedInstallmentPayload,
+                description: simulatedDescription,
+                amount: simulatedAmount
+            };
+            window.dispatchEvent(
+                new CustomEvent('mm:tour-income-simulated', {
+                    detail: { income: simulatedIncomePayload }
+                })
+            );
+        }
+        onClose();
+        return;
+    }
 
     if (isInstallment && !initialData) {
         const groupId = Math.random().toString(36).substr(2, 9);
@@ -493,10 +600,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 totalInstallments: installmentCount,
                 installmentGroupId: groupId,
                 description: `${descriptionUpper} (${i+1}/${installmentCount})`,
-                status: 'pending' // Parcelas futuras geralmente iniciam como pendentes
+                status: 'pending'
             });
         }
-        onSave(incomesToSave); 
+        onSave(incomesToSave);
     } else {
         const payload = {
             ...baseIncome,
@@ -511,6 +618,166 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   };
 
   useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
+
+  useEffect(() => {
+    if (!isOpen || !isTourSimulationSession || Boolean(initialData)) return;
+    if (hasTourAutoFilledRef.current) return;
+
+    hasTourAutoFilledRef.current = true;
+    clearTourAutoFillTimers();
+
+    const schedule = (fn: () => void, delay: number) => {
+      const id = window.setTimeout(fn, delay);
+      tourAutoFillTimersRef.current.push(id);
+    };
+
+    let cursor = 1850;
+    const typeIn = (
+      stage: TourIncomeAutofillStage,
+      value: string,
+      setter: (next: string) => void,
+      stepMs = 160,
+      pauseAfterMs = 1500
+    ) => {
+      schedule(() => emitTourAutofillStage(stage), Math.max(360, cursor - 420));
+      schedule(() => setter(''), Math.max(220, cursor - 220));
+      for (let i = 1; i <= value.length; i += 1) {
+        schedule(() => setter(value.slice(0, i)), cursor + i * stepMs);
+      }
+      cursor += value.length * stepMs + pauseAfterMs;
+    };
+
+    const clickStep = (
+      stage: TourIncomeAutofillStage,
+      apply: () => void,
+      clickDelayMs = 1100,
+      settleDelayMs = 1300
+    ) => {
+      schedule(() => emitTourAutofillStage(stage), cursor);
+      schedule(apply, cursor + clickDelayMs);
+      cursor += clickDelayMs + settleDelayMs;
+    };
+
+    const demoDescription = 'PAGAMENTO CLIENTE GUIA';
+    const demoAmount = '625.00';
+    const demoCategory = 'SERVIÇOS GUIA';
+    const demoNotes = 'ENTRADA DEMONSTRATIVA DO TOUR EM 4 PARCELAS.';
+    const simulatedTourAccount =
+      availableAccounts.find((account) => account.id.startsWith(TOUR_SIMULATED_ACCOUNT_PREFIX)) ||
+      availableAccounts[0];
+    const demoAccountId = simulatedTourAccount?.id || '__tour_account_virtual__';
+    const baseDemoDate = clampToMinDate(new Date().toISOString().split('T')[0]);
+
+    schedule(() => setIsInstallmentModalOpen(false), 0);
+    schedule(() => setIsNotesModalOpen(false), 0);
+    schedule(() => setIsManagingCategories(false), 0);
+
+    typeIn('description', demoDescription, setDescription, 154, 1500);
+    typeIn('amount', demoAmount, setAmount, 168, 1550);
+    clickStep('tax-status', () => {}, 980, 780);
+    clickStep('tax-status', () => setTaxStatus('PJ'), 1120, 1320);
+
+    clickStep('category-manager', () => {
+      setIsManagingCategories(true);
+      setCategoryError('');
+    });
+    typeIn('category-name', demoCategory, setNewCategoryName, 150, 1300);
+    clickStep(
+      'category-add',
+      () => {
+        setCategory(demoCategory);
+        setIsManagingCategories(false);
+        setNewCategoryName('');
+        setCategoryError('');
+      },
+      1140,
+      1420
+    );
+
+    clickStep('competence-date', () => setCompetenceDate(baseDemoDate), 1140, 1320);
+    clickStep('payment-method', () => {}, 980, 780);
+    clickStep('payment-method', () => handlePaymentMethodSelect('Crédito'), 1120, 1340);
+    clickStep('account', () => {}, 980, 780);
+    clickStep('account', () => setSelectedAccountId(demoAccountId), 1120, 1340);
+    clickStep('received-date', () => setDate(baseDemoDate), 1140, 1320);
+    clickStep('installment-open', () => setIsInstallmentModalOpen(true), 1120, 1260);
+    clickStep('installment-count', () => setInstallmentCount(4), 1140, 1380);
+    clickStep(
+      'installment-value-parcel',
+      () => {
+        setIsInstallment(true);
+        setInstallmentValueType('parcel');
+        setIsInstallmentModalOpen(false);
+      },
+      1140,
+      1460
+    );
+    clickStep('notes-open', () => setIsNotesModalOpen(true), 1080, 1260);
+    typeIn('notes-write', demoNotes, setNotes, 112, 1320);
+    clickStep('notes-save', () => setIsNotesModalOpen(false), 1040, 1280);
+    schedule(() => emitTourAutofillStage('save'), cursor);
+    schedule(() => handleSaveRef.current(), cursor + 1320);
+
+    return () => clearTourAutoFillTimers();
+  }, [initialData, isOpen, isTourSimulationSession, availableAccounts, minDate]);
+
+  useEffect(() => {
+    if (!isOpen || !isTourSimulationSession || !initialData) return;
+    if (hasTourEditAutoFilledRef.current) return;
+
+    hasTourEditAutoFilledRef.current = true;
+    clearTourAutoFillTimers();
+
+    const schedule = (fn: () => void, delay: number) => {
+      const id = window.setTimeout(fn, delay);
+      tourAutoFillTimersRef.current.push(id);
+    };
+
+    let cursor = 1600;
+    const typeIn = (
+      stage: TourIncomeAutofillStage,
+      value: string,
+      setter: (next: string) => void,
+      stepMs = 142,
+      pauseAfterMs = 1280
+    ) => {
+      schedule(() => emitTourAutofillStage(stage), Math.max(320, cursor - 360));
+      schedule(() => setter(''), Math.max(200, cursor - 200));
+      for (let i = 1; i <= value.length; i += 1) {
+        schedule(() => setter(value.slice(0, i)), cursor + i * stepMs);
+      }
+      cursor += value.length * stepMs + pauseAfterMs;
+    };
+
+    const clickStep = (
+      stage: TourIncomeAutofillStage,
+      apply: () => void,
+      clickDelayMs = 980,
+      settleDelayMs = 1180
+    ) => {
+      schedule(() => emitTourAutofillStage(stage), cursor);
+      schedule(apply, cursor + clickDelayMs);
+      cursor += clickDelayMs + settleDelayMs;
+    };
+
+    const normalizedDescription = `${(initialData.description || 'ENTRADA GUIA').replace(/\s*-\s*AJUSTE GUIA$/i, '')} - AJUSTE GUIA`;
+    const normalizedNotes = initialData.notes
+      ? `${initialData.notes.replace(/\s*-\s*AJUSTE GUIA$/i, '')} - AJUSTE GUIA`
+      : 'OBSERVAÇÃO AJUSTADA NO GUIA.';
+
+    typeIn('description', normalizedDescription, setDescription, 140, 1200);
+    clickStep('notes-open', () => setIsNotesModalOpen(true), 980, 1120);
+    typeIn('notes-write', normalizedNotes, setNotes, 104, 1080);
+    clickStep('notes-save', () => setIsNotesModalOpen(false), 920, 1180);
+    schedule(() => emitTourAutofillStage('save'), cursor);
+    schedule(() => handleSaveRef.current(), cursor + 1180);
+
+    return () => clearTourAutoFillTimers();
+  }, [initialData, isOpen, isTourSimulationSession]);
+
+  useEffect(() => {
     if (!onPrimaryActionRef) return;
     onPrimaryActionRef(handleSave);
   }, [handleSave, onPrimaryActionRef]);
@@ -518,22 +785,23 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const dockFieldClass =
     'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2';
   const mobileInlineInputClass =
-    'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400';
+    'w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500';
   const mobileModalInputClass = isMobile
-    ? (isMobileInline ? mobileInlineInputClass : 'w-full bg-zinc-50/70 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-700 text-sm font-semibold text-zinc-900 dark:text-white rounded-none px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:font-light placeholder:text-zinc-400')
+    ? (isMobileInline ? mobileInlineInputClass : 'w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500')
     : modalInputClass;
   const mobileModalTextareaClass = isMobile ? `${mobileModalInputClass} resize-none` : modalTextareaClass;
   const inputBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 pr-8 placeholder:uppercase placeholder:font-light`
-    : `${mobileModalInputClass} focus:ring-emerald-500 pr-8 placeholder:uppercase placeholder:font-light`;
+    : `${mobileModalInputClass} pr-8`;
   const selectBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 text-left`
-    : `${mobileModalInputClass} focus:ring-emerald-500 text-left`;
+    : `${mobileModalInputClass} pr-8 text-left`;
   const textareaBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light min-h-[64px] resize-none`
-    : `${mobileModalTextareaClass} focus:ring-emerald-500 placeholder:uppercase placeholder:font-light`;
-  const compactLabelClass = 'text-sm uppercase tracking-wide font-light text-white/70';
+    : `${mobileModalTextareaClass} min-h-[84px]`;
+  const compactLabelClass = 'text-[10px] uppercase tracking-[0.12em] font-semibold text-white/65';
   const labelClass = isDockDesktop ? modalLabelClass : compactLabelClass;
+  const saveButtonLabel = 'Salvar';
 
   const formContent = (
     <>
@@ -560,7 +828,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
       <div className={`${contentPadding} ${contentSpacing}`}>
         
-        <div className="space-y-0.5">
+        <div
+          className="space-y-0.5"
+          data-tour-anchor={isTourSimulationSession ? 'incomes-field-description' : undefined}
+        >
           <label htmlFor={fieldId('description')} className={labelClass}>
             Descrição / Origem
           </label>
@@ -568,7 +839,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             id={fieldId('description')}
             name="description"
             type="text" 
-            placeholder="EX: PAGAMENTO CLIENTE X, VENDA LOJA"
+            placeholder="Ex.: Pagamento cliente X, venda loja"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             data-preserve-case="true"
@@ -577,7 +848,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         </div>
 
         <div className="grid grid-cols-1 gap-0.5 sm:gap-3 items-end">
-            <div className="space-y-0.5">
+            <div
+                className="space-y-0.5"
+                data-tour-anchor={isTourSimulationSession ? 'incomes-field-amount' : undefined}
+            >
                 <label htmlFor={fieldId('amount')} className={labelClass}>
                   Valor (R$)
                 </label>
@@ -585,7 +859,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     id={fieldId('amount')}
                     name="amount"
                     type="number" 
-                    placeholder="EX: R$0,00"
+                    placeholder="Ex.: R$ 0,00"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     className={`${inputBaseClass} font-bold text-emerald-600 dark:text-emerald-400`}
@@ -593,7 +867,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </div>
             
             {/* NATUREZA FISCAL - Posicionado logo após Categoria/Valor conforme solicitado */}
-            <div className="space-y-0.5">
+            <div
+                className="space-y-0.5"
+                data-tour-anchor={isTourSimulationSession ? 'incomes-field-tax-status' : undefined}
+            >
                 <label htmlFor={fieldId('taxStatus')} className={labelClass}>
                     Natureza Fiscal
                 </label>
@@ -604,7 +881,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                         { value: 'PJ', label: 'PJ (Empresarial/MEI)' },
                         { value: 'PF', label: 'PF (Pessoal)' }
                     ]}
-                    placeholder="SELECIONE"
+                    placeholder="Selecione"
                     buttonClassName={selectBaseClass}
                     listClassName="max-h-56"
                 />
@@ -613,7 +890,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
         <div className="grid grid-cols-1 gap-0.5 sm:gap-3 items-end">
             {/* Dynamic Category Section */}
-            <div className="space-y-0.5 relative">
+            <div
+                className="space-y-0.5 relative"
+                data-tour-anchor={isTourSimulationSession ? 'incomes-field-category' : undefined}
+            >
                 <div className="flex justify-between items-center min-h-[10px] mb-0.5">
                     <label htmlFor={fieldId('category')} className={`${labelClass} leading-none`}>
                       Categoria
@@ -621,7 +901,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     <button 
                         type="button"
                         onClick={() => setIsManagingCategories(true)}
-                        className="text-[9px] font-bold flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
+                        data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-manage' : undefined}
+                        className="text-[10px] font-semibold flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
                     >
                         <Edit2 size={10} /> Editar
                     </button>
@@ -653,23 +934,25 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                         <div className="pt-3 flex-1 overflow-hidden px-0.5">
                         <div className="flex gap-2 mb-3">
                             <input 
-                                id={fieldId('category-new')}
-                                name="categoryNew"
-                                autoFocus
-                                type="text" 
-                                placeholder={categoryError || 'NOVA CATEGORIA...'}
-                                value={newCategoryName}
-                                onChange={(e) => {
-                                  setNewCategoryName(e.target.value);
-                                  setCategoryError('');
+                                    id={fieldId('category-new')}
+                                    name="categoryNew"
+                                    autoFocus
+                                    type="text" 
+                                    placeholder={categoryError || 'Nova categoria...'}
+                                    value={newCategoryName}
+                                    onChange={(e) => {
+                                      setNewCategoryName(e.target.value);
+                                      setCategoryError('');
                                 }}
                                 onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                                data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-new' : undefined}
                                 className={`${inputBaseClass} flex-1 w-auto ${categoryError ? 'border-red-500 focus:border-red-500 focus:ring-red-500 placeholder:text-red-500' : ''}`}
                                 aria-label="Nova categoria"
                             />
                             <button
                                 type="button"
                                 onClick={handleAddCategory}
+                                data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-add' : undefined}
                                 aria-label="Adicionar categoria"
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-md"
                             >
@@ -735,21 +1018,24 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 ) : (
                     <SelectDropdown
                         value={category}
-                        onChange={setCategory}
-                        options={[
-                            ...(category && !categories.includes(category) ? [{ value: category, label: category }] : []),
-                            ...categories.map(cat => ({ value: cat, label: cat }))
-                        ]}
-                        placeholder={categories.length === 0 ? 'SEM CATEGORIAS, CRIE UMA' : 'SELECIONE'}
-                        disabled={categories.length === 0}
-                        buttonClassName={selectBaseClass}
-                        listClassName="max-h-56"
-                    />
+                    onChange={setCategory}
+                    options={[
+                        ...(category && !categories.includes(category) ? [{ value: category, label: category }] : []),
+                        ...categories.map(cat => ({ value: cat, label: cat }))
+                    ]}
+                    placeholder={categories.length === 0 ? 'Sem categorias, crie uma' : 'Selecione'}
+                    disabled={categories.length === 0}
+                    buttonClassName={selectBaseClass}
+                    listClassName="max-h-56"
+                />
                 )}
             </div>
 
             {/* Data de Competência */}
-            <div className="space-y-0.5">
+            <div
+                className="space-y-0.5"
+                data-tour-anchor={isTourSimulationSession ? 'incomes-field-competence-date' : undefined}
+            >
                 <label htmlFor={fieldId('competenceDate')} className={`${labelClass} leading-none`}>
                   DATA DA VENDA / SERVIÇO
                 </label>
@@ -766,7 +1052,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5 sm:gap-3">
              {/* NOVO CAMPO: Forma de Pagamento */}
-            <div className="space-y-0.5">
+            <div
+                className="space-y-0.5"
+                data-tour-anchor={isTourSimulationSession ? 'incomes-field-payment-method' : undefined}
+            >
                 <label htmlFor={fieldId('payment-method')} className={labelClass}>
                   Forma de Pagamento
                 </label>
@@ -774,7 +1063,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     value={paymentMethod}
                     onChange={handlePaymentMethodSelect}
                     options={paymentMethodOptions}
-                    placeholder="SELECIONE"
+                    placeholder="Selecione"
                     buttonClassName={selectBaseClass}
                     listClassName="max-h-56"
                 />
@@ -782,7 +1071,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         </div>
 
         <div className="space-y-0.5">
-            <div className="space-y-0.5">
+            <div
+                className="space-y-0.5"
+                data-tour-anchor={isTourSimulationSession ? 'incomes-field-account' : undefined}
+            >
                 <label htmlFor={fieldId('account')} className={labelClass}>
                   Conta de Destino
                 </label>
@@ -790,13 +1082,16 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     value={selectedAccountId}
                     onChange={setSelectedAccountId}
                     options={accountOptions}
-                    placeholder={availableAccounts.length === 0 ? 'NENHUMA CONTA DISPONÍVEL' : 'SELECIONE'}
+                    placeholder={availableAccounts.length === 0 ? 'Nenhuma conta disponível' : 'Selecione'}
                     disabled={availableAccounts.length === 0}
                     buttonClassName={selectBaseClass}
                     listClassName="max-h-56"
                 />
             </div>
-            <div className="space-y-0.5">
+            <div
+                className="space-y-0.5"
+                data-tour-anchor={isTourSimulationSession ? 'incomes-field-date' : undefined}
+            >
                 <label htmlFor={fieldId('date')} className={labelClass}>
                     {isInstallment ? 'Data da 1ª Parcela (Caixa)' : 'Data de Recebimento (Caixa)'}
                 </label>
@@ -837,10 +1132,11 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsInstallmentModalOpen(true)}
+                    data-tour-anchor={isTourSimulationSession ? 'incomes-field-installment-open' : undefined}
                     className={`${selectBaseClass} flex items-center justify-between w-full col-span-2`}
                   >
                     Entrada Parcelada
-                    <span className="text-[9px]">Adicionar</span>
+                    <span className="text-[10px]">Adicionar</span>
                   </button>
                 )}
             </div>
@@ -949,6 +1245,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
           <button
             type="button"
             onClick={() => setIsNotesModalOpen(true)}
+            data-tour-anchor={isTourSimulationSession ? 'incomes-field-notes-open' : undefined}
             className={`${selectBaseClass} flex items-center justify-between w-full`}
           >
             Observações
@@ -991,6 +1288,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                   max="60"
                   value={installmentCount}
                   onChange={(e) => setInstallmentCount(parseInt(e.target.value))}
+                  data-tour-anchor={isTourSimulationSession ? 'incomes-field-installment-count' : undefined}
                   className={inputBaseClass}
                 />
                 <div className="space-y-2">
@@ -1014,6 +1312,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                         name={fieldId('value-type')}
                         checked={installmentValueType === 'parcel'}
                         onChange={() => setInstallmentValueType('parcel')}
+                        data-tour-anchor={isTourSimulationSession ? 'incomes-field-installment-value-parcel' : undefined}
                         className="text-emerald-600 focus:ring-emerald-500"
                       />
                       Valor da Parcela
@@ -1093,6 +1392,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   data-preserve-case="true"
+                  data-tour-anchor={isTourSimulationSession ? 'incomes-field-notes-textarea' : undefined}
                   className={textareaBaseClass}
                 />
               </div>
@@ -1107,6 +1407,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsNotesModalOpen(false)}
+                  data-tour-anchor={isTourSimulationSession ? 'incomes-field-notes-save' : undefined}
                   className="rounded-xl border border-emerald-500/40 py-2.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
                 >
                   Salvar
@@ -1131,17 +1432,21 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             </button>
             <button
               onClick={handleSave}
+              data-tour-action={isTourSimulationSession ? 'tour-income-save' : undefined}
+              data-tour-anchor={isTourSimulationSession ? 'incomes-field-save' : undefined}
               className={`h-10 sm:h-11 px-5 sm:px-6 rounded-lg sm:rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm sm:text-base text-white font-bold shadow-lg shadow-emerald-900/20 transition-all active:scale-95 ${
                 isDockDesktop ? 'w-full' : ''
               }`}
             >
-              {primaryLabel}
+              {saveButtonLabel}
             </button>
           </div>
         </div>
       )}
     </>
   );
+
+  if (!isOpen) return null;
 
   if (isInline) {
     return <div className="w-full bg-transparent">{formContent}</div>;
@@ -1150,7 +1455,11 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   if (isDock) {
     if (!isOpen) return null;
     return (
-      <div className="fixed inset-0 z-[1200]">
+      <div
+        className="fixed inset-0 z-[1200]"
+        data-modal-root="true"
+        data-tour-anchor={isOpen ? 'incomes-new-income-modal' : undefined}
+      >
         <button
           type="button"
           onClick={onClose}
@@ -1187,23 +1496,25 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[1200]"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose();
-        }
-      }}
-      tabIndex={-1}
-      data-modal-root="true"
-      ref={modalRootRef}
-    >
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
-      <div className="relative flex h-full w-full items-stretch justify-center px-4 sm:px-6 lg:px-10">
-        <div className="relative w-full h-full max-w-5xl bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all border border-white/10 dark:border-zinc-800/60 overflow-y-auto">
-          {formContent}
+    <div data-tour-anchor={isOpen ? 'incomes-new-income-modal' : undefined}>
+      <div
+        className="fixed inset-0 z-[1200]"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+        tabIndex={-1}
+        data-modal-root="true"
+        ref={modalRootRef}
+      >
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} aria-hidden="true" />
+        <div className="relative flex h-full w-full items-stretch justify-center px-4 sm:px-6 lg:px-10">
+          <div className="relative w-full h-full max-w-5xl bg-white dark:bg-[#0d0d10] text-left shadow-2xl transition-all border border-white/10 dark:border-zinc-800/60 overflow-y-auto">
+            {formContent}
+          </div>
         </div>
       </div>
     </div>

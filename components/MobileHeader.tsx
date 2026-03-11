@@ -64,14 +64,14 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
             type="button"
             onClick={closeMenu}
             aria-label="Fechar menu"
-            className="h-9 w-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center"
+            className="h-9 w-9 rounded-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center"
             title="Fechar"
           >
             <X size={16} />
           </button>
         </div>
 
-        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3">
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3">
           <p className="text-[10px] uppercase tracking-wider text-zinc-400 mb-1">Conta ativa</p>
           <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{username}</p>
         </div>
@@ -84,7 +84,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
                 closeMenu();
                 onOpenSettings();
               }}
-              className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 px-4 py-3 text-sm font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+              className="mm-mobile-btn mm-mobile-btn-secondary flex items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-3 text-sm font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
             >
               <span className="flex items-center gap-2">
                 <Settings size={16} />
@@ -98,7 +98,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
               closeMenu();
               onLogout();
             }}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-red-200 dark:border-red-900/40 px-4 py-3 text-sm font-semibold text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20"
+            className="mm-mobile-btn mm-mobile-btn-danger flex items-center justify-between gap-3 rounded-xl border border-red-200 dark:border-red-900/40 px-4 py-3 text-sm font-semibold text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20"
           >
             <span className="flex items-center gap-2">
               <LogOut size={16} />
@@ -149,7 +149,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
           type="button"
           onClick={() => setMenuOpen(true)}
           aria-label="Abrir menu"
-          className="h-8 w-8 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 text-white flex items-center justify-center"
+          className="h-9 w-9 rounded-[10px] bg-white/10 hover:bg-white/20 border border-white/10 text-white flex items-center justify-center"
           title="Menu"
         >
           <Menu size={16} />
@@ -157,8 +157,8 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
         <div className="pointer-events-none absolute left-1/2 -translate-x-1/2">
           <Logo size="md" className="text-white drop-shadow-lg" />
         </div>
-        <div className="h-8 min-w-[96px] flex items-center justify-end">
-          <span className="text-[9px] font-semibold text-white/80 truncate max-w-[96px]">
+        <div className="h-9 min-w-[112px] flex items-center justify-end">
+          <span className="text-[10px] font-semibold text-white/80 truncate max-w-[112px]">
             {companyName}
           </span>
         </div>

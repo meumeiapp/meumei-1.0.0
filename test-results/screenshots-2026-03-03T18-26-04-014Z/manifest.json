@@ -1,0 +1,30 @@
+{
+  "baseUrl": "http://127.0.0.1:4173",
+  "loginEmail": "qa.screenshots.bot@example.com",
+  "generatedAt": "2026-03-03T18:26:30.690Z",
+  "outDir": "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z",
+  "total": 21,
+  "captures": [
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/01-landing-home.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/02-landing-planos.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/03-termos.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/04-privacidade.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/05-reembolso.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/06-login.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/07-cadastro-view.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/09-dashboard.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/10-accounts.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/11-incomes.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/12-fixed-expenses.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/13-variable-expenses.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/14-personal-expenses.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/15-yields.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/16-invoices.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/17-reports.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/18-das.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/19-agenda.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/20-settings.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/21-mobile-dashboard.png",
+    "/Users/alekamers/Downloads/meumei/Projeto/meumeiappbeta/test-results/screenshots-2026-03-03T18-26-04-014Z/22-mobile-launches.png"
+  ]
+}

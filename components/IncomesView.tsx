@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowUpCircle, Trash2, AlertTriangle, X, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown } from 'lucide-react';
+import { ArrowUpCircle, Trash2, AlertTriangle, X, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown, Pencil, SlidersHorizontal } from 'lucide-react';
 import { Income, Account } from '../types';
 import NewIncomeModal from './NewIncomeModal';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
@@ -12,6 +12,16 @@ import MobileFullWidthSection from './mobile/MobileFullWidthSection';
 import { buildInstallmentDescription, getIncomeInstallmentSeries, normalizeInstallmentDescription } from '../utils/installmentSeries';
 import { shouldApplyLegacyBalanceMutation } from '../utils/legacyBalanceMutation';
 import { incomeStatusLabel, normalizeIncomeStatus } from '../utils/statusUtils';
+import {
+  TOUR_SIMULATED_ACCOUNT_PREFIX,
+  clearTourSimulatedAccounts,
+  readTourSimulatedAccounts,
+  upsertTourSimulatedAccount
+} from '../services/tourSimulationService';
+
+const TOUR_SIMULATED_INCOME_PREFIX = '__tour_sim_income__';
+const isTourSimulatedIncomeId = (id: string) => id.startsWith(TOUR_SIMULATED_INCOME_PREFIX);
+const isTourSimulatedAccountId = (id: string) => id.startsWith(TOUR_SIMULATED_ACCOUNT_PREFIX);
 
 interface IncomesViewProps {
   onBack: () => void;
@@ -77,12 +87,126 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   const [mobileScreen, setMobileScreen] = useState<'list' | 'form'>('list');
   const [drawerIncome, setDrawerIncome] = useState<Income | null>(null);
   const [mobilePageIndex, setMobilePageIndex] = useState(0);
+  const [tourSimulatedIncomes, setTourSimulatedIncomes] = useState<Income[]>([]);
+  const [tourSimulatedAccounts, setTourSimulatedAccounts] = useState<Account[]>([]);
   const mobilePagerRef = useRef<HTMLDivElement | null>(null);
   const headerLayoutLoggedRef = useRef(false);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
+  const [desktopFilterOpen, setDesktopFilterOpen] = useState(false);
+  const [desktopSearchTerm, setDesktopSearchTerm] = useState('');
+  const [desktopStatusFilter, setDesktopStatusFilter] = useState<'all' | 'received' | 'pending'>('all');
+  const [desktopAccountFilter, setDesktopAccountFilter] = useState<'all' | string>('all');
+  const [desktopCategoryFilter, setDesktopCategoryFilter] = useState<'all' | string>('all');
   const canAdjustAccount = (account?: Account | null) => Boolean(account && !account.locked);
+  const selectChangedAccounts = (baseAccounts: Account[], nextAccounts: Account[]) => {
+      const baseById = new Map(baseAccounts.map(account => [account.id, account]));
+      return nextAccounts.filter(account => {
+          const previous = baseById.get(account.id);
+          if (!previous) return true;
+          const previousBalance = Number(previous.currentBalance || 0);
+          const nextBalance = Number(account.currentBalance || 0);
+          return Math.abs(previousBalance - nextBalance) > 0.009;
+      });
+  };
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      setTourSimulatedAccounts(readTourSimulatedAccounts());
+
+      const handleTourIncomeSimulated = (event: Event) => {
+          const detail = (event as CustomEvent<{ income?: Partial<Income> & { id?: string } }>).detail;
+          const incomeData = detail?.income;
+          if (!incomeData) return;
+
+          const incomingId = incomeData.id ? String(incomeData.id) : '';
+          const isEditingSimulated = Boolean(incomingId) && isTourSimulatedIncomeId(incomingId);
+          const parsedAmount = Number(incomeData.amount);
+          const normalizedAmount = Number.isFinite(parsedAmount) ? parsedAmount : 0;
+          const normalizedDate = (incomeData.date || new Date().toISOString().split('T')[0]).toString();
+          const normalizedCompetenceDate = (incomeData.competenceDate || normalizedDate).toString();
+          const normalizedStatus = incomeData.status === 'pending' ? 'pending' : 'received';
+          const normalizedDescription = (incomeData.description || 'Entrada de teste').toString();
+          const normalizedCategory = (incomeData.category || 'SEM CATEGORIA').toString();
+          const normalizedAccountId = (incomeData.accountId || '').toString();
+          if (!normalizedAccountId) return;
+
+          const baseIncome: Income = {
+              id: isEditingSimulated ? incomingId : `${TOUR_SIMULATED_INCOME_PREFIX}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+              description: normalizedDescription,
+              amount: normalizedAmount,
+              category: normalizedCategory,
+              date: normalizedDate,
+              competenceDate: normalizedCompetenceDate,
+              accountId: normalizedAccountId,
+              status: normalizedStatus,
+              paymentMethod: incomeData.paymentMethod || '',
+              notes: incomeData.notes || '',
+              taxStatus: incomeData.taxStatus || '',
+              createdBy: incomeData.createdBy || ''
+          };
+
+          if (isEditingSimulated) {
+              setTourSimulatedIncomes(prev => prev.map(item => (item.id === incomingId ? { ...item, ...baseIncome } : item)));
+              return;
+          }
+
+          setTourSimulatedIncomes(prev => [baseIncome, ...prev]);
+      };
+
+      const handleTourAccountSimulated = (event: Event) => {
+          const detail = (event as CustomEvent<{ account?: any }>).detail;
+          const accountData = detail?.account;
+          if (!accountData) return;
+
+          const incomingId = accountData.id ? String(accountData.id) : '';
+          const resolvedId =
+              incomingId && isTourSimulatedAccountId(incomingId)
+                  ? incomingId
+                  : `${TOUR_SIMULATED_ACCOUNT_PREFIX}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+          const parsedInitial = Number(accountData.balance);
+          const parsedCurrent = Number(accountData.currentBalance);
+          const initialBalance = Number.isFinite(parsedInitial) ? parsedInitial : 0;
+          const currentBalance = Number.isFinite(parsedCurrent) ? parsedCurrent : initialBalance;
+
+          const simulatedAccount: Account = {
+              id: resolvedId,
+              name: (accountData.name || 'Conta de teste').toString(),
+              type: (accountData.type || 'Conta').toString(),
+              initialBalance,
+              currentBalance,
+              notes: accountData.notes ? String(accountData.notes) : '',
+              color: accountData.color || '#0ea5e9',
+              nature: accountData.nature === 'PF' ? 'PF' : 'PJ',
+              yieldRate: Number.isFinite(Number(accountData.yieldRate)) ? Number(accountData.yieldRate) : undefined,
+              yieldIndex: accountData.yieldIndex === 'Selic' ? 'Selic' : 'CDI'
+          };
+
+          const nextStored = upsertTourSimulatedAccount(simulatedAccount);
+          setTourSimulatedAccounts(nextStored);
+      };
+
+      const clearTourData = () => {
+          clearTourSimulatedAccounts();
+          setTourSimulatedIncomes([]);
+          setTourSimulatedAccounts([]);
+      };
+
+      window.addEventListener('mm:tour-income-simulated', handleTourIncomeSimulated as EventListener);
+      window.addEventListener('mm:tour-new-account-simulated', handleTourAccountSimulated as EventListener);
+      window.addEventListener('mm:first-access-tour-ended', clearTourData);
+      window.addEventListener('mm:first-access-tour-restart', clearTourData);
+      window.addEventListener('mm:first-access-tour-clear-data', clearTourData);
+
+      return () => {
+          window.removeEventListener('mm:tour-income-simulated', handleTourIncomeSimulated as EventListener);
+          window.removeEventListener('mm:tour-new-account-simulated', handleTourAccountSimulated as EventListener);
+          window.removeEventListener('mm:first-access-tour-ended', clearTourData);
+          window.removeEventListener('mm:first-access-tour-restart', clearTourData);
+          window.removeEventListener('mm:first-access-tour-clear-data', clearTourData);
+      };
+  }, []);
 
   useEffect(() => {
       if (highlightTarget && highlightTarget.entity === 'income') {
@@ -109,6 +233,11 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       if (!isMobile || headerLayoutLoggedRef.current) return;
       console.info('[layout][mobile-subheader] incomes in-flow');
       headerLayoutLoggedRef.current = true;
+  }, [isMobile]);
+
+  useEffect(() => {
+      if (!isMobile) return;
+      setDesktopFilterOpen(false);
   }, [isMobile]);
 
   useEffect(() => {
@@ -152,24 +281,84 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       };
   }, [isMobile]);
 
+  const displayIncomes = React.useMemo(
+      () => (tourSimulatedIncomes.length > 0 ? [...tourSimulatedIncomes, ...incomes] : incomes),
+      [tourSimulatedIncomes, incomes]
+  );
+  const displayAccounts = React.useMemo(() => {
+      if (tourSimulatedAccounts.length === 0) return accounts;
+      const persistedIds = new Set(accounts.map(account => account.id));
+      const unresolvedSimulated = tourSimulatedAccounts.filter(account => !persistedIds.has(account.id));
+      return [...unresolvedSimulated, ...accounts];
+  }, [accounts, tourSimulatedAccounts]);
+  const primaryTourIncomeId = tourSimulatedIncomes[0]?.id || null;
+
+  const accountNameById = React.useMemo(() => {
+      const map = new Map<string, string>();
+      displayAccounts.forEach(account => map.set(account.id, account.name));
+      return map;
+  }, [displayAccounts]);
+
   // Filter incomes by Date
-  const filteredIncomes = incomes.filter(inc => {
+  const filteredIncomes = displayIncomes.filter(inc => {
       // Use T12:00:00 for safe parsing
-      const targetDate = new Date(inc.date + 'T12:00:00'); 
+      const targetDate = new Date(inc.date + 'T12:00:00');
       return targetDate.getMonth() === viewDate.getMonth() && targetDate.getFullYear() === viewDate.getFullYear();
   });
-  const selectableIncomes = filteredIncomes.filter(inc => !inc.locked);
 
-  const totalAmount = filteredIncomes.reduce((acc, curr) => acc + curr.amount, 0);
-  const totalReceived = filteredIncomes.filter(i => i.status === 'received').reduce((acc, curr) => acc + curr.amount, 0);
-  const INCOME_COLLAPSE_LIMIT = 10;
-  const visibleIncomes = filteredIncomes;
-  const incomeDesktopNeedsScroll = isCompactHeight || filteredIncomes.length > INCOME_COLLAPSE_LIMIT;
+  const desktopCategoryOptions = React.useMemo(
+      () =>
+          Array.from(
+              new Set(
+                  filteredIncomes
+                      .map(item => (item.category || '').trim())
+                      .filter(Boolean)
+              )
+          ).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      [filteredIncomes]
+  );
+  const desktopAccountOptions = React.useMemo(
+      () =>
+          displayAccounts
+              .map(account => ({ id: account.id, name: account.name }))
+              .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+      [displayAccounts]
+  );
+  const normalizedDesktopSearch = desktopSearchTerm.trim().toLowerCase();
+  const visibleIncomes = isMobile
+      ? filteredIncomes
+      : filteredIncomes.filter(income => {
+            if (desktopStatusFilter !== 'all' && income.status !== desktopStatusFilter) return false;
+            if (desktopAccountFilter !== 'all' && income.accountId !== desktopAccountFilter) return false;
+            if (desktopCategoryFilter !== 'all' && income.category !== desktopCategoryFilter) return false;
+            if (!normalizedDesktopSearch) return true;
+            const accountName = accountNameById.get(income.accountId) || '';
+            const haystack = [
+                income.description,
+                income.category,
+                income.paymentMethod,
+                income.taxStatus,
+                income.notes || '',
+                accountName
+            ]
+                .join(' ')
+                .toLowerCase();
+            return haystack.includes(normalizedDesktopSearch);
+        });
+  const selectableIncomes = visibleIncomes.filter(inc => !inc.locked && !isTourSimulatedIncomeId(inc.id));
+
+  const totalAmount = visibleIncomes.reduce((acc, curr) => acc + curr.amount, 0);
+  const totalReceived = visibleIncomes.filter(i => i.status === 'received').reduce((acc, curr) => acc + curr.amount, 0);
   const isListViewSafe = isMobile ? mobileScreen === 'list' : true;
-  const allowPageScroll = isMobile ? false : incomeDesktopNeedsScroll;
+  const allowPageScroll = false;
   const MOBILE_PAGE_SIZE = 8;
   const mobilePages = chunkItems(visibleIncomes, MOBILE_PAGE_SIZE);
   const hasMobilePages = mobilePages.length > 1;
+  const desktopActiveFilterCount =
+      (normalizedDesktopSearch ? 1 : 0) +
+      (desktopStatusFilter !== 'all' ? 1 : 0) +
+      (desktopAccountFilter !== 'all' ? 1 : 0) +
+      (desktopCategoryFilter !== 'all' ? 1 : 0);
   useEffect(() => {
       const shouldLock = !allowPageScroll;
       document.documentElement.classList.toggle('lock-scroll', shouldLock);
@@ -180,13 +369,21 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       };
   }, [allowPageScroll]);
 
+  useEffect(() => {
+      const visibleIds = new Set(visibleIncomes.map(income => income.id));
+      setSelectedIds(prev => {
+          const next = prev.filter(id => visibleIds.has(id));
+          return next.length === prev.length ? prev : next;
+      });
+  }, [visibleIncomes]);
+
   // ... rest of logic/handlers ...
   // --- SELECTION CALCULATIONS ---
-  const selectedIncomes = filteredIncomes.filter(i => selectedIds.includes(i.id));
+  const selectedIncomes = visibleIncomes.filter(i => selectedIds.includes(i.id));
   const selectedTotalAmount = selectedIncomes.reduce((acc, curr) => acc + curr.amount, 0);
   const selectedReceivedTotal = selectedIncomes.filter(i => i.status === 'received').reduce((acc, curr) => acc + curr.amount, 0);
   const hasSelection = selectedIds.length > 0;
-  const headerCount = hasSelection ? selectedIncomes.length : filteredIncomes.length;
+  const headerCount = hasSelection ? selectedIncomes.length : visibleIncomes.length;
   const headerTotal = hasSelection ? selectedTotalAmount : totalAmount;
   const headerReceived = hasSelection ? selectedReceivedTotal : totalReceived;
 
@@ -297,7 +494,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           });
 
           if (accountsChanged) {
-              onUpdateAccounts(newAccounts);
+              const changedAccounts = selectChangedAccounts(accounts, newAccounts);
+              if (changedAccounts.length) {
+                  onUpdateAccounts(changedAccounts);
+              }
           }
       } else {
           const { applyScope, ...payload } = incomeData || {};
@@ -350,7 +550,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           if (result.accountsChanged) accountsChanged = true;
                       });
                       if (accountsChanged) {
-                          onUpdateAccounts(nextAccounts);
+                          const changedAccounts = selectChangedAccounts(accounts, nextAccounts);
+                          if (changedAccounts.length) {
+                              onUpdateAccounts(changedAccounts);
+                          }
                       }
 
                       console.info('[series-edit]', {
@@ -367,7 +570,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                   updatedList = incomes.map(inc => inc.id === updatedIncome.id ? updatedIncome : inc);
 
                   if (accountsChanged) {
-                      onUpdateAccounts(updatedAccounts);
+                      const changedAccounts = selectChangedAccounts(accounts, updatedAccounts);
+                      if (changedAccounts.length) {
+                          onUpdateAccounts(changedAccounts);
+                      }
                   }
 
                   if (applyScope) {
@@ -384,7 +590,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
               const { accounts: updatedAccounts, accountsChanged } = applyIncomeAccountAdjustments(null, newItem);
               if (accountsChanged) {
-                  onUpdateAccounts(updatedAccounts);
+                  const changedAccounts = selectChangedAccounts(accounts, updatedAccounts);
+                  if (changedAccounts.length) {
+                      onUpdateAccounts(changedAccounts);
+                  }
               }
           }
       }
@@ -435,7 +644,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
       onUpdateIncomes(updatedIncomes);
       if (accountsChanged) {
-          onUpdateAccounts(newAccounts);
+          const changedAccounts = selectChangedAccounts(accounts, newAccounts);
+          if (changedAccounts.length) {
+              onUpdateAccounts(changedAccounts);
+          }
       }
   };
 
@@ -468,7 +680,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
       onUpdateIncomes(remainingIncomes);
       if (accountsChanged) {
-          onUpdateAccounts(newAccounts);
+          const changedAccounts = selectChangedAccounts(accounts, newAccounts);
+          if (changedAccounts.length) {
+              onUpdateAccounts(changedAccounts);
+          }
       }
       
       setSelectedIds([]);
@@ -493,11 +708,30 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           console.info('[mobile-ui] incomes', { screen: 'form', action: 'new' });
           return;
       }
+      setDesktopFilterOpen(false);
       setInlineEditIncomeId(null);
       setEditingIncome(null);
       setDrawerIncome(null);
       setInlineNewOpen(prev => !prev);
   };
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const handleTourOpenIncomeModal = () => {
+          if (isMobile) {
+              setEditingIncome(null);
+              setMobileScreen('form');
+              return;
+          }
+          setDesktopFilterOpen(false);
+          setInlineEditIncomeId(null);
+          setEditingIncome(null);
+          setDrawerIncome(null);
+          setInlineNewOpen(true);
+      };
+      window.addEventListener('mm:tour-open-income-modal', handleTourOpenIncomeModal);
+      return () => window.removeEventListener('mm:tour-open-income-modal', handleTourOpenIncomeModal);
+  }, [isMobile]);
 
   const handleEditIncome = (income: Income) => {
       if (isMobile) {
@@ -506,10 +740,11 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           console.info('[mobile-ui] incomes', { screen: 'form', action: 'edit', id: income.id });
           return;
       }
+      setDesktopFilterOpen(false);
       setEditingIncome(income);
       setInlineNewOpen(false);
       setInlineEditIncomeId(income.id);
-      setDrawerIncome(income);
+      setDrawerIncome(null);
   };
 
   useEffect(() => {
@@ -530,7 +765,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       onAutoOpenEditHandled?.();
   }, [autoOpenEditId, incomes, isMobile, onAutoOpenEditHandled]);
 
-  const getAccountById = (accId: string) => accounts.find(a => a.id === accId);
+  const getAccountById = (accId: string) => displayAccounts.find(a => a.id === accId);
   const getIncomeStatusMeta = (income: Income) => {
       const normalizedStatus = normalizeIncomeStatus(income.status);
       const statusLabel = incomeStatusLabel(income.status);
@@ -617,10 +852,65 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   }, [handleNew, incomeToDelete, inlineEditIncomeId, inlineNewOpen, isBulkDeleteModalOpen, isMobile]);
 
   useEffect(() => {
-      if (!drawerIncome) {
-          setInlineEditIncomeId(null);
-          return;
-      }
+      if (isMobile) return;
+      const handleListArrowNavigation = (event: KeyboardEvent) => {
+          if (event.defaultPrevented || event.repeat) return;
+          if (event.ctrlKey || event.metaKey || event.altKey) return;
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          if (document.querySelector('[data-modal-root="true"]')) return;
+
+          const target = event.target as HTMLElement | null;
+          if (target) {
+              const tagName = target.tagName;
+              if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target.isContentEditable) {
+                  return;
+              }
+          }
+
+          if (inlineNewOpen || inlineEditIncomeId || isBulkDeleteModalOpen || incomeToDelete) return;
+
+          const navigableIncomes = visibleIncomes.filter(
+              income => !(income.locked || income.lockedReason === 'epoch_mismatch')
+          );
+          if (navigableIncomes.length === 0) return;
+
+          event.preventDefault();
+          const direction = event.key === 'ArrowDown' ? 1 : -1;
+          const anchorId = highlightedId;
+          const currentIndex = anchorId
+              ? navigableIncomes.findIndex(income => income.id === anchorId)
+              : -1;
+          const nextIndex =
+              currentIndex === -1
+                  ? (direction > 0 ? 0 : navigableIncomes.length - 1)
+                  : (currentIndex + direction + navigableIncomes.length) % navigableIncomes.length;
+          const nextIncome = navigableIncomes[nextIndex];
+          if (!nextIncome) return;
+
+          setHighlightedId(nextIncome.id);
+          requestAnimationFrame(() => {
+              document.getElementById(`income-${nextIncome.id}`)?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'nearest'
+              });
+          });
+      };
+
+      window.addEventListener('keydown', handleListArrowNavigation);
+      return () => window.removeEventListener('keydown', handleListArrowNavigation);
+  }, [
+      drawerIncome,
+      highlightedId,
+      incomeToDelete,
+      inlineEditIncomeId,
+      inlineNewOpen,
+      isBulkDeleteModalOpen,
+      isMobile,
+      visibleIncomes
+  ]);
+
+  useEffect(() => {
+      if (!drawerIncome) return;
       if (inlineEditIncomeId && inlineEditIncomeId !== drawerIncome.id) {
           setInlineEditIncomeId(null);
       }
@@ -705,7 +995,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           : (editingIncome ? 'Editar Entrada' : 'Nova Entrada');
 
   const mobileHeader = (
-          <div className="space-y-2">
+          <div className={`space-y-2 mm-mobile-header-stack ${isListView ? 'mm-mobile-header-stable' : ''}`}>
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
                   <button
                       type="button"
@@ -727,17 +1017,17 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               {isListView && (
                   <>
                       <div className="grid grid-cols-3 gap-2">
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
                               <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
                           </div>
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Previsto</p>
                               <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
                                   R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
+                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
                               <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Recebido</p>
                               <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
                                   R$ {headerReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -748,7 +1038,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           {onOpenAudit && (
                               <button
                                   onClick={onOpenAudit}
-                                  className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-emerald-600 dark:hover:text-emerald-300 hover:border-emerald-200 dark:hover:border-emerald-700 transition"
+                                  className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-emerald-600 dark:hover:text-emerald-300 hover:border-emerald-200 dark:hover:border-emerald-700 transition"
                                   title="Auditoria do dia"
                               >
                                   <History size={14} />
@@ -757,7 +1047,8 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           )}
                           <button
                               onClick={handleNew}
-                              className="w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-emerald-900/20"
+                              data-tour-anchor="incomes-new"
+                              className="w-full rounded-xl mm-mobile-primary-cta bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-emerald-900/20"
                           >
                               Nova Entrada
                           </button>
@@ -785,13 +1076,13 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               ref={subHeaderRef}
                               className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
                           >
-                              <div className="px-4 pb-3 pt-2">
+                              <div className="mm-mobile-subheader-pad">
                                   {mobileHeader}
                               </div>
                           </div>
                       </div>
                       <div
-                          className={`h-full px-4 overflow-hidden ${isListView ? 'pb-[calc(env(safe-area-inset-bottom)+88px)]' : 'pb-[calc(env(safe-area-inset-bottom)+16px)]'}`}
+                          className={`h-full mm-mobile-content-pad overflow-hidden ${isListView ? 'pb-[calc(env(safe-area-inset-bottom)+88px)]' : 'pb-[calc(env(safe-area-inset-bottom)+16px)]'}`}
                           style={{
                               paddingTop: subHeaderHeight
                                   ? `calc(var(--mm-mobile-top, 0px) + ${subHeaderHeight}px + 2px)`
@@ -799,7 +1090,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           }}
                       >
                           {isListView ? (
-                              <MobileFullWidthSection contentClassName="px-4 py-3">
+                              <MobileFullWidthSection contentClassName="mm-mobile-section-pad">
                               <div className="space-y-3">
                                   <div className="py-2">
                                       <button
@@ -890,7 +1181,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                   ) : (
                                       <MobileEmptyState
                                           icon={<ArrowUpCircle size={18} />}
-                                          message="Nenhuma entrada registrada para este mês."
+                                          title="Nenhuma entrada neste mês"
+                                          message="Registre a primeira entrada para alimentar relatórios e manter o fluxo de caixa atualizado."
+                                          actionLabel="Nova entrada"
+                                          onAction={handleNew}
                                       />
                                   )}
                               </div>
@@ -903,7 +1197,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               {!isListView && (() => {
                   const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
                   return (
-                  <div className="fixed inset-0 z-[1200]">
+                  <div className="fixed inset-0 z-[1200]" data-modal-root="true">
                       <button
                           type="button"
                           onClick={handleMobileFormClose}
@@ -912,29 +1206,29 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           aria-label="Fechar nova entrada"
                       />
                       <div
-                          className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
+                          className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-t-2xl border-0 shadow-none flex flex-col"
                           style={{ top: 0, bottom: dockOffset }}
                       >
-                          <div className="px-3 pt-2 pb-2 bg-[#0b0b10] border-b border-white/10">
+                          <div className="px-3 pt-2.5 pb-2.5 bg-[#0b0b10] border-b border-white/10">
                               <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0">
                                       <div className="flex items-center gap-2">
                                           <ArrowUpCircle size={16} className="text-white" />
-                                      <p className="text-[13px] font-semibold text-white truncate">{headerTitle}</p>
+                                      <p className="text-[15px] font-semibold text-white truncate">{headerTitle}</p>
                                   </div>
-                                      <p className="text-[9px] text-white/70">Preencha os dados da entrada.</p>
+                                      <p className="text-[11px] text-white/70">Preencha os dados da entrada.</p>
                                   </div>
                                   <button
                                       type="button"
                                       onClick={handleMobileFormClose}
-                                      className="h-8 w-8 rounded-none bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
+                                      className="h-8 w-8 rounded-xl bg-white/15 text-white/80 hover:text-white flex items-center justify-center"
                                       aria-label="Fechar nova entrada"
                                   >
                                       <X size={16} />
                                   </button>
                               </div>
                           </div>
-                          <div className="flex-1 overflow-hidden px-3 pt-1 pb-16">
+                          <div className="flex-1 overflow-y-auto overscroll-contain px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+132px)]">
                               <NewIncomeModal
                                   isOpen
                                   variant="inline"
@@ -945,7 +1239,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                   onClose={handleMobileFormClose}
                                   onSave={handleSaveIncome}
                                   initialData={editingIncome}
-                                  accounts={accounts}
+                                  accounts={displayAccounts}
                                   categories={categories}
                                   userId={userId}
                                   categoryType="incomes"
@@ -960,14 +1254,14 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               <button
                                   type="button"
                                   onClick={handleMobileFormClose}
-                                  className="rounded-none border border-emerald-400/50 bg-emerald-950/30 py-3 text-sm font-semibold text-emerald-200 hover:bg-emerald-900/40 transition"
+                                  className="rounded-xl border border-emerald-400/50 bg-emerald-950/30 py-3 text-sm font-semibold text-emerald-200 hover:bg-emerald-900/40 transition"
                               >
                                   Cancelar
                               </button>
                               <button
                                   type="button"
                                   onClick={() => submitRef.current?.()}
-                                  className="rounded-none border border-emerald-500/40 py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
+                                  className="rounded-xl border border-emerald-500/40 py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition"
                               >
                                   Salvar
                               </button>
@@ -1068,14 +1362,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   const desktopHeader = (
       <div className="space-y-2">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-              <button
-                  type="button"
-                  onClick={onBack}
-                  className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-                  aria-label="Voltar para o início"
-              >
-                  <Home size={16} />
-              </button>
+              <div className="h-8 w-8" aria-hidden="true" />
               <div className="min-w-0 text-center">
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Entradas</p>
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{listSubtitle}</p>
@@ -1102,23 +1389,24 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               </div>
           </div>
 
-          <div className={`grid ${onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+          <div className="flex flex-wrap items-center justify-center gap-2">
               {onOpenAudit && (
                   <button
                       onClick={onOpenAudit}
-                      className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-emerald-600 dark:hover:text-emerald-300 hover:border-emerald-200 dark:hover:border-emerald-700 transition"
+                      className="mm-btn-base mm-btn-secondary mm-btn-secondary-emerald min-w-[168px] px-6"
                       title="Auditoria do dia"
                   >
                       <History size={14} />
                       Auditoria
                   </button>
               )}
-              <button
-                  onClick={handleNew}
-                  className="w-full rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-emerald-900/20"
-              >
-                  Nova Entrada
-              </button>
+                  <button
+                      onClick={handleNew}
+                      data-tour-anchor="incomes-new"
+                      className="mm-btn-base mm-btn-primary mm-btn-primary-emerald min-w-[220px] px-8"
+                  >
+                      Nova Entrada
+                  </button>
           </div>
       </div>
   );
@@ -1132,49 +1420,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   );
 
   return (
-      <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 ${incomeDesktopNeedsScroll ? 'pb-20' : 'pb-6'} ${incomeDesktopNeedsScroll ? '' : 'overflow-hidden'}`}>
+      <div className="bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300">
           {summarySection}
 
-          {selectedIds.length > 0 && (
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-4 animate-in fade-in slide-in-from-top-2">
-                  <div className="bg-emerald-600 dark:bg-emerald-900 text-white p-3 rounded-xl shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
-                      <div className="flex items-center gap-4">
-                          <span className="bg-white/20 px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-2">
-                              <CheckSquare size={16} /> {selectedIds.length} selecionados
-                          </span>
-                          <div className="h-6 w-px bg-white/20 hidden sm:block"></div>
-                          <span className="text-sm font-medium">
-                              Soma: <strong className="text-lg ml-1">R$ {selectedTotalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
-                          </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                          <button
-                              onClick={() => handleBulkStatusChange('received')}
-                              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-xs font-bold transition-colors"
-                          >
-                              <CheckCircle2 size={14} /> Marcar Recebidos
-                          </button>
-                          <button
-                              onClick={() => handleBulkStatusChange('pending')}
-                              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-xs font-bold transition-colors"
-                          >
-                              <Circle size={14} /> Marcar Pendentes
-                          </button>
-                          <button
-                              onClick={() => setIsBulkDeleteModalOpen(true)}
-                              aria-label="Excluir selecionados"
-                              className="flex-none p-1.5 bg-white/10 hover:bg-red-500 text-white rounded-lg transition-colors"
-                              title="Excluir Selecionados"
-                          >
-                              <Trash2 size={16} />
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          )}
-
-          <main className={`max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] animate-in fade-in slide-in-from-bottom-4 duration-500 ${incomeDesktopNeedsScroll ? 'pb-10' : 'pb-6'}`}>
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-[var(--mm-content-gap)] pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="space-y-3">
                   {inlineNewOpen && (
                       <NewIncomeModal
@@ -1183,7 +1432,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           onClose={closeIncomeModal}
                           onSave={handleSaveIncome}
                           initialData={null}
-                          accounts={accounts}
+                          accounts={displayAccounts}
                           categories={categories}
                           userId={userId}
                           categoryType="incomes"
@@ -1197,21 +1446,94 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
                   {filteredIncomes.length > 0 ? (
                       <>
-                          <div className="flex items-center justify-between rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                              <button
-                                  type="button"
-                                  onClick={toggleSelectAll}
-                                  disabled={selectableIncomes.length === 0}
-                                  className="flex items-center gap-2 font-semibold disabled:opacity-50"
-                              >
-                                  {allSelectableSelected ? (
-                                      <CheckSquare size={14} className="text-emerald-600" />
-                                  ) : (
-                                      <Square size={14} />
-                                  )}
-                                  <span>{allSelectableSelected ? 'Desmarcar todos' : 'Selecionar todos'}</span>
-                              </button>
-                              <span className="text-[11px]">{selectedIds.length} selecionados</span>
+                          <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400 space-y-3">
+                              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                      <button
+                                          type="button"
+                                          onClick={toggleSelectAll}
+                                          disabled={selectableIncomes.length === 0}
+                                          className="mm-btn-chip"
+                                      >
+                                          {allSelectableSelected ? (
+                                              <CheckSquare size={14} className="text-emerald-600" />
+                                          ) : (
+                                              <Square size={14} />
+                                          )}
+                                          <span>{allSelectableSelected ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+                                      </button>
+                                      <span className="text-[11px] font-semibold">{selectedIds.length} selecionados</span>
+                                      <span className="text-zinc-400 dark:text-zinc-600">|</span>
+                                      <span className="text-[11px]">
+                                          Soma:{' '}
+                                          <strong className="text-zinc-800 dark:text-zinc-100">
+                                              R$ {selectedTotalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                          </strong>
+                                      </span>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2">
+                                      {!isMobile && (
+                                          <button
+                                              type="button"
+                                              onClick={() => setDesktopFilterOpen(prev => !prev)}
+                                              className={`mm-btn-chip ${desktopFilterOpen ? 'mm-btn-chip-active-emerald' : ''}`}
+                                          >
+                                              <SlidersHorizontal size={13} />
+                                              Filtrar{desktopActiveFilterCount > 0 ? ` (${desktopActiveFilterCount})` : ''}
+                                          </button>
+                                      )}
+                                      <button
+                                          type="button"
+                                          onClick={() => handleBulkStatusChange('received')}
+                                          disabled={!hasSelection}
+                                          className="mm-btn-chip mm-btn-chip-success"
+                                      >
+                                          <CheckCircle2 size={13} /> Marcar Recebidos
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={() => handleBulkStatusChange('pending')}
+                                          disabled={!hasSelection}
+                                          className="mm-btn-chip mm-btn-chip-warning"
+                                      >
+                                          <Circle size={13} /> Marcar Pendentes
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={() => setIsBulkDeleteModalOpen(true)}
+                                          disabled={!hasSelection}
+                                          aria-label="Excluir selecionados"
+                                          className="mm-btn-icon"
+                                          title="Excluir selecionados"
+                                      >
+                                          <Trash2 size={14} />
+                                      </button>
+                                  </div>
+                              </div>
+
+                              {!isMobile && (
+                                  <div className="grid items-center gap-2 px-2 text-[10px] uppercase tracking-[0.08em] text-zinc-500 dark:text-zinc-400 [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                      <span className="text-center">#</span>
+                                      <span>Título</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Status</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Data • Competência</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Categoria</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Conta</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Forma</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Natureza</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span>Ações</span>
+                                      <span className="text-zinc-500/70">|</span>
+                                      <span className="text-right">Valor</span>
+                                  </div>
+                              )}
                           </div>
 
                           {visibleIncomes.map((income, index) => {
@@ -1220,88 +1542,107 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               const lockedReason = income.lockedReason;
                               const isLocked = Boolean(income.locked || lockedReason === 'epoch_mismatch');
                               const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
+                              const isTourSimulated = isTourSimulatedIncomeId(income.id);
+                              const isBulkSelectBlocked = isLocked || isTourSimulated;
+                              const isPrimaryTourIncome = Boolean(primaryTourIncomeId) && income.id === primaryTourIncomeId;
                               const { statusLabel, statusClassName } = getIncomeStatusMeta(income);
                               const accountName = getAccountById(income.accountId)?.name || 'Conta Deletada';
-                              const isExpanded = drawerIncome?.id === income.id;
                               const isInlineEditing = inlineEditIncomeId === income.id;
-                              const details = isExpanded ? buildIncomeDetails(income) : [];
                               const rowBg = index % 2 === 0 ? 'bg-emerald-500/10' : 'bg-transparent';
+                              const dateLabel = new Date(income.date + 'T12:00:00').toLocaleDateString('pt-BR');
+                              const competenceLabel = income.competenceDate
+                                  ? new Date(income.competenceDate + 'T12:00:00').toLocaleDateString('pt-BR')
+                                  : '-';
+                              const methodLabel = income.paymentMethod || '-';
+                              const natureLabel = income.taxStatus || '-';
+                              const effectiveStatusLabel = isLocked ? lockedLabel : statusLabel;
+                              const effectiveStatusClass = isLocked
+                                  ? 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800/70 dark:text-zinc-300'
+                                  : statusClassName;
 
                               return (
                                   <div key={income.id} id={`income-${income.id}`} className="space-y-3">
-                                      <div className={`py-2 rounded-md ${rowBg}`}>
-                                          <button
-                                              type="button"
-                                              onClick={() => openDrawer(income)}
-                                              className="w-full flex items-center justify-between gap-3 text-left"
-                                              disabled={isLocked}
-                                          >
-                                              <div className="flex items-center gap-2 min-w-0">
-                                                  <input
-                                                      type="checkbox"
-                                                      checked={isSelected}
-                                                      onChange={() => toggleSelection(income.id)}
-                                                      onClick={(event) => event.stopPropagation()}
-                                                      disabled={isLocked}
-                                                      className="h-4 w-4 accent-emerald-500"
-                                                      aria-label={`Selecionar entrada ${income.description}`}
-                                                  />
-                                                  <span
-                                                      className={`text-sm font-medium truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}
-                                                      title={income.description}
-                                                  >
-                                                      {income.description}
-                                                  </span>
-                                              </div>
-                                              <span className={`text-sm font-semibold shrink-0 mr-2 ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                                  R$ {income.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      <div
+                                          data-tour-anchor={isPrimaryTourIncome ? 'incomes-created-income-row' : undefined}
+                                          className={`py-2 rounded-md ${rowBg} ${isHighlighted ? 'ring-1 ring-emerald-300/70' : ''}`}
+                                      >
+                                          <div className="grid items-center gap-2 px-2 text-[11px] md:text-xs [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={isSelected}
+                                                  onChange={() => toggleSelection(income.id)}
+                                                  disabled={isBulkSelectBlocked}
+                                                  className="h-4 w-4 accent-emerald-500"
+                                                  aria-label={`Selecionar entrada ${income.description}`}
+                                              />
+                                              <span
+                                                  className={`font-bold truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-900 dark:text-zinc-100'}`}
+                                                  title={income.description}
+                                              >
+                                                  {income.description}
                                               </span>
-                                          </button>
-                                      </div>
-
-                                      {isExpanded && (
-                                          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4">
-                                              <div className="flex items-center justify-between">
-                                                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">Detalhes</span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${effectiveStatusClass}`}>
+                                                  {effectiveStatusLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={`${dateLabel} • ${competenceLabel}`}>
+                                                  {dateLabel} • {competenceLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={income.category || '-'}>
+                                                  {income.category || '-'}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={accountName}>
+                                                  {accountName}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={methodLabel}>
+                                                  {methodLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`truncate text-center ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={natureLabel}>
+                                                  {natureLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <div className="flex items-center gap-1">
                                                   <button
                                                       type="button"
-                                                      onClick={() => setDrawerIncome(null)}
-                                                      className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
-                                                      aria-label="Fechar detalhes"
+                                                      onClick={() => {
+                                                          if (isPrimaryTourIncome && typeof window !== 'undefined') {
+                                                              window.dispatchEvent(
+                                                                  new CustomEvent('mm:tour-incomes-edit-clicked', {
+                                                                      detail: { incomeId: income.id }
+                                                                  })
+                                                              );
+                                                          }
+                                                          handleEditIncome(income);
+                                                      }}
+                                                      data-tour-anchor={isPrimaryTourIncome ? 'incomes-created-income-edit' : undefined}
+                                                      disabled={isLocked}
+                                                      className="h-6 w-6 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition disabled:opacity-40"
+                                                      aria-label={`Editar entrada ${income.description}`}
                                                   >
-                                                      <X size={14} className="mx-auto" />
+                                                      <Pencil size={12} className="mx-auto" />
+                                                  </button>
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => requestDelete(income)}
+                                                      data-tour-anchor={isPrimaryTourIncome ? 'incomes-created-income-delete' : undefined}
+                                                      disabled={isLocked}
+                                                      className="h-6 w-6 rounded-md border border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition disabled:opacity-40"
+                                                      aria-label={`Excluir entrada ${income.description}`}
+                                                  >
+                                                      <Trash2 size={12} className="mx-auto" />
                                                   </button>
                                               </div>
-                                              <div className="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
-                                                  {details.map(item => (
-                                                      <div key={item.label} className="flex items-start justify-between gap-3">
-                                                          <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                                              {item.label}
-                                                          </span>
-                                                          <span className="text-right">{item.value}</span>
-                                                      </div>
-                                                  ))}
-                                              </div>
-                                              {!isLocked && (
-                                                  <div className="mt-4 flex flex-wrap gap-2">
-                                                      <button
-                                                          type="button"
-                                                          onClick={() => handleEditIncome(income)}
-                                                          className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 transition"
-                                                      >
-                                                          Editar
-                                                      </button>
-                                                      <button
-                                                          type="button"
-                                                          onClick={() => requestDelete(income)}
-                                                          className="rounded-xl border border-rose-200 dark:border-rose-900/40 px-4 py-2 text-xs font-semibold text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition"
-                                                      >
-                                                          Excluir
-                                                      </button>
-                                                  </div>
-                                              )}
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span className={`font-bold text-right ${isLocked ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                                  R$ {income.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                              </span>
                                           </div>
-                                      )}
+                                      </div>
 
                                       {!isLocked && isInlineEditing && (
                                           <NewIncomeModal
@@ -1310,7 +1651,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                               onClose={closeIncomeModal}
                                               onSave={handleSaveIncome}
                                               initialData={editingIncome ?? income}
-                                              accounts={accounts}
+                                              accounts={displayAccounts}
                                               categories={categories}
                                               userId={userId}
                                               categoryType="incomes"
@@ -1325,16 +1666,142 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               );
                           })}
 
+                          {!isMobile && visibleIncomes.length === 0 && (
+                              <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-4 py-5 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                                  Nenhuma entrada encontrada com os filtros atuais.
+                              </div>
+                          )}
+
                           
                       </>
                   ) : (
                       <MobileEmptyState
                           icon={<ArrowUpCircle size={18} />}
-                          message="Nenhuma entrada registrada para este mês."
+                          title="Nenhuma entrada neste mês"
+                          message="Registre a primeira entrada para alimentar relatórios e manter o fluxo de caixa atualizado."
+                          actionLabel="Nova entrada"
+                          onAction={handleNew}
                       />
                   )}
               </div>
           </main>
+
+          {!isMobile && desktopFilterOpen && (
+              <div className="fixed inset-0 z-[85]">
+                  <button
+                      type="button"
+                      className="absolute inset-0 bg-black/25"
+                      onClick={() => setDesktopFilterOpen(false)}
+                      aria-label="Fechar filtros de entradas"
+                  />
+                  <div
+                      className="absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]"
+                      style={{
+                          bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)'
+                      }}
+                  >
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                          <div className="min-w-0">
+                              <p className="text-sm font-semibold truncate">Filtrar Entradas</p>
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  Pesquise por texto e combine filtros da lista.
+                              </p>
+                          </div>
+                          <button
+                              type="button"
+                              onClick={() => setDesktopFilterOpen(false)}
+                              className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                              aria-label="Fechar filtros"
+                          >
+                              <X size={16} />
+                          </button>
+                      </div>
+
+                      <div className="pt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+                          <div className="md:col-span-2 space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Pesquisar na lista
+                              </label>
+                              <input
+                                  type="text"
+                                  value={desktopSearchTerm}
+                                  onChange={(event) => setDesktopSearchTerm(event.target.value)}
+                                  placeholder="Descrição, categoria, conta, forma..."
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Status
+                              </label>
+                              <select
+                                  value={desktopStatusFilter}
+                                  onChange={(event) =>
+                                      setDesktopStatusFilter(event.target.value as 'all' | 'received' | 'pending')
+                                  }
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                              >
+                                  <option value="all">Todos</option>
+                                  <option value="received">Recebidos</option>
+                                  <option value="pending">Pendentes</option>
+                              </select>
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Conta
+                              </label>
+                              <select
+                                  value={desktopAccountFilter}
+                                  onChange={(event) => setDesktopAccountFilter(event.target.value)}
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                              >
+                                  <option value="all">Todas</option>
+                                  {desktopAccountOptions.map(option => (
+                                      <option key={option.id} value={option.id}>
+                                          {option.name}
+                                      </option>
+                                  ))}
+                              </select>
+                          </div>
+                          <div className="md:col-span-2 space-y-1">
+                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                  Categoria
+                              </label>
+                              <select
+                                  value={desktopCategoryFilter}
+                                  onChange={(event) => setDesktopCategoryFilter(event.target.value)}
+                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                              >
+                                  <option value="all">Todas</option>
+                                  {desktopCategoryOptions.map(category => (
+                                      <option key={category} value={category}>
+                                          {category}
+                                      </option>
+                                  ))}
+                              </select>
+                          </div>
+                      </div>
+
+                      <div className="pt-3 mt-3 border-t border-zinc-200/60 dark:border-zinc-800/60 flex items-center justify-between gap-3">
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                              {visibleIncomes.length} resultado(s) nesta lista.
+                          </p>
+                          <button
+                              type="button"
+                              onClick={() => {
+                                  setDesktopSearchTerm('');
+                                  setDesktopStatusFilter('all');
+                                  setDesktopAccountFilter('all');
+                                  setDesktopCategoryFilter('all');
+                              }}
+                              className="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                          >
+                              Limpar filtros
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          )}
 
           {incomeToDelete && (
               <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">

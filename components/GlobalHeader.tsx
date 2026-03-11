@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   Settings, 
   LogOut, 
@@ -9,7 +9,9 @@ import {
   ExternalLink,
   Sun,
   Moon,
-  Bot
+  Bot,
+  RefreshCw,
+  Bug
 } from 'lucide-react';
 import Logo from './Logo';
 import { getInitial } from '../utils/stringUtils';
@@ -33,6 +35,7 @@ interface GlobalHeaderProps {
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   onOpenSettings: () => void;
+  onOpenFeedback?: () => void;
   onOpenReports?: () => void;
   onOpenAgenda?: () => void;
   onLogout: () => void;
@@ -53,6 +56,8 @@ interface GlobalHeaderProps {
   onRenew?: () => void;
   assistantHidden?: boolean;
   onOpenAssistant?: () => void;
+  bugNotificationCount?: number;
+  isMasterUser?: boolean;
 }
 
 const GlobalHeader: React.FC<GlobalHeaderProps> = ({ 
@@ -64,6 +69,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   theme,
   onThemeChange,
   onOpenSettings,
+  onOpenFeedback,
   onOpenReports,
   onOpenAgenda,
   onLogout,
@@ -77,11 +83,14 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   renewalInfo,
   onRenew,
   assistantHidden,
-  onOpenAssistant
+  onOpenAssistant,
+  bugNotificationCount = 0,
+  isMasterUser = false
 }) => {
   
   const isMobile = useIsMobile();
   const isCompactHeight = useIsCompactHeight();
+  const [isUpdateReady, setIsUpdateReady] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const monthLabel = viewDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
   const safeMonthLabel = monthLabel || '';
@@ -90,6 +99,13 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
     : '?';
   const mobileMonthLabel = capitalizedMonthLabel.replace(' de ', ' ');
   const isDark = theme === 'dark';
+  const normalizedBugNotificationCount = Number.isFinite(bugNotificationCount)
+    ? Math.max(0, Math.floor(bugNotificationCount))
+    : 0;
+  const hasBugNotification = normalizedBugNotificationCount > 0;
+  const bugNotificationLabel =
+    normalizedBugNotificationCount > 99 ? '99+' : String(normalizedBugNotificationCount);
+  const handleOpenFeedback = onOpenFeedback || onOpenSettings;
 
   useEffect(() => {
     const node = headerRef.current;
@@ -112,6 +128,40 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
       window.removeEventListener('resize', updateHeaderHeight);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      setIsUpdateReady(sessionStorage.getItem('meumei_sw_update_ready') === '1');
+    } catch {}
+    const onUpdateReady = () => setIsUpdateReady(true);
+    window.addEventListener('meumei:pwa-update-ready', onUpdateReady as EventListener);
+    return () => {
+      window.removeEventListener('meumei:pwa-update-ready', onUpdateReady as EventListener);
+    };
+  }, []);
+
+  const handleDesktopRefresh = async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        regs.forEach(reg => reg.waiting?.postMessage({ type: 'SKIP_WAITING' }));
+        await Promise.all(regs.map(reg => reg.update().catch(() => undefined)));
+      }
+      if ('BroadcastChannel' in window) {
+        const channel = new BroadcastChannel('meumei_sw');
+        channel.postMessage({ type: 'please_reload', source: 'manual_refresh' });
+        channel.close();
+      }
+      try {
+        sessionStorage.removeItem('meumei_sw_update_ready');
+        sessionStorage.removeItem('meumei_sw_update_reason');
+      } catch {}
+    } finally {
+      window.setTimeout(() => window.location.reload(), 120);
+    }
+  };
 
   const headerMarginClass = isCompactHeight ? 'mb-2 md:mb-3' : 'mb-3 md:mb-4';
   const headerPaddingClass = isCompactHeight ? 'pt-1 pb-2 md:pt-1.5 md:pb-3' : 'pt-1.5 pb-3 md:pt-2 md:pb-4';
@@ -147,6 +197,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
     return (
       <div
         ref={headerRef}
+        data-mm-global-header="true"
         className="pwa-safe-top w-full bg-black/25 backdrop-blur-md border-b border-white/10 sticky top-0 z-[999]"
       >
         <div className="px-4 pt-2 pb-1">
@@ -176,6 +227,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   return (
     <div
       ref={headerRef}
+      data-mm-global-header="true"
       className={`pwa-safe-top w-full bg-gradient-to-r from-blue-600/80 via-indigo-600/80 to-pink-600/80 rounded-b-[18px] md:rounded-b-[20px] sticky top-0 z-[999] shadow-xl shadow-indigo-500/10 ${headerMarginClass} transition-all duration-300 backdrop-blur-xl`}
     >
          {/* Background Pattern */}
@@ -258,6 +310,33 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                         title={isDark ? 'Tema claro' : 'Tema escuro'}
                                     >
                                         {isDark ? <Sun size={15} /> : <Moon size={15} />}
+                                    </button>
+                                    {canAccessSettings && (
+                                        <button
+                                            onClick={isMasterUser ? handleOpenFeedback : onOpenSettings}
+                                            aria-label={isMasterUser ? 'Bugs e melhorias' : 'Reportar bug ou melhoria'}
+                                            className="relative p-1.5 md:p-2 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
+                                            title={isMasterUser ? 'Bugs e melhorias' : 'Reportar bug ou melhoria'}
+                                        >
+                                            <Bug size={15} />
+                                            {isMasterUser && hasBugNotification && (
+                                                <span className="pointer-events-none absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] leading-none font-bold flex items-center justify-center border border-red-300/80 shadow-md shadow-red-900/30">
+                                                    {bugNotificationLabel}
+                                                </span>
+                                            )}
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={handleDesktopRefresh}
+                                        aria-label={isUpdateReady ? 'Atualizar para nova versão' : 'Atualizar aplicativo'}
+                                        className={`p-1.5 md:p-2 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border ${
+                                          isUpdateReady
+                                            ? 'bg-emerald-500/30 hover:bg-emerald-500/40 border-emerald-300/40'
+                                            : 'bg-white/10 hover:bg-white/20 border-white/5'
+                                        }`}
+                                        title={isUpdateReady ? 'Nova versão disponível. Atualizar agora' : 'Atualizar aplicativo'}
+                                    >
+                                        <RefreshCw size={15} />
                                     </button>
                                     {canAccessSettings && (
                                         <button 

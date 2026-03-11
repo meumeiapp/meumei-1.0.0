@@ -67,14 +67,14 @@ const MobileSelect: React.FC<MobileSelectProps> = ({
   const sizeStyles =
     size === 'compact'
       ? {
-          button: 'rounded-xl px-3 py-2 text-xs',
-          menu: 'rounded-xl',
+          button: 'rounded-lg px-3 py-2 text-xs',
+          menu: 'rounded-lg',
           item: 'px-3 py-2 text-xs',
           icon: 'right-3'
         }
       : {
-          button: 'rounded-2xl px-4 py-3 text-sm',
-          menu: 'rounded-2xl',
+          button: 'rounded-xl px-4 py-3 text-sm',
+          menu: 'rounded-xl',
           item: 'px-4 py-2 text-sm',
           icon: 'right-4'
         };

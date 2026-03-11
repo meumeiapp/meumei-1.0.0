@@ -59,9 +59,23 @@
           }
         },
         {
+          "source": "/api/stripeWebhookV2",
+          "function": {
+            "functionId": "stripeWebhookV2",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "/api/askMeumeiHelper",
           "function": {
             "functionId": "askMeumeiHelper",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/scanExpenseReceipt",
+          "function": {
+            "functionId": "scanExpenseReceipt",
             "region": "us-central1"
           }
         },
@@ -94,6 +108,27 @@
           }
         },
         {
+          "source": "/api/listUserFeedback",
+          "function": {
+            "functionId": "listUserFeedback",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/updateUserFeedbackStatus",
+          "function": {
+            "functionId": "updateUserFeedbackStatus",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/deleteUserFeedback",
+          "function": {
+            "functionId": "deleteUserFeedback",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "/api/revokeBetaKey",
           "function": {
             "functionId": "revokeBetaKey",
@@ -111,6 +146,48 @@
           "source": "/api/grantLifetimeAccess",
           "function": {
             "functionId": "grantLifetimeAccess",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/assignEntitlementPlan",
+          "function": {
+            "functionId": "assignEntitlementPlan",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/previewEntitlementPlan",
+          "function": {
+            "functionId": "previewEntitlementPlan",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/bulkManageEntitlements",
+          "function": {
+            "functionId": "bulkManageEntitlements",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/listEntitlementAdminAudit",
+          "function": {
+            "functionId": "listEntitlementAdminAudit",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/rollbackLastEntitlementAction",
+          "function": {
+            "functionId": "rollbackLastEntitlementAction",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/searchAdminRecords",
+          "function": {
+            "functionId": "searchAdminRecords",
             "region": "us-central1"
           }
         },

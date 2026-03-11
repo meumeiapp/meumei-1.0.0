@@ -14,6 +14,7 @@ export const preferencesService = {
     theme?: ThemePreference;
     tipsEnabled?: boolean;
     mobileDashboardSubHeader?: number;
+    accountTypes?: string[];
     expenseTypeOptions?: ExpenseTypeOption[];
   }> {
     if (!uid) {
@@ -35,6 +36,9 @@ export const preferencesService = {
         typeof data?.mobileDashboardSubHeader === 'number'
           ? (data.mobileDashboardSubHeader as number)
           : undefined;
+      const accountTypes = Array.isArray(data?.accountTypes)
+        ? (data.accountTypes as string[])
+        : undefined;
       const expenseTypeOptions = Array.isArray(data?.expenseTypeOptions)
         ? (data.expenseTypeOptions as ExpenseTypeOption[])
         : undefined;
@@ -42,6 +46,7 @@ export const preferencesService = {
         ...(theme ? { theme } : {}),
         ...(typeof tipsEnabled === 'boolean' ? { tipsEnabled } : {}),
         ...(typeof mobileDashboardSubHeader === 'number' ? { mobileDashboardSubHeader } : {}),
+        ...(Array.isArray(accountTypes) ? { accountTypes } : {}),
         ...(Array.isArray(expenseTypeOptions) ? { expenseTypeOptions } : {})
       };
     } catch (error: any) {
@@ -227,6 +232,36 @@ export const preferencesService = {
         licenseId: uid
       });
       console.error('[prefs] expense_types_error', { step: 'save', message: (error as any)?.message });
+      throw error;
+    }
+  },
+  async setAccountTypes(
+    uid: string | null | undefined,
+    accountTypes: string[]
+  ): Promise<void> {
+    if (!uid) {
+      console.error('[prefs] error', { step: 'account_types_save', message: 'missing_uid' });
+      return;
+    }
+    const ref = getUserPreferencesRef(uid);
+    const path = `users/${uid}/preferences/app`;
+    if (!guardUserPath(uid, path, 'prefs_account_types_set')) return;
+    try {
+      await setDoc(
+        ref,
+        { accountTypes, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      console.info('[prefs] account_types_save', { path: ref.path, count: accountTypes.length });
+    } catch (error) {
+      logPermissionDenied({
+        step: 'preferences_set_account_types',
+        path: ref.path,
+        operation: 'setDoc',
+        error,
+        licenseId: uid
+      });
+      console.error('[prefs] account_types_error', { step: 'save', message: (error as any)?.message });
       throw error;
     }
   }

@@ -167,7 +167,9 @@ const EventMap: React.FC<EventMapProps> = ({
   const [showDesktopOnlyNotice, setShowDesktopOnlyNotice] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [mapViewport, setMapViewport] = useState({ width: 0, height: 0 });
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
+  const autoFitKeyRef = useRef('');
   const accountNameById = useMemo(
     () => new Map(accounts.map(account => [account.id, account.name])),
     [accounts]
@@ -293,9 +295,96 @@ const EventMap: React.FC<EventMapProps> = ({
 
   const totalEvents = lanes.reduce((sum, lane) => sum + lane.events.length, 0);
 
+  const laneLayout = useMemo(() => {
+    const cardWidth = isMobile ? 180 : 210;
+    const accountWidth = cardWidth;
+    const cardHeight = 72;
+    const gap = 14;
+    const laneGap = 20;
+    const laneSpacing = 24;
+    const padding = 24;
+    const laneWidths = lanes.map(lane => {
+      const eventCount = lane.events.length + 1;
+      return accountWidth + laneGap + eventCount * cardWidth + Math.max(eventCount - 1, 0) * gap;
+    });
+    const contentWidth = laneWidths.length > 0 ? Math.max(...laneWidths) : accountWidth;
+    const contentHeight = lanes.length * cardHeight + Math.max(lanes.length - 1, 0) * laneSpacing;
+    const baseWidth = contentWidth + padding * 2;
+    const baseHeight = contentHeight + padding * 2;
+    return {
+      cardWidth,
+      accountWidth,
+      cardHeight,
+      gap,
+      laneGap,
+      laneSpacing,
+      padding,
+      contentWidth,
+      contentHeight,
+      baseWidth,
+      baseHeight
+    };
+  }, [isMobile, lanes]);
+
   useEffect(() => {
     zoomRef.current = zoom;
   }, [zoom]);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+
+    const updateViewport = () => {
+      const next = {
+        width: Math.round(element.clientWidth),
+        height: Math.round(element.clientHeight)
+      };
+      setMapViewport(prev =>
+        prev.width === next.width && prev.height === next.height ? prev : next
+      );
+    };
+
+    updateViewport();
+
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateViewport) : null;
+    observer?.observe(element);
+
+    return () => observer?.disconnect();
+  }, [lanes.length, isFullscreen]);
+
+  useEffect(() => {
+    if (isMobile || isFullscreen) return;
+    if (!mapViewport.width || !mapViewport.height) return;
+    if (!laneLayout.baseWidth || !laneLayout.baseHeight) return;
+
+    const fitWidth = (mapViewport.width - 20) / laneLayout.baseWidth;
+    const fitHeight = (mapViewport.height - 20) / laneLayout.baseHeight;
+    const nextZoom = clamp(Math.min(1, fitWidth, fitHeight), MIN_ZOOM, 1);
+    const key = [
+      mapViewport.width,
+      mapViewport.height,
+      Math.round(laneLayout.baseWidth),
+      Math.round(laneLayout.baseHeight),
+      nextZoom.toFixed(4)
+    ].join(':');
+    if (autoFitKeyRef.current === key) return;
+    autoFitKeyRef.current = key;
+
+    setZoom(nextZoom);
+    requestAnimationFrame(() => {
+      if (!scrollRef.current) return;
+      scrollRef.current.scrollLeft = 0;
+      scrollRef.current.scrollTop = 0;
+    });
+  }, [
+    isFullscreen,
+    isMobile,
+    laneLayout.baseHeight,
+    laneLayout.baseWidth,
+    mapViewport.height,
+    mapViewport.width
+  ]);
 
   useLayoutEffect(() => {
     if (typeof document === 'undefined') return;
@@ -724,14 +813,12 @@ const EventMap: React.FC<EventMapProps> = ({
   ) : null;
 
   return (
-      <div className="flex flex-col h-full gap-4">
-        <div className="flex items-start justify-start">
-          <div>
-            <h2 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-white`}>Mapa de Eventos</h2>
-            <p className={`${isMobile ? 'text-[11px]' : 'text-sm'} text-slate-400`}>
-              Eventos mapeados <span className="text-white font-semibold">{totalEvents}</span>
-            </p>
-          </div>
+      <div className="flex flex-1 min-h-0 flex-col gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className={`${isMobile ? 'text-sm' : 'text-base'} font-semibold text-white`}>Mapa de Eventos</h2>
+          <p className={`${isMobile ? 'text-[10px]' : 'text-xs'} text-slate-400 whitespace-nowrap`}>
+            Eventos: <span className="text-white font-semibold">{totalEvents}</span>
+          </p>
         </div>
 
       {lanes.length === 0 ? (
@@ -740,19 +827,19 @@ const EventMap: React.FC<EventMapProps> = ({
         </div>
       ) : (
         <div
-          className={`relative ${isOverlayFullscreen ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0'}`}
+          className={`relative ${isOverlayFullscreen ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0 flex flex-col'}`}
           style={{
             paddingTop: isOverlayFullscreen ? 'env(safe-area-inset-top)' : undefined,
             paddingBottom: isOverlayFullscreen ? 'env(safe-area-inset-bottom)' : undefined
           }}
         >
-          <div className="flex gap-4 items-stretch h-full min-h-0">
+          <div className="flex gap-4 items-stretch flex-1 min-h-0">
             <div
               ref={containerRef}
               className={`mm-map-surface relative border border-white/10 overflow-hidden flex-1 select-none ${
                 isFullscreen
                   ? 'rounded-none h-full w-full box-border'
-                  : 'rounded-3xl h-full min-h-[420px] md:min-h-[520px]'
+                  : 'rounded-3xl w-full flex-1 min-h-[420px]'
               }`}
             >
               {isMobile && !isFullscreen && (
@@ -789,29 +876,8 @@ const EventMap: React.FC<EventMapProps> = ({
                 }`}
               >
             {(() => {
-              const baseCardWidth = isMobile ? 180 : 210;
-              const accountWidth = baseCardWidth;
-              const baseCardHeight = 72;
-              const baseGap = 14;
-              const baseLaneGap = 20;
-              const laneSpacing = 24;
-              const padding = 24;
-              const laneWidths = lanes.map(lane => {
-                const eventCount = lane.events.length + 1;
-                return (
-                  accountWidth +
-                  baseLaneGap +
-                  eventCount * baseCardWidth +
-                  Math.max(eventCount - 1, 0) * baseGap
-                );
-              });
-              const contentWidth = laneWidths.length ? Math.max(...laneWidths) : accountWidth;
-              const contentHeight =
-                lanes.length * baseCardHeight + Math.max(lanes.length - 1, 0) * laneSpacing;
-              const baseWidth = contentWidth + padding * 2;
-              const baseHeight = contentHeight + padding * 2;
-              const scaledWidth = baseWidth * zoom;
-              const scaledHeight = baseHeight * zoom;
+              const scaledWidth = laneLayout.baseWidth * zoom;
+              const scaledHeight = laneLayout.baseHeight * zoom;
 
               return (
                 <div
@@ -826,18 +892,19 @@ const EventMap: React.FC<EventMapProps> = ({
                   <div
                     className="absolute inset-0"
                     style={{
-                      width: baseWidth,
-                      height: baseHeight,
+                      width: laneLayout.baseWidth,
+                      height: laneLayout.baseHeight,
                       transform: `scale(${zoom})`,
                       transformOrigin: 'top left'
                     }}
                   >
                     <div className="space-y-6 p-6">
                       {lanes.map(lane => {
-                        const cardWidth = baseCardWidth;
-                        const cardHeight = baseCardHeight;
-                        const gap = baseGap;
-                        const laneGap = baseLaneGap;
+                        const cardWidth = laneLayout.cardWidth;
+                        const cardHeight = laneLayout.cardHeight;
+                        const gap = laneLayout.gap;
+                        const laneGap = laneLayout.laneGap;
+                        const accountWidth = laneLayout.accountWidth;
                         const laneAccent = lane.color || EVENT_COLORS.start;
                         const laneStats = buildLaneStats(lane.events);
                         const lineStyle = buildNeonGradient(

@@ -47,13 +47,13 @@ const MobileModalShell: React.FC<MobileModalShellProps> = ({
         style={{ paddingTop: contentPaddingTop }}
       >
         <div className="mx-auto w-full max-w-2xl px-3 pb-6">
-          <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#111114] shadow-2xl p-3">
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#111114] shadow-2xl p-3">
             {!hideHeader && (
               <>
                 <button
                   type="button"
                   onClick={onClose}
-                  className="flex items-center gap-2 text-xs font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+                  className="flex items-center gap-2 text-[12px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
                 >
                   <ArrowLeft size={14} />
                   Voltar

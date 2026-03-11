@@ -241,13 +241,6 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     () => summary.totalReceitas - summaryExpensesTotal,
     [summary.totalReceitas, summaryExpensesTotal]
   );
-  const healthScore = useMemo(() => {
-    if (summary.totalReceitas <= 0 && summary.totalDespesas <= 0) return 0.5;
-    if (summary.totalReceitas <= 0) return 0;
-    const margin = summaryNet / summary.totalReceitas;
-    const clamped = Math.max(-1, Math.min(1, margin));
-    return (clamped + 1) / 2;
-  }, [summary.totalDespesas, summary.totalReceitas, summaryNet]);
   const summaryMargin = useMemo(
     () => (summary.totalReceitas > 0 ? summaryNet / summary.totalReceitas : 0),
     [summary.totalReceitas, summaryNet]
@@ -298,6 +291,11 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     setPeriodMode('month');
   };
 
+  useEffect(() => {
+    setCurrentMonth(viewDate);
+    setPeriodMode('month');
+  }, [viewDate]);
+
   const handleOpenCustomRange = () => {
     setIsRangeModalOpen(true);
   };
@@ -330,7 +328,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   }, [isMobile, tab]);
 
   useEffect(() => {
-    const shouldLock = !isMobile;
+    const shouldLock = false;
     document.documentElement.classList.toggle('lock-scroll', shouldLock);
     document.body.classList.toggle('lock-scroll', shouldLock);
     return () => {
@@ -348,7 +346,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       const headerBottom = headerNode.getBoundingClientRect().bottom;
       const sectionTop = sectionNode.getBoundingClientRect().top;
       const gap = Math.round(sectionTop - headerBottom);
-      const desired = 5;
+      const desired = 0;
       setTopAdjust((prev) => {
         const nextAdjust = Math.max(0, gap - desired + prev);
         return prev === nextAdjust ? prev : nextAdjust;
@@ -471,93 +469,15 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     };
   }, [isMobile]);
 
-  const desktopControlBase = 'px-3.5 py-2 rounded-full text-[11px] font-semibold transition';
-  const desktopControlActive = 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-sm';
-  const desktopControlInactive =
-    'bg-zinc-100 text-zinc-600 hover:text-zinc-900 dark:bg-white/10 dark:text-slate-200 dark:hover:text-white';
+  const desktopControlBase = 'mm-btn-chip shrink-0 whitespace-nowrap';
+  const desktopControlActive = 'mm-btn-chip-active-neutral';
+  const desktopControlInactive = '';
   const getDesktopControlClass = (active: boolean) =>
     `${desktopControlBase} ${active ? desktopControlActive : desktopControlInactive}`;
-
-  const mapSelector = isMobile ? (
-    <div className="flex flex-col gap-2">
-      <div className="inline-flex items-center gap-1 rounded-full border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-1 w-full justify-between">
-        {([
-          ...(isMobile ? [] : [{ id: 'financial', label: 'Mapa Financeiro' }]),
-          { id: 'events', label: 'Mapa de Eventos' }
-        ] as { id: MapMode; label: string }[]).map(item => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => handleMapModeChange(item.id)}
-            title={
-              item.id === 'financial'
-                ? 'Distribuição de receitas e despesas do período em um mapa.'
-                : 'Sequência de entradas e saídas por conta/cartão no período.'
-            }
-            className={`px-3 py-1.5 rounded-full text-[10px] flex-1 font-semibold transition ${
-              mapMode === item.id
-                ? 'bg-white text-zinc-900 shadow-sm'
-                : 'text-zinc-600 dark:text-slate-200/80 hover:text-zinc-900 dark:hover:text-white'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  ) : (
-    <div className="flex items-center gap-2">
-      {([
-        { id: 'financial', label: 'Mapa Financeiro' },
-        { id: 'events', label: 'Mapa de Eventos' }
-      ] as { id: MapMode; label: string }[]).map(item => (
-        <button
-          key={item.id}
-          type="button"
-          onClick={() => handleMapModeChange(item.id)}
-          title={
-            item.id === 'financial'
-              ? 'Distribuição de receitas e despesas do período em um mapa.'
-              : 'Sequência de entradas e saídas por conta/cartão no período.'
-          }
-          className={getDesktopControlClass(mapMode === item.id)}
-        >
-          {item.label}
-        </button>
-      ))}
-    </div>
-  );
-
-  const periodControls = (
-    <div className={`flex items-center gap-2 bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-full px-4 py-2 ${isMobile ? 'text-xs flex-wrap' : ''}`}>
-      <button
-        onClick={() => handleMonthChange(-1)}
-        className="p-2 rounded-full border border-zinc-200 dark:border-white/10 text-zinc-500 hover:text-zinc-900 dark:text-slate-200 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/10"
-        aria-label="Mês anterior"
-        title="Voltar um mês no período exibido."
-      >
-        <ChevronLeft size={16} />
-      </button>
-      <div className="flex items-center gap-2 text-sm text-zinc-700 dark:text-slate-200">
-        <Calendar size={16} /> {periodLabel}
-      </div>
-      <button
-        onClick={() => handleMonthChange(1)}
-        className="p-2 rounded-full border border-zinc-200 dark:border-white/10 text-zinc-500 hover:text-zinc-900 dark:text-slate-200 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/10"
-        aria-label="Próximo mês"
-        title="Avançar um mês no período exibido."
-      >
-        <ChevronRight size={16} />
-      </button>
-      <button
-        onClick={handleOpenCustomRange}
-        className={`${isMobile ? 'w-full' : 'ml-2'} px-3 py-1 text-xs rounded-full border border-zinc-200 dark:border-white/10 text-zinc-600 dark:text-slate-200 hover:bg-zinc-100 dark:hover:bg-white/10`}
-        title="Definir um intervalo de datas personalizado."
-      >
-        Personalizar
-      </button>
-    </div>
-  );
+  const desktopHeaderControlButtonBase =
+    'mm-btn-chip h-7 px-3 justify-center text-[11px] shrink-0 whitespace-nowrap';
+  const getDesktopHeaderControlClass = (active: boolean) =>
+    `${desktopHeaderControlButtonBase} ${active ? desktopControlActive : desktopControlInactive}`;
 
   const periodControlsMobile = (
     <div className="rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
@@ -589,32 +509,12 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     </div>
   );
 
-  const healthBar = (
-    <div className={`${isMobile ? 'px-1' : ''}`}>
-      <div className="flex items-center justify-between text-[9px] uppercase tracking-[0.24em] text-slate-400">
-        <span>Saúde da empresa</span>
-        <span className="text-slate-500">{Math.round(healthScore * 100)}%</span>
-      </div>
-      <div className="relative mt-1 h-2 rounded-full bg-gradient-to-r from-red-600 via-amber-400 to-emerald-500">
-        <div
-          className="absolute top-1/2"
-          style={{ left: `${healthScore * 100}%`, transform: 'translate(-50%, -50%)' }}
-        >
-          <div
-            className="h-3 w-3 rounded-full border border-white/80 shadow-[0_0_0_2px_rgba(0,0,0,0.35)]"
-            style={{ backgroundColor: healthScore >= 0.5 ? incomeAccent : expenseAccent }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-
   const summaryCards = (
     <div className={isMobile ? 'space-y-2' : 'space-y-3'}>
-      <div className={isMobile ? 'grid grid-cols-3 gap-1.5' : 'grid grid-cols-1 md:grid-cols-3 gap-3'}>
-        <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+      <div className={isMobile ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-1 md:grid-cols-3 gap-3'}>
+        <div className={`${isMobile ? 'rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
           <div
-            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
+            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[10px]' : 'text-[10px]'}`}
             style={{ color: incomeAccent }}
           >
             Receita total
@@ -626,9 +526,9 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             {formatCurrency(headerSummary.totalReceitas)}
           </div>
         </div>
-        <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
           <div
-            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
+            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[10px]' : 'text-[10px]'}`}
             style={{ color: expenseAccent }}
           >
             Total gasto
@@ -640,9 +540,9 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             {formatCurrency(headerSummary.totalComprometido)}
           </div>
         </div>
-        <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
           <div
-            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[7px]' : 'text-[10px]'}`}
+            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[10px]' : 'text-[10px]'}`}
             style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
           >
             Total disponível
@@ -655,7 +555,6 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         </div>
       </div>
-      {healthBar}
     </div>
   );
 
@@ -724,23 +623,23 @@ const ReportsView: React.FC<ReportsViewProps> = ({
 
   const desktopSummaryCards = (
     <div className="grid grid-cols-3 gap-2">
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-1.5">
         <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: incomeAccent }}>
           Receita total
         </div>
-        <div className="text-[14px] font-semibold mt-1" style={{ color: incomeAccent }}>
+        <div className="text-[13px] font-semibold mt-0.5" style={{ color: incomeAccent }}>
           {formatCurrency(headerSummary.totalReceitas)}
         </div>
       </div>
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-1.5">
         <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: expenseAccent }}>
           Total gasto
         </div>
-        <div className="text-[14px] font-semibold mt-1" style={{ color: expenseAccent }}>
+        <div className="text-[13px] font-semibold mt-0.5" style={{ color: expenseAccent }}>
           {formatCurrency(headerSummary.totalComprometido)}
         </div>
       </div>
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-1.5">
         <div
           className="text-[9px] uppercase tracking-[0.25em]"
           style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
@@ -748,7 +647,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           Total disponível
         </div>
         <div
-          className="text-[14px] font-semibold mt-1"
+          className="text-[13px] font-semibold mt-0.5"
           style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
         >
           {formatCurrency(headerSummary.totalDisponivel)}
@@ -757,143 +656,117 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     </div>
   );
 
-  const filtersSection = (
-    <div className={`${isMobile ? 'rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] p-3' : 'rounded-3xl border border-zinc-200 bg-white/90 dark:bg-[#141418] dark:border-white/10 p-5 shadow-[0_8px_18px_rgba(0,0,0,0.12)]'}`}>
-      <div className={`flex flex-col ${isMobile ? 'gap-3' : 'gap-5'}`}>
-        <div className={`grid ${isMobile ? 'grid-cols-1 gap-3' : 'grid-cols-[1.3fr_1fr] gap-6'}`}>
-          <div className="flex flex-col gap-3">
-            <div className={`${isMobile ? 'text-[10px]' : 'text-[11px]'} uppercase tracking-[0.3em] text-zinc-500 dark:text-slate-400`}>Filtros</div>
-            {isMobile ? (
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <span className="text-[9px] uppercase tracking-[0.25em] text-zinc-500 dark:text-slate-400">Natureza</span>
-                  <div className="grid grid-cols-3 gap-1">
-                    {(['all', 'PJ', 'PF'] as TaxFilter[]).map(option => (
-                      <button
-                        key={option}
-                        onClick={() => setTaxFilter(option)}
-                        className={`rounded-lg px-2 py-1.5 text-[9px] font-semibold transition ${
-                          taxFilter === option
-                            ? 'bg-white text-zinc-900 shadow-sm'
-                            : 'bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-slate-200 dark:hover:text-white'
-                        }`}
-                      >
-                        {option === 'all' ? 'Tudo' : option}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[9px] uppercase tracking-[0.25em] text-zinc-500 dark:text-slate-400">Visão</span>
-                  <div className="grid grid-cols-2 gap-1">
-                    {(['caixa', 'competencia'] as ViewMode[]).map(option => (
-                      <button
-                        key={option}
-                        onClick={() => setViewMode(option)}
-                        className={`rounded-lg px-2 py-1.5 text-[9px] font-semibold transition ${
-                          viewMode === option
-                            ? 'bg-cyan-500/90 text-white'
-                            : 'bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-slate-200 dark:hover:text-white'
-                        }`}
-                      >
-                        {option === 'caixa' ? 'Caixa' : 'Compet.'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {(['all', 'PJ', 'PF'] as TaxFilter[]).map(option => (
-                  <button
-                    key={option}
-                    onClick={() => setTaxFilter(option)}
-                    title={
-                      option === 'all'
-                        ? 'Mostra lançamentos PF e PJ juntos.'
-                        : option === 'PJ'
-                          ? 'Mostra apenas lançamentos de Pessoa Jurídica (PJ).'
-                          : 'Mostra apenas lançamentos de Pessoa Física (PF).'
-                    }
-                    className={getDesktopControlClass(taxFilter === option)}
-                  >
-                    {option === 'all' ? 'Tudo' : option}
-                  </button>
-                ))}
-                {(['caixa', 'competencia'] as ViewMode[]).map(option => (
-                  <button
-                    key={option}
-                    onClick={() => setViewMode(option)}
-                    title={
-                      option === 'caixa'
-                        ? 'Considera quando o dinheiro entrou/saiu (fluxo de caixa).'
-                        : 'Considera quando a transação ocorreu, mesmo que pago depois.'
-                    }
-                    className={getDesktopControlClass(viewMode === option)}
-                  >
-                    {option === 'caixa' ? 'Visão Caixa' : 'Visão Competência'}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {!isMobile && (
-            <div className="flex flex-col gap-3">
-              <div className="text-[11px] uppercase tracking-[0.3em] text-zinc-500 dark:text-slate-400">Modos</div>
-              <div className="flex flex-wrap gap-2">
-              {mapSelector}
-              <button
-                type="button"
-                onClick={() => setTab('summary')}
-                title="Resumo com totais, distribuição e evolução do período."
-                className={getDesktopControlClass(tab === 'summary')}
-              >
-                Resumo
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab('export')}
-                title="Exportar relatórios ou importar dados para análise externa."
-                className="px-3.5 py-2 rounded-full text-[11px] font-semibold transition bg-emerald-500 text-white hover:bg-emerald-600"
-              >
-                Exportar
-              </button>
-              </div>
-            </div>
-          )}
+  const desktopHeaderControls = !isMobile ? (
+    <div className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/80 dark:bg-[#101014]/80 px-3 py-1.5">
+      <div className="grid grid-cols-2 gap-2 items-center">
+        <div className="min-w-0 flex items-center justify-start gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <span className="shrink-0 text-[10px] uppercase tracking-[0.22em] text-zinc-500 dark:text-slate-400">
+            Filtros
+          </span>
+          {(['all', 'PJ', 'PF'] as TaxFilter[]).map(option => (
+            <button
+              key={option}
+              onClick={() => setTaxFilter(option)}
+              title={
+                option === 'all'
+                  ? 'Mostra lançamentos PF e PJ juntos.'
+                  : option === 'PJ'
+                    ? 'Mostra apenas lançamentos de Pessoa Jurídica (PJ).'
+                    : 'Mostra apenas lançamentos de Pessoa Física (PF).'
+              }
+              className={getDesktopHeaderControlClass(taxFilter === option)}
+            >
+              {option === 'all' ? 'Tudo' : option}
+            </button>
+          ))}
+          {(['caixa', 'competencia'] as ViewMode[]).map(option => (
+            <button
+              key={option}
+              onClick={() => setViewMode(option)}
+              title={
+                option === 'caixa'
+                  ? 'Considera quando o dinheiro entrou/saiu (fluxo de caixa).'
+                  : 'Considera quando a transação ocorreu, mesmo que pago depois.'
+              }
+              className={getDesktopHeaderControlClass(viewMode === option)}
+            >
+              {option === 'caixa' ? 'Caixa' : 'Competência'}
+            </button>
+          ))}
         </div>
 
+        <div className="min-w-0 flex items-center justify-end gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <span className="shrink-0 text-[10px] uppercase tracking-[0.22em] text-zinc-500 dark:text-slate-400">
+            Modos
+          </span>
+          {([
+            { id: 'financial', label: 'Mapa Financeiro' },
+            { id: 'events', label: 'Mapa de Eventos' }
+          ] as { id: MapMode; label: string }[]).map(item => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => handleMapModeChange(item.id)}
+              title={
+                item.id === 'financial'
+                  ? 'Distribuição de receitas e despesas do período em um mapa.'
+                  : 'Sequência de entradas e saídas por conta/cartão no período.'
+              }
+              className={getDesktopHeaderControlClass(mapMode === item.id)}
+            >
+              {item.id === 'financial' ? 'Financeiro' : 'Eventos'}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setTab('summary')}
+            title="Resumo com totais, distribuição e evolução do período."
+            className={getDesktopHeaderControlClass(tab === 'summary')}
+          >
+            Resumo
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('export')}
+            title="Exportar relatórios ou importar dados para análise externa."
+            className={getDesktopHeaderControlClass(tab === 'export')}
+          >
+            Exportar
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenCustomRange}
+            title="Definir um intervalo de datas personalizado."
+            className={getDesktopHeaderControlClass(periodMode === 'custom')}
+          >
+            Personalizar
+          </button>
+        </div>
       </div>
     </div>
-  );
+  ) : null;
 
   const reportContent = (
-    <div className={`${isMobile ? 'rounded-none border-0 bg-transparent p-0' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-[32px] px-6 pb-4 pt-3 md:px-8 md:pb-4 md:pt-3 flex flex-col overflow-hidden mm-desktop-panel'}`}>
-      {!isMobile && (
-        <div className="flex justify-center mb-3">
-          {periodControls}
-        </div>
-      )}
+    <div className={`${isMobile ? 'rounded-none border-0 bg-transparent p-0' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-[32px] px-5 pb-2 pt-2 md:px-6 md:pb-2 md:pt-2 flex flex-1 flex-col h-full min-h-0'}`}>
       <div
         className={
           isMobile
             ? ''
-            : `flex-1 min-h-0 ${
+            : `min-h-0 flex-1 flex flex-col ${
                 tab === 'export' || (isCompactHeight && tab === 'summary')
                   ? 'overflow-y-auto'
-                  : 'overflow-hidden'
+                  : ''
               }`
         }
       >
         {tab === 'map' && (
-          <div className={`space-y-4 ${isMobile ? '' : 'flex flex-col h-full min-h-0'}`}>
+          <div className={`space-y-4 ${isMobile ? '' : 'flex-1 min-h-0 flex flex-col'}`}>
             {isMobile ? (
               <div className="rounded-none border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-5 text-center text-sm text-zinc-600 dark:text-slate-200">
                 Os mapas estão disponíveis apenas no computador.
               </div>
             ) : (
-              <div className="flex-1 min-h-0">
+              <div className="min-h-[420px] flex-1 flex flex-col" data-tour-anchor="reports-map">
                 {mapMode === 'financial' ? (
                   <FinancialMap
                     summary={summary}
@@ -932,31 +805,23 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             </>
           ) : (
             <div
-              className={`relative ${isSummaryOverlay ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0'}`}
+              className={`relative ${isSummaryOverlay ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0 flex flex-col'}`}
               style={{
                 paddingTop: isSummaryOverlay ? 'env(safe-area-inset-top)' : undefined,
                 paddingBottom: isSummaryOverlay ? 'env(safe-area-inset-bottom)' : undefined
               }}
             >
-              <div className="flex flex-col gap-4 h-full min-h-0">
-                {!isSummaryFullscreen && (
-                  <div className="flex items-start justify-start">
-                    <div>
-                      <h2 className="text-lg font-semibold text-white">Resumo</h2>
-                      <p className="text-sm text-slate-400">{periodLabel}</p>
-                    </div>
-                  </div>
-                )}
-                <div className="flex gap-4 items-stretch flex-1 min-h-0">
+              <div className="flex flex-1 min-h-0 flex-col gap-2">
+                <div className="flex gap-2 items-stretch flex-1 min-h-0">
                 <div
                   ref={summaryContainerRef}
                   className={`relative flex-1 ${
                     isSummaryFullscreen
                       ? 'border border-white/10 overflow-hidden rounded-none h-full w-full box-border bg-slate-950/60'
-                      : 'h-full min-h-[420px] md:min-h-[520px] overflow-visible'
+                      : 'min-h-[360px] overflow-visible self-stretch flex flex-col'
                   }`}
                 >
-                  <div className={isSummaryFullscreen ? 'h-full p-4 pb-[170px]' : 'h-full'}>
+                  <div className={isSummaryFullscreen ? 'h-full p-4 pb-[170px]' : 'flex flex-1 min-h-0 flex-col'}>
                     <ExecutiveSummary
                       expensesByType={expensesByType}
                       totalReceitas={summary.totalReceitas}
@@ -1066,7 +931,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   );
 
   const mobileHeader = (
-    <div className="space-y-2">
+    <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
       <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
         <div className="h-8 w-8" aria-hidden="true" />
         <div className="min-w-0 text-center">
@@ -1081,8 +946,8 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   );
 
   const desktopSummarySection = (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 relative z-10">
-      <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+    <div className="w-full px-4 sm:px-6 pt-6 relative z-10">
+      <div className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
         <div className="space-y-2">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
             <div className="h-8 w-8" aria-hidden="true" />
@@ -1094,7 +959,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
 
           {desktopSummaryCards}
-          {healthBar}
+          {desktopHeaderControls}
         </div>
       </div>
     </div>
@@ -1102,7 +967,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
 
   if (isMobile) {
     return (
-      <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
+      <div className="fixed inset-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter overflow-hidden">
         <div className="relative h-[calc(var(--app-height,100vh)-var(--mm-mobile-top,0px))]">
           {headerFill.height > 0 && (
             <div
@@ -1118,7 +983,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
               ref={subHeaderRef}
               className="w-full border-b border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-[#151517] backdrop-blur-xl shadow-sm"
             >
-              <div className="px-3 pb-3 pt-2">
+              <div className="mm-mobile-subheader-pad mm-mobile-subheader-pad-tight">
                 {mobileHeader}
               </div>
             </div>
@@ -1133,7 +998,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           >
             <div className="space-y-0">
               <div ref={firstSectionRef}>
-                <MobileFullWidthSection contentClassName="px-3 py-3" withDivider={false}>
+                <MobileFullWidthSection contentClassName="mm-mobile-section-pad mm-mobile-section-pad-tight-top" withDivider={false}>
                   {reportContent}
                 </MobileFullWidthSection>
               </div>
@@ -1249,14 +1114,21 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     );
   }
 
+  const desktopReportContentHeight =
+    'max(320px, calc(var(--mm-content-available-height, 720px) - var(--mm-subheader-height, 184px) - var(--mm-content-gap, 16px)))';
+
   return (
-    <div className={`min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 pb-6 ${isCompactHeight ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
+    <div className="h-full min-h-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 flex flex-col">
       {desktopSummarySection}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] pb-0">
-        <div className="space-y-3">
-          {filtersSection}
-          {reportContent}
-        </div>
+      <main
+        className="max-w-7xl mx-auto w-full px-4 sm:px-6 mt-[var(--mm-content-gap)] flex-1 min-h-0 flex flex-col"
+        style={{
+          height: desktopReportContentHeight,
+          minHeight: desktopReportContentHeight,
+          maxHeight: desktopReportContentHeight
+        }}
+      >
+        <div className="flex flex-1 min-h-0 flex-col gap-0">{reportContent}</div>
       </main>
 
       {isRangeModalOpen && (

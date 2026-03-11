@@ -18,6 +18,9 @@ export type BetaKeyRecord = {
   lifetimeGrantedAtMs?: number | null;
 };
 
+export type AdminEntitlementPlan = 'lifetime' | 'annual' | 'monthly' | 'days';
+export type AdminBulkAction = 'assign_plan' | 'revoke_access';
+
 type BetaKeyResponse<T> = {
   ok: boolean;
   status: number;
@@ -79,8 +82,124 @@ export const betaKeysService = {
   },
 
   async grantLifetimeAccess(payload: { email: string; keyId: string; code?: string }) {
-    return request<{ email: string; keyId?: string | null; code?: string | null; emailSent?: boolean }>(
+    return request<{ email: string; keyId?: string | null; code?: string | null; deletedBetaKeys?: number; emailSent?: boolean }>(
       '/api/grantLifetimeAccess',
+      payload,
+      true
+    );
+  },
+
+  async assignEntitlementPlan(payload: {
+    email: string;
+    plan: AdminEntitlementPlan;
+    durationDays?: number;
+    keyId?: string;
+    code?: string;
+  }) {
+    return request<{
+      email: string;
+      planType: string;
+      durationDays?: number | null;
+      expiresAtMs?: number | null;
+      deletedBetaKeys?: number;
+      emailSent?: boolean | null;
+      matchedBetaKeys?: number;
+      betaKeyIds?: string[];
+      auditId?: string | null;
+    }>(
+      '/api/assignEntitlementPlan',
+      payload,
+      true
+    );
+  },
+
+  async previewEntitlementPlan(payload: {
+    email: string;
+    plan: AdminEntitlementPlan;
+    durationDays?: number;
+    keyId?: string;
+    code?: string;
+  }) {
+    return request<{
+      preview?: {
+        email: string;
+        planType: string;
+        durationDays?: number | null;
+        expiresAtMs?: number | null;
+        beforeState?: Record<string, unknown> | null;
+        afterState?: Record<string, unknown> | null;
+        cleanup?: {
+          matchedBetaKeys: number;
+          betaKeyIds: string[];
+          betaKeys: Array<Record<string, unknown>>;
+        };
+      };
+    }>(
+      '/api/previewEntitlementPlan',
+      payload,
+      true
+    );
+  },
+
+  async bulkManageEntitlements(payload: {
+    action: AdminBulkAction;
+    emails: string[];
+    dryRun?: boolean;
+    plan?: AdminEntitlementPlan;
+    durationDays?: number;
+    sendLifetimeEmail?: boolean;
+  }) {
+    return request<{
+      dryRun: boolean;
+      action: AdminBulkAction;
+      batchId?: string | null;
+      total: number;
+      successCount: number;
+      failCount: number;
+      totalMatchedBetaKeys: number;
+      totalDeletedBetaKeys: number;
+      results: Array<Record<string, unknown>>;
+    }>(
+      '/api/bulkManageEntitlements',
+      payload,
+      true
+    );
+  },
+
+  async listEntitlementAdminAudit(payload?: { email?: string; limit?: number }) {
+    return request<{ items: Array<Record<string, unknown>> }>(
+      '/api/listEntitlementAdminAudit',
+      payload || {},
+      true
+    );
+  },
+
+  async rollbackLastEntitlementAction(payload: { email?: string; actionId?: string }) {
+    return request<{
+      targetEmail?: string;
+      rolledBackActionId?: string;
+      rollbackAuditId?: string;
+      restoredBetaKeys?: number;
+      beforeState?: Record<string, unknown> | null;
+      afterState?: Record<string, unknown> | null;
+    }>(
+      '/api/rollbackLastEntitlementAction',
+      payload,
+      true
+    );
+  },
+
+  async searchAdminRecords(payload: { query: string }) {
+    return request<{
+      query: string;
+      result?: {
+        users?: Array<Record<string, unknown>>;
+        entitlements?: Array<Record<string, unknown>>;
+        betaKeys?: Array<Record<string, unknown>>;
+        audit?: Array<Record<string, unknown>>;
+      };
+    }>(
+      '/api/searchAdminRecords',
       payload,
       true
     );
