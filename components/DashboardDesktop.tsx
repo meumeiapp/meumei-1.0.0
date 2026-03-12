@@ -34,7 +34,7 @@ import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
-import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
+import { getCardPurchaseGuidance, getCreditCardInvoiceTotalForMonth, resolveCardDueDateForView } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { computeCategoryTotals } from '../utils/categoryTotals';
@@ -229,7 +229,6 @@ interface DashboardProps {
 }
 
 const MEI_LIMIT = 81000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 type MeiStatusLevel = 'safe' | 'attention' | 'critical' | 'over';
 
 interface MeiStatus {
@@ -927,6 +926,11 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       () => viewDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
       [viewDate]
   );
+  const balancePeriodLabel = useMemo(() => {
+      const safeLabel = (flowMonthLabel || '').trim();
+      if (!safeLabel) return 'Saldo do mês';
+      return `Saldo de ${safeLabel}`;
+  }, [flowMonthLabel]);
 
   const categoryTotals = useMemo(
       () =>
@@ -1449,40 +1453,9 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       setOrder(merged as DashboardBlockId[]);
   };
 
-  const resolveCardDueDate = (card: CreditCardType) => {
-      const monthExpenses = expenses.filter(exp => {
-          if (!exp.cardId || exp.cardId !== card.id) return false;
-          if (!exp.dueDate) return false;
-          const due = new Date(exp.dueDate + 'T12:00:00');
-          return due.getMonth() === viewDate.getMonth() && due.getFullYear() === viewDate.getFullYear();
-      });
-      const dueDateFromExpenses = monthExpenses.length
-          ? monthExpenses.reduce((latest, exp) => {
-                const next = new Date(exp.dueDate + 'T12:00:00');
-                return next > latest ? next : latest;
-            }, new Date(monthExpenses[0].dueDate + 'T12:00:00'))
-          : null;
-      if (dueDateFromExpenses) return dueDateFromExpenses;
-      const fallback = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-      if (card.dueDay < card.closingDay) {
-          fallback.setMonth(fallback.getMonth() + 1);
-      }
-      return fallback;
-  };
-
-  const resolveDueBorderColor = (dueDateObj: Date) => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const daysUntil = Math.ceil((dueDateObj.getTime() - today.getTime()) / DAY_MS);
-      if (daysUntil <= 0) return '#ef4444';
-      const ratio = Math.min(Math.max(daysUntil / 30, 0), 1);
-      if (ratio <= 0.33) return '#ef4444';
-      if (ratio <= 0.66) return '#facc15';
-      return '#22c55e';
-  };
-
   const renderCreditCardsSection = (cardsToShow: CreditCardType[], variant: 'compact' | 'expanded' = 'compact') => {
       const shouldFillPlaceholders = variant === 'compact';
+      const compactCard = variant === 'compact';
       const slotCount = shouldFillPlaceholders ? 6 : cardsToShow.length;
       const limitedCards = shouldFillPlaceholders ? cardsToShow.slice(0, slotCount) : cardsToShow;
       const placeholderCount = shouldFillPlaceholders ? Math.max(0, slotCount - limitedCards.length) : 0;
@@ -1515,7 +1488,9 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                           key={entry.id}
                                           type="button"
                                           onClick={onOpenInvoices}
-                                          className="rounded-2xl p-2.5 border-2 border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-100/70 dark:bg-zinc-900/40 min-h-[132px] flex flex-col items-center justify-center gap-2 text-zinc-500 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
+                                          className={`rounded-2xl border-2 border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-100/70 dark:bg-zinc-900/40 flex flex-col items-center justify-center gap-2 text-zinc-500 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors ${
+                                              compactCard ? 'p-2 min-h-[116px]' : 'p-2.5 min-h-[128px]'
+                                          }`}
                                       >
                                           <div className="w-10 h-10 rounded-full bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center">
                                               <Plus size={20} />
@@ -1527,14 +1502,21 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
 
                               const style = getCardStyle(entry.card);
                               const invoiceTotal = cardTotals[entry.card.id] ?? 0;
-                              const dueDateObj = resolveCardDueDate(entry.card);
+                              const dueDateObj = resolveCardDueDateForView(entry.card, expenses, viewDate);
+                              const purchaseGuidance = getCardPurchaseGuidance(entry.card, new Date());
                               const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-                              const dueBorderColor = resolveDueBorderColor(dueDateObj);
+                              const formattedClosingDate = purchaseGuidance.nextClosingDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                              const formattedBestDay = purchaseGuidance.bestPurchaseDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                              const formattedDueIfBuyToday = purchaseGuidance.invoiceDueDateIfBuyToday.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                              const dueMonthIfBuyToday = purchaseGuidance.invoiceDueDateIfBuyToday.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+                              const dueBorderColor = purchaseGuidance.statusColor;
 
                               return (
                                   <div
                                       key={entry.card.id}
-                                      className="rounded-2xl p-2.5 border-2 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none"
+                                      className={`rounded-2xl border-2 relative overflow-hidden shadow-xl shadow-indigo-900/5 dark:shadow-none ${
+                                          compactCard ? 'p-2' : 'p-2.5'
+                                      }`}
                                       style={{
                                           backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})`,
                                           borderColor: dueBorderColor
@@ -1544,47 +1526,81 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                                       <div className="relative z-10 flex flex-col h-full justify-between">
                                           <div className="flex justify-between items-start">
                                               <div>
-                                                  <h3 className="font-bold text-sm text-white mb-0.5">{entry.card.name}</h3>
-                                                  <p className="text-[11px] text-white/70 font-medium">
+                                                  <h3 className={`font-bold text-white mb-0.5 ${compactCard ? 'text-[13px]' : 'text-sm'}`}>{entry.card.name}</h3>
+                                                  <p className={`text-white/70 font-medium ${compactCard ? 'text-[10px]' : 'text-[11px]'}`}>
                                                       Limite: {entry.card.limit ? `R$ ${entry.card.limit.toLocaleString('pt-BR')}` : 'Não informado'}
                                                   </p>
                                               </div>
-                                              <div className="bg-white/20 backdrop-blur-md p-1 rounded-lg">
-                                                  <img src={style.icon} className="w-6 h-6 opacity-90" alt="Card Brand" />
+                                              <div className={`bg-white/20 backdrop-blur-md rounded-lg ${compactCard ? 'p-0.5' : 'p-1'}`}>
+                                                  <img src={style.icon} className={`${compactCard ? 'w-5 h-5' : 'w-6 h-6'} opacity-90`} alt="Card Brand" />
                                               </div>
                                           </div>
-                                          <div className="mt-3">
-                                              <div className="flex justify-between items-end mb-2.5">
+                                          <div className={compactCard ? 'mt-2' : 'mt-3'}>
+                                              <div className={`flex justify-between items-end ${compactCard ? 'mb-2' : 'mb-2.5'}`}>
                                                   <div>
-                                                      <p className="text-[9px] text-white/80 mb-1 uppercase tracking-wider">
+                                                      <p className={`text-white/80 mb-1 uppercase tracking-wider ${compactCard ? 'text-[8px]' : 'text-[9px]'}`}>
                                                           Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', { month: 'long' })})
                                                       </p>
-                                                      <div className="text-lg font-bold text-white">
+                                                      <div className={`font-bold text-white ${compactCard ? 'text-base' : 'text-lg'}`}>
                                                           R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                                       </div>
                                                   </div>
                                                   <div className="text-right">
-                                                      <p className="text-[9px] text-white/80 mb-1">Vence em</p>
+                                                      <p className={`text-white/80 mb-1 ${compactCard ? 'text-[8px]' : 'text-[9px]'}`}>Vencimento</p>
                                                       <p
-                                                          className="text-[11px] font-bold text-white bg-white/20 px-2 py-0.5 rounded-md backdrop-blur-sm border"
+                                                          className={`font-bold text-white bg-white/20 rounded-md backdrop-blur-sm border ${
+                                                              compactCard ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
+                                                          }`}
                                                           style={{ borderColor: dueBorderColor }}
                                                       >
                                                           {formattedDueDate}
                                                       </p>
                                                   </div>
                                               </div>
-                                              <div className="pt-2.5 border-t border-white/20 flex justify-between items-center">
-                                                  <span
-                                                      className="text-[9px] font-semibold px-2 py-0.5 rounded text-white"
-                                                      style={{ backgroundColor: style.badgeBg }}
-                                                  >
-                                                      Fatura Aberta
-                                                  </span>
+                                              <div className={`grid grid-cols-3 ${compactCard ? 'gap-1' : 'gap-1.5'}`}>
+                                                  <div className={`rounded-md border border-white/20 bg-black/20 ${compactCard ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
+                                                      <p className={`uppercase tracking-wide text-white/70 ${compactCard ? 'text-[7px]' : 'text-[8px]'}`}>Fech.</p>
+                                                      <p className={`font-semibold text-white ${compactCard ? 'text-[9px]' : 'text-[10px]'}`}>{formattedClosingDate}</p>
+                                                  </div>
+                                                  <div className={`rounded-md border border-white/20 bg-black/20 ${compactCard ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
+                                                      <p className={`uppercase tracking-wide text-white/70 ${compactCard ? 'text-[7px]' : 'text-[8px]'}`}>Melhor dia</p>
+                                                      <p className={`font-semibold text-white ${compactCard ? 'text-[9px]' : 'text-[10px]'}`}>{formattedBestDay}</p>
+                                                  </div>
+                                                  <div className={`rounded-md border border-white/20 bg-black/20 ${compactCard ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
+                                                      <p className={`uppercase tracking-wide text-white/70 ${compactCard ? 'text-[7px]' : 'text-[8px]'}`}>Compra hoje</p>
+                                                      <p className={`font-semibold text-white ${compactCard ? 'text-[9px]' : 'text-[10px]'}`}>{formattedDueIfBuyToday}</p>
+                                                  </div>
+                                              </div>
+                                              <p className={`text-white/80 ${compactCard ? 'mt-1 text-[8px]' : 'mt-1.5 text-[9px]'}`}>
+                                                  Compra hoje: fatura {dueMonthIfBuyToday} (venc. {formattedDueIfBuyToday}).
+                                              </p>
+                                              <div className={`border-t border-white/20 flex justify-between items-center ${compactCard ? 'pt-2 mt-1.5' : 'pt-2.5 mt-2'}`}>
+                                                  <div className={`flex items-center ${compactCard ? 'gap-1' : 'gap-1.5'}`}>
+                                                      <span
+                                                          className={`font-semibold rounded text-white ${compactCard ? 'text-[8px] px-1.5 py-0.5' : 'text-[9px] px-2 py-0.5'}`}
+                                                          style={{ backgroundColor: style.badgeBg }}
+                                                      >
+                                                          Fatura Aberta
+                                                      </span>
+                                                      <span
+                                                          className={`font-semibold rounded border ${compactCard ? 'text-[8px] px-1.5 py-0.5' : 'text-[9px] px-2 py-0.5'}`}
+                                                          style={{
+                                                              borderColor: withAlpha(purchaseGuidance.statusColor, 0.75),
+                                                              backgroundColor: withAlpha(purchaseGuidance.statusColor, 0.24),
+                                                              color: '#ffffff'
+                                                          }}
+                                                          title={purchaseGuidance.statusHint}
+                                                      >
+                                                          {purchaseGuidance.statusLabel}
+                                                      </span>
+                                                  </div>
                                                   <button
                                                       onClick={onOpenInvoices}
-                                                      className="flex items-center gap-2 text-[10px] font-semibold text-white hover:bg-white/20 px-2 py-1 rounded-lg transition-colors"
+                                                      className={`flex items-center font-semibold text-white hover:bg-white/20 rounded-lg transition-colors ${
+                                                          compactCard ? 'gap-1 text-[9px] px-1.5 py-0.5' : 'gap-2 text-[10px] px-2 py-1'
+                                                      }`}
                                                   >
-                                                      Ver Detalhes <Eye size={14} />
+                                                      Ver Detalhes <Eye size={compactCard ? 12 : 14} />
                                                   </button>
                                               </div>
                                           </div>
@@ -2438,10 +2454,6 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                           className={`bg-white dark:bg-[#151517] rounded-2xl p-4 border ${meiStatus.level === 'over' ? 'border-red-200 dark:border-red-900/40' : meiStatus.level === 'critical' ? 'border-orange-200 dark:border-orange-900/40' : meiStatus.level === 'attention' ? 'border-amber-200 dark:border-amber-900/40' : 'border-zinc-200 dark:border-zinc-800'} shadow-sm relative overflow-hidden transition-colors duration-300`}
                           data-tour-anchor="dashboard-mei-limit"
                       >
-                          <div className="absolute inset-y-0 right-0 w-32 opacity-5 pointer-events-none">
-                              <Building2 size={120} className="w-full h-full" />
-                          </div>
-
                           <div className="relative flex flex-col gap-3">
                               <div className="flex flex-col xl:flex-row gap-3 xl:items-start">
                                   <div className="flex flex-1 items-start gap-3">
@@ -2701,7 +2713,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                       {canViewBalances ? (
                           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
                               <div className="text-[9px] uppercase tracking-[0.25em] text-emerald-500 dark:text-emerald-400">
-                                  Saldo atual
+                                  {balancePeriodLabel}
                               </div>
                               <div className="text-[14px] font-semibold mt-1 text-emerald-600 dark:text-emerald-400">
                                   R$ {financialData.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -2710,7 +2722,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                       ) : (
                           <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 px-3 py-2">
                               <div className="text-[9px] uppercase tracking-[0.25em] text-zinc-400">
-                                  Saldo atual
+                                  {balancePeriodLabel}
                               </div>
                               <div className="text-[12px] font-semibold mt-1 text-zinc-500">
                                   Saldo oculto

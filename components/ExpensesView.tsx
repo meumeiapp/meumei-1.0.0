@@ -48,6 +48,9 @@ interface ExpensesViewProps {
   minDate: string;
 }
 
+type ExpenseSortKey = 'description' | 'status' | 'date' | 'category' | 'source' | 'paymentMethod' | 'taxStatus' | 'amount';
+type SortDirection = 'asc' | 'desc';
+
 const ExpensesView: React.FC<ExpensesViewProps> = ({ 
   onBack, 
   expenses,
@@ -108,6 +111,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   const [desktopStatusFilter, setDesktopStatusFilter] = useState<'all' | 'paid' | 'pending'>('all');
   const [desktopSourceFilter, setDesktopSourceFilter] = useState<'all' | string>('all');
   const [desktopCategoryFilter, setDesktopCategoryFilter] = useState<'all' | string>('all');
+  const [desktopSort, setDesktopSort] = useState<{ key: ExpenseSortKey; direction: SortDirection } | null>(null);
   const canAdjustAccount = (account?: Account | null) => Boolean(account && !account.locked);
   const selectChangedAccounts = (baseAccounts: Account[], nextAccounts: Account[]) => {
       const baseById = new Map(baseAccounts.map(account => [account.id, account]));
@@ -280,7 +284,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       [filteredExpenses, sourceNameByExpenseId]
   );
   const normalizedDesktopSearch = desktopSearchTerm.trim().toLowerCase();
-  const visibleExpenses = isMobile
+  const baseVisibleExpenses = isMobile
       ? filteredExpenses
       : filteredExpenses.filter(expense => {
             if (desktopStatusFilter !== 'all' && expense.status !== desktopStatusFilter) return false;
@@ -300,6 +304,62 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                 .toLowerCase();
             return haystack.includes(normalizedDesktopSearch);
         });
+  const visibleExpenses = React.useMemo(() => {
+      if (isMobile || !desktopSort) return baseVisibleExpenses;
+
+      const compareText = (a: string, b: string) =>
+          a.localeCompare(b, 'pt-BR', { sensitivity: 'base' });
+      const toIsoMs = (value?: string) => {
+          if (!value) return 0;
+          const ms = new Date(`${value}T12:00:00`).getTime();
+          return Number.isFinite(ms) ? ms : 0;
+      };
+      const statusRank: Record<Expense['status'], number> = { pending: 0, paid: 1 };
+
+      const sorted = [...baseVisibleExpenses].sort((a, b) => {
+          let result = 0;
+          switch (desktopSort.key) {
+              case 'description':
+                  result = compareText(a.description || '', b.description || '');
+                  break;
+              case 'status':
+                  result = statusRank[a.status] - statusRank[b.status];
+                  break;
+              case 'date': {
+                  result = toIsoMs(a.date) - toIsoMs(b.date);
+                  if (result === 0) {
+                      result = toIsoMs(a.dueDate) - toIsoMs(b.dueDate);
+                  }
+                  break;
+              }
+              case 'category':
+                  result = compareText(a.category || '', b.category || '');
+                  break;
+              case 'source':
+                  result = compareText(
+                      sourceNameByExpenseId.get(a.id) || '',
+                      sourceNameByExpenseId.get(b.id) || ''
+                  );
+                  break;
+              case 'paymentMethod':
+                  result = compareText(a.paymentMethod || '', b.paymentMethod || '');
+                  break;
+              case 'taxStatus':
+                  result = compareText(a.taxStatus || '', b.taxStatus || '');
+                  break;
+              case 'amount':
+                  result = (a.amount || 0) - (b.amount || 0);
+                  break;
+          }
+
+          if (result === 0) {
+              result = compareText(a.id, b.id);
+          }
+          return desktopSort.direction === 'asc' ? result : -result;
+      });
+
+      return sorted;
+  }, [baseVisibleExpenses, desktopSort, isMobile, sourceNameByExpenseId]);
   const selectableExpenses = visibleExpenses.filter(exp => !exp.locked);
 
   const totalAmount = visibleExpenses.reduce((acc, curr) => acc + curr.amount, 0);
@@ -314,6 +374,30 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       (desktopStatusFilter !== 'all' ? 1 : 0) +
       (desktopSourceFilter !== 'all' ? 1 : 0) +
       (desktopCategoryFilter !== 'all' ? 1 : 0);
+  const toggleDesktopSort = (key: ExpenseSortKey) => {
+      setDesktopSort(prev => {
+          if (!prev || prev.key !== key) return { key, direction: 'desc' };
+          if (prev.direction === 'desc') return { key, direction: 'asc' };
+          return null;
+      });
+  };
+  const renderSortButton = (key: ExpenseSortKey, label: string, align: 'left' | 'right' = 'left') => {
+      const isActive = desktopSort?.key === key;
+      const indicator = isActive ? (desktopSort?.direction === 'asc' ? '↑' : '↓') : '↕';
+      return (
+          <button
+              type="button"
+              onClick={() => toggleDesktopSort(key)}
+              className={`inline-flex w-full items-center gap-1 transition-colors hover:text-zinc-700 dark:hover:text-zinc-200 ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+              title={`Ordenar por ${label}`}
+          >
+              <span>{label}</span>
+              <span className={`text-[9px] ${isActive ? 'text-rose-600 dark:text-rose-300' : 'text-zinc-500/70'}`}>
+                  {indicator}
+              </span>
+          </button>
+      );
+  };
   useEffect(() => {
       if (!isMobile) {
           document.documentElement.classList.remove('lock-scroll');
@@ -1647,23 +1731,23 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               {!isMobile && (
                                   <div className="grid items-center gap-2 px-2 text-[10px] uppercase tracking-[0.08em] text-zinc-500 dark:text-zinc-400 [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
                                       <span className="text-center">#</span>
-                                      <span>Título</span>
+                                      {renderSortButton('description', 'Título')}
                                       <span className="text-zinc-500/70">|</span>
-                                      <span>Status</span>
+                                      {renderSortButton('status', 'Status')}
                                       <span className="text-zinc-500/70">|</span>
-                                      <span>Data • Competência</span>
+                                      {renderSortButton('date', 'Data • Competência')}
                                       <span className="text-zinc-500/70">|</span>
-                                      <span>Categoria</span>
+                                      {renderSortButton('category', 'Categoria')}
                                       <span className="text-zinc-500/70">|</span>
-                                      <span>Conta</span>
+                                      {renderSortButton('source', 'Conta')}
                                       <span className="text-zinc-500/70">|</span>
-                                      <span>Forma</span>
+                                      {renderSortButton('paymentMethod', 'Forma')}
                                       <span className="text-zinc-500/70">|</span>
-                                      <span>Natureza</span>
+                                      {renderSortButton('taxStatus', 'Natureza')}
                                       <span className="text-zinc-500/70">|</span>
                                       <span>Ações</span>
                                       <span className="text-zinc-500/70">|</span>
-                                      <span className="text-right">Valor</span>
+                                      {renderSortButton('amount', 'Valor', 'right')}
                                   </div>
                               )}
                           </div>

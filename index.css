@@ -999,7 +999,8 @@ html.is-mobile .mm-mobile-shell {
     );
   background-size: cover, cover, cover, 240px 240px;
   background-repeat: no-repeat, no-repeat, no-repeat, repeat;
-  background-attachment: fixed;
+  /* iOS Safari repaints fixed backgrounds while scrolling, causing value flicker. */
+  background-attachment: scroll;
 }
 
 html.is-mobile body::-webkit-scrollbar {

@@ -28,6 +28,7 @@ export const DEFAULT_COMPANY_INFO = {
   phone: '',
   email: '',
   website: '',
+  logoDataUrl: null,
   isConfigured: false
 };
 

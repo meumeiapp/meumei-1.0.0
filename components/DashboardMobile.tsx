@@ -33,7 +33,7 @@ import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragEn
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { CreditCard as CreditCardType, Expense, Income, Account } from '../types';
-import { getCreditCardInvoiceTotalForMonth } from '../services/invoiceUtils';
+import { getCardPurchaseGuidance, getCreditCardInvoiceTotalForMonth, resolveCardDueDateForView } from '../services/invoiceUtils';
 import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorUtils';
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
@@ -1122,55 +1122,89 @@ const DashboardMobile: React.FC<DashboardProps> = ({
                         {creditCards.map((card) => {
                             const style = getCardStyle(card); 
                             const invoiceTotal = cardTotals[card.id] ?? 0;
-                            const dueDateObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), card.dueDay);
-                            if (card.dueDay < card.closingDay) {
-                                dueDateObj.setMonth(dueDateObj.getMonth() + 1);
-                            }
-                            const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'});
+                            const dueDateObj = resolveCardDueDateForView(card, expenses, viewDate);
+                            const purchaseGuidance = getCardPurchaseGuidance(card, new Date());
+                            const formattedDueDate = dueDateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                            const formattedClosingDate = purchaseGuidance.nextClosingDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                            const formattedBestDay = purchaseGuidance.bestPurchaseDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                            const formattedDueIfBuyToday = purchaseGuidance.invoiceDueDateIfBuyToday.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                            const dueMonthIfBuyToday = purchaseGuidance.invoiceDueDateIfBuyToday.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
 
                             return (
                                 <div 
                                     key={card.id} 
-                                    className="rounded-2xl p-4 border border-white/5 relative overflow-hidden shadow-lg shadow-indigo-900/5 dark:shadow-none"
-                                    style={{ backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})` }}
+                                    className="rounded-2xl p-3 border-2 border-white/5 relative overflow-hidden shadow-lg shadow-indigo-900/5 dark:shadow-none"
+                                    style={{
+                                        backgroundImage: `linear-gradient(135deg, ${style.gradient.start}, ${style.gradient.end})`,
+                                        borderColor: purchaseGuidance.statusColor
+                                    }}
                                 >
                                     <div className="absolute top-0 left-0 w-full h-full opacity-10 dark:opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
-                                    <div className="relative z-10 flex flex-col gap-4">
+                                    <div className="relative z-10 flex flex-col gap-3">
                                         <div className="flex justify-between items-start gap-3">
                                             <div className="min-w-0">
-                                                <h3 className="font-bold text-base text-white mb-1 break-words">{card.name}</h3>
-                                                <p className="text-[11px] text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
+                                                <h3 className="font-bold text-[15px] text-white mb-0.5 break-words">{card.name}</h3>
+                                                <p className="text-[10px] text-white/70 font-medium">Limite: {card.limit ? `R$ ${card.limit.toLocaleString('pt-BR')}` : 'Não informado'}</p>
                                             </div>
-                                            <div className="bg-white/20 backdrop-blur-md p-2 rounded-lg shrink-0">
-                                                <img src={style.icon} className="w-7 h-7 opacity-90" alt="Card Brand" />
+                                            <div className="bg-white/20 backdrop-blur-md p-1.5 rounded-lg shrink-0">
+                                                <img src={style.icon} className="w-6 h-6 opacity-90" alt="Card Brand" />
                                             </div>
                                         </div>
                                         <div>
-                                            <p className="text-[10px] text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
-                                            <div className="text-xl font-bold text-white">
+                                            <p className="text-[9px] text-white/80 mb-1 uppercase tracking-wider">Fatura Atual (Ref. {viewDate.toLocaleDateString('pt-BR', {month: 'long'})})</p>
+                                            <div className="text-lg font-bold text-white">
                                                 R$ {invoiceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                             </div>
-                                            <div className="mt-3 flex items-center justify-between">
+                                            <div className="mt-2 flex items-center justify-between">
                                                 <div>
-                                                    <p className="text-[10px] text-white/80 mb-1">Vence em</p>
-                                                    <p className="text-[11px] font-bold text-white bg-white/20 px-2.5 py-1 rounded-md backdrop-blur-sm inline-flex">
+                                                    <p className="text-[9px] text-white/80 mb-1">Vencimento</p>
+                                                    <p className="text-[10px] font-bold text-white bg-white/20 px-2 py-0.5 rounded-md backdrop-blur-sm inline-flex">
                                                         {formattedDueDate}
                                                     </p>
                                                 </div>
                                                 <button 
                                                     onClick={onOpenInvoices}
-                                                    className="flex items-center gap-2 text-[11px] font-semibold text-white hover:bg-white/20 px-3 py-2 rounded-lg transition-colors"
+                                                    className="flex items-center gap-1.5 text-[10px] font-semibold text-white hover:bg-white/20 px-2 py-1 rounded-lg transition-colors"
                                                 >
                                                     Ver Detalhes <Eye size={12} />
                                                 </button>
                                             </div>
-                                            <div className="pt-3 border-t border-white/20 flex justify-between items-center mt-3">
-                                                <span 
-                                                    className="text-[10px] font-semibold px-2 py-1 rounded text-white"
-                                                    style={{ backgroundColor: style.badgeBg }}
-                                                >
-                                                    Fatura Aberta
-                                                </span>
+                                            <div className="mt-2 grid grid-cols-3 gap-1.5">
+                                                <div className="rounded-md border border-white/20 bg-black/20 px-1.5 py-0.5">
+                                                    <p className="text-[8px] uppercase tracking-wide text-white/70">Fech.</p>
+                                                    <p className="text-[10px] font-semibold text-white">{formattedClosingDate}</p>
+                                                </div>
+                                                <div className="rounded-md border border-white/20 bg-black/20 px-1.5 py-0.5">
+                                                    <p className="text-[8px] uppercase tracking-wide text-white/70">Melhor</p>
+                                                    <p className="text-[10px] font-semibold text-white">{formattedBestDay}</p>
+                                                </div>
+                                                <div className="rounded-md border border-white/20 bg-black/20 px-1.5 py-0.5">
+                                                    <p className="text-[8px] uppercase tracking-wide text-white/70">Hoje</p>
+                                                    <p className="text-[10px] font-semibold text-white">{formattedDueIfBuyToday}</p>
+                                                </div>
+                                            </div>
+                                            <p className="mt-1 text-[9px] text-white/80">
+                                                Compra hoje: fatura {dueMonthIfBuyToday} (venc. {formattedDueIfBuyToday}).
+                                            </p>
+                                            <div className="pt-2 border-t border-white/20 flex justify-between items-center mt-2">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span 
+                                                        className="text-[9px] font-semibold px-1.5 py-0.5 rounded text-white"
+                                                        style={{ backgroundColor: style.badgeBg }}
+                                                    >
+                                                        Fatura Aberta
+                                                    </span>
+                                                    <span
+                                                        className="text-[9px] font-semibold px-1.5 py-0.5 rounded border"
+                                                        style={{
+                                                            borderColor: withAlpha(purchaseGuidance.statusColor, 0.75),
+                                                            backgroundColor: withAlpha(purchaseGuidance.statusColor, 0.24),
+                                                            color: '#ffffff'
+                                                        }}
+                                                    >
+                                                        {purchaseGuidance.statusLabel}
+                                                    </span>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>

@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import * as crypto from 'crypto';
 import { VertexAI } from '@google-cloud/vertexai';
 import nodemailer from 'nodemailer';
 import Stripe from 'stripe';
@@ -261,6 +262,150 @@ type BetaKeyCleanupResult = {
 
 const ADMIN_GRANT_PLANS = new Set<AdminGrantPlan>(['lifetime', 'annual', 'monthly', 'days']);
 const ADMIN_BULK_ACTIONS = new Set<AdminBulkAction>(['assign_plan', 'revoke_access']);
+const MEMBERSHIP_COLLECTION = 'memberships';
+const MEMBER_SUBCOLLECTION = 'members';
+const MEMBER_EMAIL_REGEX = /.+@.+\..+/;
+const MEMBER_PHOTO_DATA_URL_REGEX = /^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=\s]+$/i;
+const MEMBER_PHOTO_MAX_LENGTH = 350_000;
+const PROFILE_PHOTO_CAPTURE_COLLECTION = 'profile_photo_capture_sessions';
+const PROFILE_PHOTO_CAPTURE_TTL_MS = 10 * 60 * 1000;
+const PROFILE_PHOTO_CAPTURE_TOKEN_BYTES = 24;
+
+type MemberRole = 'owner' | 'admin' | 'employee';
+const MEMBER_ROLES = new Set<MemberRole>(['owner', 'admin', 'employee']);
+
+const MEMBER_PERMISSION_KEYS = [
+  'dashboard',
+  'launches',
+  'accounts',
+  'incomes',
+  'expenses',
+  'yields',
+  'invoices',
+  'reports',
+  'das',
+  'agenda',
+  'audit',
+  'settings'
+] as const;
+
+type MemberPermissionKey = (typeof MEMBER_PERMISSION_KEYS)[number];
+type MemberPermissions = Record<MemberPermissionKey, boolean>;
+
+type ActorScope = {
+  uid: string;
+  email: string;
+  name: string;
+  licenseId: string;
+  role: MemberRole;
+  active: boolean;
+  permissions: MemberPermissions;
+};
+
+const createMemberPermissions = (value: boolean): MemberPermissions => {
+  const permissions = {} as MemberPermissions;
+  MEMBER_PERMISSION_KEYS.forEach((key) => {
+    permissions[key] = value;
+  });
+  return permissions;
+};
+
+const defaultMemberPermissionsForRole = (role: MemberRole): MemberPermissions => {
+  if (role === 'owner' || role === 'admin') {
+    return createMemberPermissions(true);
+  }
+  const permissions = createMemberPermissions(false);
+  (['dashboard', 'launches', 'incomes', 'expenses', 'reports', 'agenda'] as MemberPermissionKey[]).forEach((key) => {
+    permissions[key] = true;
+  });
+  return permissions;
+};
+
+const normalizeMemberRole = (value: any, fallback: MemberRole = 'employee'): MemberRole => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (normalized === 'owner' || normalized === 'admin' || normalized === 'employee') {
+    return normalized;
+  }
+  return fallback;
+};
+
+const normalizeMemberPermissions = (value: any, role: MemberRole): MemberPermissions => {
+  if (role === 'owner' || role === 'admin') {
+    return createMemberPermissions(true);
+  }
+
+  const fallback = defaultMemberPermissionsForRole(role);
+  if (!value || typeof value !== 'object') {
+    return fallback;
+  }
+  const source = value as Partial<Record<MemberPermissionKey, unknown>>;
+  const normalized = {} as MemberPermissions;
+  MEMBER_PERMISSION_KEYS.forEach((key) => {
+    normalized[key] = source[key] === true;
+  });
+  return normalized;
+};
+
+const canManageMembers = (role: MemberRole) => role === 'owner';
+
+const resolveActorScope = async (auth: { uid: string; email: string }): Promise<ActorScope> => {
+  const db = admin.firestore();
+  const membershipSnap = await db.collection(MEMBERSHIP_COLLECTION).doc(auth.uid).get();
+  const normalizedEmail = String(auth.email || '').trim().toLowerCase();
+  if (!membershipSnap.exists) {
+    return {
+      uid: auth.uid,
+      email: normalizedEmail,
+      name: normalizedEmail || auth.uid,
+      licenseId: auth.uid,
+      role: 'owner',
+      active: true,
+      permissions: createMemberPermissions(true)
+    };
+  }
+
+  const data = membershipSnap.data() || {};
+  const role = normalizeMemberRole(data.role, 'employee');
+  const email = String(data.email || normalizedEmail).trim().toLowerCase();
+  const name = String(data.name || '').trim() || email || auth.uid;
+  const licenseId = String(data.licenseId || '').trim() || auth.uid;
+  const active = data.active !== false;
+  const permissions = normalizeMemberPermissions(data.permissions, role);
+
+  return {
+    uid: auth.uid,
+    email,
+    name,
+    licenseId,
+    role,
+    active,
+    permissions
+  };
+};
+
+const serializeMemberRecord = (uid: string, data: FirebaseFirestore.DocumentData): Record<string, unknown> => {
+  const role = normalizeMemberRole(data.role, 'employee');
+  const resolvedUid = String(data.uid || uid || '')
+    .trim() || uid;
+  return {
+    uid: resolvedUid,
+    licenseId: String(data.licenseId || '').trim(),
+    name: String(data.name || '').trim() || 'Membro',
+    email: String(data.email || '').trim().toLowerCase(),
+    photoDataUrl: data.photoDataUrl ? String(data.photoDataUrl) : null,
+    role,
+    active: data.active !== false,
+    permissions: normalizeMemberPermissions(data.permissions, role),
+    createdAtMs: toMs(data.createdAt),
+    updatedAtMs: toMs(data.updatedAt),
+    disabledAtMs: toMs(data.disabledAt),
+    lastLoginAtMs: toMs(data.lastLoginAt),
+    createdByUid: data.createdByUid ? String(data.createdByUid) : null,
+    createdByEmail: data.createdByEmail ? String(data.createdByEmail) : null
+  };
+};
 
 const toMs = (value: any): number | null => {
   if (!value) return null;
@@ -272,6 +417,156 @@ const toMs = (value: any): number | null => {
 };
 
 const normalizeTextLoose = (value: any) => String(value || '').trim().toLowerCase();
+
+const normalizeMemberPhotoDataUrl = (value: any): string | null => {
+  if (value === undefined) return null;
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (raw.length > MEMBER_PHOTO_MAX_LENGTH) {
+    throw new Error('photo_too_large');
+  }
+  if (!MEMBER_PHOTO_DATA_URL_REGEX.test(raw)) {
+    throw new Error('photo_invalid_format');
+  }
+  return raw;
+};
+
+const normalizeCaptureSessionId = (value: any) => {
+  const sessionId = String(value || '').trim();
+  if (!sessionId || sessionId.includes('/')) return '';
+  return sessionId;
+};
+
+const createProfileCaptureToken = () =>
+  crypto.randomBytes(PROFILE_PHOTO_CAPTURE_TOKEN_BYTES).toString('hex');
+
+const hashProfileCaptureToken = (token: string) =>
+  crypto.createHash('sha256').update(token).digest('hex');
+
+const safeCompareProfileCaptureHash = (expectedHash: string, providedToken: string) => {
+  const normalizedHash = String(expectedHash || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalizedHash)) return false;
+  const providedHash = hashProfileCaptureToken(String(providedToken || '').trim());
+  const expectedBuffer = Buffer.from(normalizedHash, 'hex');
+  const providedBuffer = Buffer.from(providedHash, 'hex');
+  if (expectedBuffer.length !== providedBuffer.length) return false;
+  return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+};
+
+const isAuthUserNotFoundError = (error: any) =>
+  String(error?.code || '')
+    .toLowerCase()
+    .includes('user-not-found');
+
+const isAuthEmailAlreadyExistsError = (error: any) =>
+  String(error?.code || '')
+    .toLowerCase()
+    .includes('email-already-exists');
+
+const isAuthPasswordInvalidError = (error: any) => {
+  const code = String(error?.code || '').toLowerCase();
+  return code.includes('invalid-password') || code.includes('weak-password');
+};
+
+type RelatedMemberDocs = {
+  docs: FirebaseFirestore.QueryDocumentSnapshot[];
+  refs: FirebaseFirestore.DocumentReference[];
+  allDocs: FirebaseFirestore.QueryDocumentSnapshot[];
+  primaryDoc: FirebaseFirestore.QueryDocumentSnapshot | null;
+  resolvedMemberUid: string;
+  relatedUids: string[];
+  relatedEmails: string[];
+};
+
+const collectRelatedMemberDocs = async (
+  membersRef: FirebaseFirestore.CollectionReference,
+  requestedMemberUid: string
+): Promise<RelatedMemberDocs> => {
+  const normalizedRequestedUid = String(requestedMemberUid || '').trim();
+  const allMembersSnap = await membersRef.limit(1000).get();
+  const allDocs = allMembersSnap.docs;
+
+  const selectedDocs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  const relatedUids = new Set<string>();
+  const relatedEmails = new Set<string>();
+
+  const addDoc = (docSnap: FirebaseFirestore.QueryDocumentSnapshot): boolean => {
+    if (selectedDocs.has(docSnap.ref.path)) return false;
+    selectedDocs.set(docSnap.ref.path, docSnap);
+    const data = docSnap.data() || {};
+    const docId = String(docSnap.id || '').trim();
+    const dataUid = String(data.uid || '').trim();
+    if (docId && !docId.includes('/')) relatedUids.add(docId);
+    if (dataUid && !dataUid.includes('/')) relatedUids.add(dataUid);
+    const normalizedEmail = normalizeTextLoose(data.emailNormalized || data.email);
+    if (normalizedEmail) relatedEmails.add(normalizedEmail);
+    return true;
+  };
+
+  allDocs.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const docId = String(docSnap.id || '').trim();
+    const dataUid = String(data.uid || '').trim();
+    if (docId === normalizedRequestedUid || dataUid === normalizedRequestedUid) {
+      addDoc(docSnap);
+    }
+  });
+
+  if (selectedDocs.size === 0) {
+    return {
+      docs: [],
+      refs: [],
+      allDocs,
+      primaryDoc: null,
+      resolvedMemberUid: normalizedRequestedUid,
+      relatedUids: [],
+      relatedEmails: []
+    };
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    allDocs.forEach((docSnap) => {
+      if (selectedDocs.has(docSnap.ref.path)) return;
+      const data = docSnap.data() || {};
+      const docId = String(docSnap.id || '').trim();
+      const dataUid = String(data.uid || '').trim();
+      const normalizedEmail = normalizeTextLoose(data.emailNormalized || data.email);
+      const shouldInclude =
+        (docId && relatedUids.has(docId)) ||
+        (dataUid && relatedUids.has(dataUid)) ||
+        (normalizedEmail && relatedEmails.has(normalizedEmail));
+      if (shouldInclude && addDoc(docSnap)) {
+        changed = true;
+      }
+    });
+  }
+
+  const selectedList = Array.from(selectedDocs.values());
+  const primaryDoc =
+    selectedList.find((docSnap) => String(docSnap.id || '').trim() === normalizedRequestedUid) ||
+    selectedList.find((docSnap) => String((docSnap.data() || {}).uid || '').trim() === normalizedRequestedUid) ||
+    selectedList[0] ||
+    null;
+
+  const primaryData = primaryDoc?.data() || {};
+  const resolvedMemberUid =
+    String(primaryData.uid || '').trim() ||
+    String(primaryDoc?.id || '').trim() ||
+    Array.from(relatedUids).find((uid) => uid && !uid.includes('/')) ||
+    normalizedRequestedUid;
+
+  return {
+    docs: selectedList,
+    refs: selectedList.map((docSnap) => docSnap.ref),
+    allDocs,
+    primaryDoc,
+    resolvedMemberUid,
+    relatedUids: Array.from(relatedUids),
+    relatedEmails: Array.from(relatedEmails)
+  };
+};
 
 const chunkArray = <T>(items: T[], size: number): T[][] => {
   if (size <= 0) return [items];
@@ -1616,6 +1911,958 @@ export const listEntitlements = functions
     } catch (error) {
       console.error('[entitlements] list_error', error);
       res.status(500).json({ ok: false, message: 'Falha ao listar acessos.' });
+    }
+  });
+
+export const listMembers = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    try {
+      const actor = await resolveActorScope(auth);
+      if (!actor.active || !canManageMembers(actor.role)) {
+        res.status(403).json({ ok: false, message: 'Permissão negada para listar membros.' });
+        return;
+      }
+
+      const snap = await admin
+        .firestore()
+        .collection('users')
+        .doc(actor.licenseId)
+        .collection(MEMBER_SUBCOLLECTION)
+        .orderBy('createdAt', 'desc')
+        .limit(300)
+        .get();
+
+      const membersByUid = new Map<string, Record<string, unknown>>();
+      snap.docs.forEach((docSnap) => {
+        const serialized = serializeMemberRecord(docSnap.id, docSnap.data());
+        const resolvedUid = String(serialized.uid || '').trim() || docSnap.id;
+        if (!membersByUid.has(resolvedUid)) {
+          membersByUid.set(resolvedUid, serialized);
+        }
+      });
+      const members = Array.from(membersByUid.values());
+      res.status(200).json({ ok: true, members });
+    } catch (error) {
+      console.error('[members] list_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao listar membros.' });
+    }
+  });
+
+export const createMemberAccount = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const name = String(body.name || '').trim();
+    const email = String(body.email || '')
+      .trim()
+      .toLowerCase();
+    const password = String(body.password || '');
+    const requestedRole = normalizeMemberRole(body.role, 'employee');
+    let requestedPhotoDataUrl: string | null = null;
+    try {
+      requestedPhotoDataUrl = normalizeMemberPhotoDataUrl(body.photoDataUrl);
+    } catch (error: any) {
+      const code = String(error?.message || '').toLowerCase();
+      if (code === 'photo_too_large') {
+        res.status(400).json({ ok: false, message: 'Foto muito grande. Envie uma imagem menor.' });
+        return;
+      }
+      res.status(400).json({ ok: false, message: 'Foto inválida. Use PNG, JPG ou WEBP.' });
+      return;
+    }
+
+    if (!name || name.length < 2) {
+      res.status(400).json({ ok: false, message: 'Nome inválido.' });
+      return;
+    }
+    if (!MEMBER_EMAIL_REGEX.test(email)) {
+      res.status(400).json({ ok: false, message: 'E-mail inválido.' });
+      return;
+    }
+    if (!password || password.length < 6) {
+      res.status(400).json({ ok: false, message: 'Senha deve ter ao menos 6 caracteres.' });
+      return;
+    }
+    if (!MEMBER_ROLES.has(requestedRole) || requestedRole === 'owner') {
+      res.status(400).json({ ok: false, message: 'Papel inválido para novo membro.' });
+      return;
+    }
+
+    let createdUid = '';
+    try {
+      const actor = await resolveActorScope(auth);
+      if (!actor.active || !canManageMembers(actor.role)) {
+        res.status(403).json({ ok: false, message: 'Permissão negada para criar membros.' });
+        return;
+      }
+      if (actor.role !== 'owner' && requestedRole === 'admin') {
+        res.status(403).json({ ok: false, message: 'Somente o administrador principal cria outros administradores.' });
+        return;
+      }
+
+      const db = admin.firestore();
+      const membersRef = db
+        .collection('users')
+        .doc(actor.licenseId)
+        .collection(MEMBER_SUBCOLLECTION);
+
+      const duplicateByEmail = await membersRef.where('emailNormalized', '==', email).limit(1).get();
+      if (!duplicateByEmail.empty) {
+        res.status(409).json({ ok: false, message: 'Já existe um membro com este e-mail nesta licença.' });
+        return;
+      }
+
+      const ownerAuthUser = await admin.auth().getUser(actor.licenseId).catch(() => null);
+      const ownerEmail = String(ownerAuthUser?.email || '')
+        .trim()
+        .toLowerCase();
+      if (ownerEmail && ownerEmail === email) {
+        res.status(409).json({ ok: false, message: 'Este e-mail já pertence ao administrador principal.' });
+        return;
+      }
+
+      const permissions = normalizeMemberPermissions(body.permissions, requestedRole);
+      const createdUser = await admin.auth().createUser({
+        email,
+        password,
+        displayName: name
+      });
+      createdUid = createdUser.uid;
+
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const payload: FirebaseFirestore.DocumentData = {
+        uid: createdUid,
+        licenseId: actor.licenseId,
+        name,
+        email,
+        photoDataUrl: requestedPhotoDataUrl,
+        emailNormalized: email,
+        role: requestedRole,
+        active: true,
+        permissions,
+        createdByUid: actor.uid,
+        createdByEmail: actor.email || null,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await Promise.all([
+        membersRef.doc(createdUid).set(payload, { merge: true }),
+        db.collection(MEMBERSHIP_COLLECTION).doc(createdUid).set(payload, { merge: true }),
+        admin.auth().setCustomUserClaims(createdUid, {
+          licenseId: actor.licenseId,
+          role: requestedRole
+        })
+      ]);
+
+      const createdAtMs = Date.now();
+      res.status(200).json({
+        ok: true,
+        member: {
+          ...serializeMemberRecord(createdUid, {
+            ...payload,
+            createdAt: new Date(createdAtMs),
+            updatedAt: new Date(createdAtMs)
+          }),
+          createdAtMs,
+          updatedAtMs: createdAtMs
+        }
+      });
+    } catch (error: any) {
+      if (createdUid) {
+        await admin
+          .auth()
+          .deleteUser(createdUid)
+          .catch((rollbackError) => console.error('[members] rollback_delete_user_error', rollbackError));
+      }
+      const code = String(error?.code || '').toLowerCase();
+      if (code.includes('email-already-exists')) {
+        res.status(409).json({ ok: false, message: 'Este e-mail já está cadastrado no sistema.' });
+        return;
+      }
+      console.error('[members] create_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao criar o membro.' });
+    }
+  });
+
+export const updateMemberAccess = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const memberUid = String(body.memberUid || '').trim();
+    if (!memberUid || memberUid.includes('/')) {
+      res.status(400).json({ ok: false, message: 'Membro inválido.' });
+      return;
+    }
+    const requestedEmail = body.email !== undefined ? normalizeTextLoose(body.email) : null;
+    if (requestedEmail !== null && !MEMBER_EMAIL_REGEX.test(requestedEmail)) {
+      res.status(400).json({ ok: false, message: 'E-mail inválido.' });
+      return;
+    }
+    const requestedPassword = body.password !== undefined ? String(body.password || '') : '';
+    const hasPasswordUpdate = body.password !== undefined && requestedPassword.length > 0;
+    if (body.password !== undefined && requestedPassword.length > 0 && requestedPassword.length < 6) {
+      res.status(400).json({ ok: false, message: 'Senha deve ter ao menos 6 caracteres.' });
+      return;
+    }
+    let requestedPhotoDataUrl: string | null | undefined = undefined;
+    if (body.photoDataUrl !== undefined) {
+      try {
+        requestedPhotoDataUrl = normalizeMemberPhotoDataUrl(body.photoDataUrl);
+      } catch (error: any) {
+        const code = String(error?.message || '').toLowerCase();
+        if (code === 'photo_too_large') {
+          res.status(400).json({ ok: false, message: 'Foto muito grande. Envie uma imagem menor.' });
+          return;
+        }
+        res.status(400).json({ ok: false, message: 'Foto inválida. Use PNG, JPG ou WEBP.' });
+        return;
+      }
+    }
+
+    try {
+      const actor = await resolveActorScope(auth);
+      if (!actor.active || !canManageMembers(actor.role)) {
+        res.status(403).json({ ok: false, message: 'Permissão negada para atualizar membros.' });
+        return;
+      }
+      if (memberUid === actor.licenseId) {
+        res.status(400).json({ ok: false, message: 'O administrador principal não pode ser alterado aqui.' });
+        return;
+      }
+
+      const db = admin.firestore();
+      const membersRef = db
+        .collection('users')
+        .doc(actor.licenseId)
+        .collection(MEMBER_SUBCOLLECTION);
+      const relatedMember = await collectRelatedMemberDocs(membersRef, memberUid);
+      if (relatedMember.docs.length === 0 || !relatedMember.primaryDoc) {
+        res.status(404).json({ ok: false, message: 'Membro não encontrado.' });
+        return;
+      }
+      const memberSnap = relatedMember.primaryDoc;
+      const resolvedMemberUid = String(relatedMember.resolvedMemberUid || memberUid).trim();
+      if (!resolvedMemberUid || resolvedMemberUid.includes('/')) {
+        res.status(400).json({ ok: false, message: 'UID do membro inválido.' });
+        return;
+      }
+      if (resolvedMemberUid === actor.licenseId) {
+        res.status(400).json({ ok: false, message: 'O administrador principal não pode ser alterado aqui.' });
+        return;
+      }
+      if (resolvedMemberUid === actor.uid) {
+        res.status(400).json({ ok: false, message: 'Você não pode alterar seu próprio acesso por esta tela.' });
+        return;
+      }
+
+      const currentData = memberSnap.data() || {};
+      const currentRole = normalizeMemberRole(currentData.role, 'employee');
+      const nextRole = body.role !== undefined
+        ? normalizeMemberRole(body.role, currentRole)
+        : currentRole;
+      if (!MEMBER_ROLES.has(nextRole) || nextRole === 'owner') {
+        res.status(400).json({ ok: false, message: 'Papel inválido para membro.' });
+        return;
+      }
+      if (actor.role !== 'owner' && (currentRole === 'admin' || nextRole === 'admin')) {
+        res.status(403).json({ ok: false, message: 'Somente o administrador principal pode alterar administradores.' });
+        return;
+      }
+
+      const nextActive = typeof body.active === 'boolean' ? body.active : currentData.active !== false;
+      if (resolvedMemberUid === actor.uid && !nextActive) {
+        res.status(400).json({ ok: false, message: 'Você não pode desativar seu próprio acesso.' });
+        return;
+      }
+
+      const rawName = String(body.name !== undefined ? body.name : currentData.name || '').trim();
+      const nextName = rawName || String(currentData.name || 'Membro').trim() || 'Membro';
+      const currentPhotoDataUrl = (() => {
+        try {
+          return normalizeMemberPhotoDataUrl(currentData.photoDataUrl);
+        } catch {
+          return null;
+        }
+      })();
+      const nextPhotoDataUrl = requestedPhotoDataUrl !== undefined
+        ? requestedPhotoDataUrl
+        : currentPhotoDataUrl;
+      const currentEmail = normalizeTextLoose(currentData.emailNormalized || currentData.email);
+      const nextEmail = requestedEmail !== null ? requestedEmail : currentEmail;
+      if (!nextEmail || !MEMBER_EMAIL_REGEX.test(nextEmail)) {
+        res.status(400).json({ ok: false, message: 'E-mail inválido.' });
+        return;
+      }
+      if (nextEmail !== currentEmail) {
+        const relatedPaths = new Set(relatedMember.docs.map((docSnap) => docSnap.ref.path));
+        const duplicateByEmail = await membersRef
+          .where('emailNormalized', '==', nextEmail)
+          .limit(40)
+          .get();
+        const hasDuplicateByNormalized = duplicateByEmail.docs.some(
+          (docSnap) => !relatedPaths.has(docSnap.ref.path)
+        );
+        const hasDuplicateByLegacyEmail = relatedMember.allDocs.some((docSnap) => {
+          if (relatedPaths.has(docSnap.ref.path)) return false;
+          const data = docSnap.data() || {};
+          return normalizeTextLoose(data.emailNormalized || data.email) === nextEmail;
+        });
+        if (hasDuplicateByNormalized || hasDuplicateByLegacyEmail) {
+          res.status(409).json({ ok: false, message: 'Já existe um membro com este e-mail nesta licença.' });
+          return;
+        }
+        const ownerAuthUser = await admin.auth().getUser(actor.licenseId).catch(() => null);
+        const ownerEmail = normalizeTextLoose(ownerAuthUser?.email || '');
+        if (ownerEmail && ownerEmail === nextEmail) {
+          res.status(409).json({ ok: false, message: 'Este e-mail já pertence ao administrador principal.' });
+          return;
+        }
+      }
+
+      const authUidCandidates = Array.from(
+        new Set([
+          resolvedMemberUid,
+          memberUid,
+          ...relatedMember.relatedUids
+        ])
+      )
+        .map((uid) => String(uid || '').trim())
+        .filter((uid) => uid && !uid.includes('/') && uid !== actor.uid && uid !== actor.licenseId);
+
+      let authTargetUid = '';
+      for (const authUid of authUidCandidates) {
+        try {
+          const authUpdatePayload: {
+            disabled: boolean;
+            displayName: string;
+            email?: string;
+            password?: string;
+          } = {
+            disabled: !nextActive,
+            displayName: nextName,
+            email: nextEmail
+          };
+          if (hasPasswordUpdate) {
+            authUpdatePayload.password = requestedPassword;
+          }
+          await admin.auth().updateUser(authUid, authUpdatePayload);
+          await admin.auth().setCustomUserClaims(authUid, {
+            licenseId: actor.licenseId,
+            role: nextRole
+          });
+          authTargetUid = authUid;
+          break;
+        } catch (error: any) {
+          if (isAuthUserNotFoundError(error)) {
+            continue;
+          }
+          if (isAuthEmailAlreadyExistsError(error)) {
+            res.status(409).json({ ok: false, message: 'Este e-mail já está cadastrado no sistema.' });
+            return;
+          }
+          if (isAuthPasswordInvalidError(error)) {
+            res.status(400).json({ ok: false, message: 'Senha inválida. Use ao menos 6 caracteres.' });
+            return;
+          }
+          throw error;
+        }
+      }
+      if (!authTargetUid) {
+        res.status(404).json({ ok: false, message: 'Conta de login deste membro não foi encontrada.' });
+        return;
+      }
+
+      const permissionsInput = body.permissions !== undefined ? body.permissions : currentData.permissions;
+      const nextPermissions = normalizeMemberPermissions(permissionsInput, nextRole);
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const updatePayload: FirebaseFirestore.DocumentData = {
+        uid: authTargetUid,
+        licenseId: actor.licenseId,
+        name: nextName,
+        email: nextEmail,
+        photoDataUrl: nextPhotoDataUrl,
+        emailNormalized: nextEmail,
+        role: nextRole,
+        active: nextActive,
+        permissions: nextPermissions,
+        updatedAt: now,
+        updatedByUid: actor.uid,
+        updatedByEmail: actor.email || null,
+        disabledAt: nextActive ? admin.firestore.FieldValue.delete() : now
+      };
+
+      const refsToUpdate = new Map<string, FirebaseFirestore.DocumentReference>();
+      relatedMember.refs.forEach((ref) => refsToUpdate.set(ref.path, ref));
+      refsToUpdate.set(membersRef.doc(authTargetUid).path, membersRef.doc(authTargetUid));
+      const membershipRef = db.collection(MEMBERSHIP_COLLECTION).doc(authTargetUid);
+      await Promise.all([
+        ...Array.from(refsToUpdate.values()).map((ref) => ref.set(updatePayload, { merge: true })),
+        membershipRef.set(updatePayload, { merge: true })
+      ]);
+
+      const updatedSnap = await membersRef.doc(authTargetUid).get();
+      const updatedData = updatedSnap.data() || {};
+      res.status(200).json({
+        ok: true,
+        member: serializeMemberRecord(authTargetUid, updatedData)
+      });
+    } catch (error) {
+      console.error('[members] update_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao atualizar o membro.' });
+    }
+  });
+
+export const updateMyMemberProfile = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const rawName = body.name !== undefined ? String(body.name || '').trim() : '';
+    if (body.name !== undefined && rawName.length < 2) {
+      res.status(400).json({ ok: false, message: 'Nome inválido.' });
+      return;
+    }
+
+    let requestedPhotoDataUrl: string | null | undefined = undefined;
+    if (body.photoDataUrl !== undefined) {
+      try {
+        requestedPhotoDataUrl = normalizeMemberPhotoDataUrl(body.photoDataUrl);
+      } catch (error: any) {
+        const code = String(error?.message || '').toLowerCase();
+        if (code === 'photo_too_large') {
+          res.status(400).json({ ok: false, message: 'Foto muito grande. Envie uma imagem menor.' });
+          return;
+        }
+        res.status(400).json({ ok: false, message: 'Foto inválida. Use PNG, JPG ou WEBP.' });
+        return;
+      }
+    }
+
+    try {
+      const actor = await resolveActorScope(auth);
+      if (!actor.active) {
+        res.status(403).json({ ok: false, message: 'Seu acesso está inativo.' });
+        return;
+      }
+
+      const db = admin.firestore();
+      const memberRef = db
+        .collection('users')
+        .doc(actor.licenseId)
+        .collection(MEMBER_SUBCOLLECTION)
+        .doc(actor.uid);
+      const membershipRef = db.collection(MEMBERSHIP_COLLECTION).doc(actor.uid);
+
+      const [memberSnap, membershipSnap] = await Promise.all([memberRef.get(), membershipRef.get()]);
+      const memberData = memberSnap.exists ? memberSnap.data() || {} : {};
+      const membershipData = membershipSnap.exists ? membershipSnap.data() || {} : {};
+      const mergedCurrent = {
+        ...membershipData,
+        ...memberData
+      };
+
+      const nextName =
+        rawName ||
+        String(mergedCurrent.name || actor.name || '').trim() ||
+        String(actor.email || '').trim() ||
+        'Usuário';
+      const currentPhotoDataUrl = (() => {
+        try {
+          return normalizeMemberPhotoDataUrl(mergedCurrent.photoDataUrl);
+        } catch {
+          return null;
+        }
+      })();
+      const nextPhotoDataUrl =
+        requestedPhotoDataUrl !== undefined ? requestedPhotoDataUrl : currentPhotoDataUrl;
+      const now = admin.firestore.FieldValue.serverTimestamp();
+
+      const updatePayload: FirebaseFirestore.DocumentData = {
+        uid: actor.uid,
+        licenseId: actor.licenseId,
+        name: nextName,
+        email: actor.email || null,
+        emailNormalized: normalizeTextLoose(actor.email || ''),
+        role: actor.role,
+        active: true,
+        permissions: actor.permissions,
+        photoDataUrl: nextPhotoDataUrl,
+        updatedAt: now,
+        updatedByUid: actor.uid,
+        updatedByEmail: actor.email || null
+      };
+
+      await Promise.all([
+        memberRef.set(updatePayload, { merge: true }),
+        membershipRef.set(updatePayload, { merge: true }),
+        admin
+          .auth()
+          .updateUser(actor.uid, {
+            displayName: nextName
+          })
+          .catch((error: any) => {
+            if (isAuthUserNotFoundError(error)) return;
+            throw error;
+          })
+      ]);
+
+      const [updatedMemberSnap, updatedMembershipSnap] = await Promise.all([
+        memberRef.get(),
+        membershipRef.get()
+      ]);
+      const updatedMerged = {
+        ...(updatedMembershipSnap.exists ? updatedMembershipSnap.data() || {} : {}),
+        ...(updatedMemberSnap.exists ? updatedMemberSnap.data() || {} : {})
+      };
+
+      res.status(200).json({
+        ok: true,
+        member: serializeMemberRecord(actor.uid, {
+          uid: actor.uid,
+          licenseId: actor.licenseId,
+          email: actor.email || updatedMerged.email || null,
+          role: normalizeMemberRole(updatedMerged.role, actor.role),
+          active: updatedMerged.active !== false,
+          permissions: normalizeMemberPermissions(
+            updatedMerged.permissions,
+            normalizeMemberRole(updatedMerged.role, actor.role)
+          ),
+          createdAt: updatedMerged.createdAt || null,
+          updatedAt: updatedMerged.updatedAt || new Date(),
+          createdByUid: updatedMerged.createdByUid || null,
+          createdByEmail: updatedMerged.createdByEmail || null,
+          lastLoginAt: updatedMerged.lastLoginAt || null,
+          disabledAt: updatedMerged.disabledAt || null,
+          name: nextName,
+          photoDataUrl: nextPhotoDataUrl
+        })
+      });
+    } catch (error) {
+      console.error('[members] update_self_profile_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao atualizar seu perfil.' });
+    }
+  });
+
+export const createProfilePhotoCaptureSession = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    try {
+      const actor = await resolveActorScope(auth);
+      if (!actor.active) {
+        res.status(403).json({ ok: false, message: 'Seu acesso está inativo.' });
+        return;
+      }
+      const body = parseRequestBody(req);
+      const targetName = String(body.targetName || '').trim().slice(0, 120) || null;
+      const db = admin.firestore();
+      const sessionRef = db.collection(PROFILE_PHOTO_CAPTURE_COLLECTION).doc();
+      const sessionToken = createProfileCaptureToken();
+      const tokenHash = hashProfileCaptureToken(sessionToken);
+      const nowMs = Date.now();
+      const expiresAtMs = nowMs + PROFILE_PHOTO_CAPTURE_TTL_MS;
+
+      await sessionRef.set({
+        sessionId: sessionRef.id,
+        ownerUid: actor.uid,
+        ownerEmail: actor.email || null,
+        ownerLicenseId: actor.licenseId,
+        status: 'pending',
+        targetName,
+        tokenHash,
+        photoDataUrl: null,
+        createdAtMs: nowMs,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAtMs,
+        expiresAt: new Date(expiresAtMs),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      res.status(200).json({
+        ok: true,
+        session: {
+          sessionId: sessionRef.id,
+          sessionToken,
+          status: 'pending',
+          expiresAtMs,
+          photoDataUrl: null
+        }
+      });
+    } catch (error) {
+      console.error('[profile-photo-capture] create_session_error', error);
+      res.status(500).json({ ok: false, message: 'Não foi possível iniciar a captura de foto.' });
+    }
+  });
+
+export const getProfilePhotoCaptureSession = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const sessionId = normalizeCaptureSessionId(body.sessionId);
+    if (!sessionId) {
+      res.status(400).json({ ok: false, message: 'Sessão inválida.' });
+      return;
+    }
+
+    try {
+      const actor = await resolveActorScope(auth);
+      const db = admin.firestore();
+      const sessionRef = db.collection(PROFILE_PHOTO_CAPTURE_COLLECTION).doc(sessionId);
+      const sessionSnap = await sessionRef.get();
+      if (!sessionSnap.exists) {
+        res.status(404).json({ ok: false, message: 'Sessão não encontrada.' });
+        return;
+      }
+
+      const data = sessionSnap.data() || {};
+      const ownerUid = String(data.ownerUid || '').trim();
+      if (!ownerUid || ownerUid !== actor.uid) {
+        res.status(403).json({ ok: false, message: 'Você não pode acessar esta sessão.' });
+        return;
+      }
+
+      const expiresAtMs =
+        typeof data.expiresAtMs === 'number' && Number.isFinite(data.expiresAtMs)
+          ? data.expiresAtMs
+          : toMs(data.expiresAt);
+      const nowMs = Date.now();
+      const originalStatus = String(data.status || 'pending').trim().toLowerCase();
+      let status = originalStatus || 'pending';
+
+      if (expiresAtMs && nowMs > expiresAtMs && status !== 'consumed') {
+        status = 'expired';
+        if (originalStatus !== 'expired') {
+          await sessionRef.set(
+            {
+              status: 'expired',
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            },
+            { merge: true }
+          );
+        }
+      }
+
+      let photoDataUrl: string | null = null;
+      if (status === 'captured') {
+        try {
+          photoDataUrl = normalizeMemberPhotoDataUrl(data.photoDataUrl);
+        } catch {
+          photoDataUrl = null;
+        }
+      }
+
+      res.status(200).json({
+        ok: true,
+        session: {
+          sessionId,
+          status,
+          expiresAtMs: expiresAtMs || null,
+          photoDataUrl
+        }
+      });
+    } catch (error) {
+      console.error('[profile-photo-capture] get_session_error', error);
+      res.status(500).json({ ok: false, message: 'Não foi possível consultar a sessão de captura.' });
+    }
+  });
+
+export const consumeProfilePhotoCaptureSession = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const sessionId = normalizeCaptureSessionId(body.sessionId);
+    if (!sessionId) {
+      res.status(400).json({ ok: false, message: 'Sessão inválida.' });
+      return;
+    }
+
+    try {
+      const actor = await resolveActorScope(auth);
+      const db = admin.firestore();
+      const sessionRef = db.collection(PROFILE_PHOTO_CAPTURE_COLLECTION).doc(sessionId);
+      const sessionSnap = await sessionRef.get();
+      if (!sessionSnap.exists) {
+        res.status(404).json({ ok: false, message: 'Sessão não encontrada.' });
+        return;
+      }
+      const data = sessionSnap.data() || {};
+      const ownerUid = String(data.ownerUid || '').trim();
+      if (!ownerUid || ownerUid !== actor.uid) {
+        res.status(403).json({ ok: false, message: 'Você não pode consumir esta sessão.' });
+        return;
+      }
+
+      await sessionRef.set(
+        {
+          status: 'consumed',
+          photoDataUrl: admin.firestore.FieldValue.delete(),
+          tokenHash: admin.firestore.FieldValue.delete(),
+          consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+
+      res.status(200).json({ ok: true, consumed: true });
+    } catch (error) {
+      console.error('[profile-photo-capture] consume_session_error', error);
+      res.status(500).json({ ok: false, message: 'Não foi possível finalizar a sessão de captura.' });
+    }
+  });
+
+export const submitProfilePhotoCapture = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const body = parseRequestBody(req);
+    const sessionId = normalizeCaptureSessionId(body.sessionId);
+    const sessionToken = String(body.sessionToken || '').trim();
+    if (!sessionId || sessionToken.length < 16) {
+      res.status(400).json({ ok: false, message: 'Sessão de captura inválida.' });
+      return;
+    }
+
+    let photoDataUrl: string | null = null;
+    try {
+      photoDataUrl = normalizeMemberPhotoDataUrl(body.photoDataUrl);
+    } catch (error: any) {
+      const code = String(error?.message || '').toLowerCase();
+      if (code === 'photo_too_large') {
+        res.status(400).json({ ok: false, message: 'Foto muito grande. Envie uma imagem menor.' });
+        return;
+      }
+      res.status(400).json({ ok: false, message: 'Foto inválida. Use PNG, JPG ou WEBP.' });
+      return;
+    }
+    if (!photoDataUrl) {
+      res.status(400).json({ ok: false, message: 'Foto inválida.' });
+      return;
+    }
+
+    try {
+      const db = admin.firestore();
+      const sessionRef = db.collection(PROFILE_PHOTO_CAPTURE_COLLECTION).doc(sessionId);
+      const sessionSnap = await sessionRef.get();
+      if (!sessionSnap.exists) {
+        res.status(404).json({ ok: false, message: 'Sessão não encontrada.' });
+        return;
+      }
+      const data = sessionSnap.data() || {};
+      const status = String(data.status || 'pending').trim().toLowerCase();
+      if (status === 'consumed') {
+        res.status(409).json({ ok: false, message: 'Sessão de captura já finalizada.' });
+        return;
+      }
+      const expiresAtMs =
+        typeof data.expiresAtMs === 'number' && Number.isFinite(data.expiresAtMs)
+          ? data.expiresAtMs
+          : toMs(data.expiresAt);
+      if (expiresAtMs && Date.now() > expiresAtMs) {
+        await sessionRef.set(
+          {
+            status: 'expired',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+        res.status(410).json({ ok: false, message: 'QR Code expirado. Gere um novo no desktop.' });
+        return;
+      }
+      const tokenHash = String(data.tokenHash || '').trim();
+      if (!safeCompareProfileCaptureHash(tokenHash, sessionToken)) {
+        res.status(401).json({ ok: false, message: 'Sessão de captura inválida ou expirada.' });
+        return;
+      }
+
+      await sessionRef.set(
+        {
+          status: 'captured',
+          photoDataUrl,
+          capturedAt: admin.firestore.FieldValue.serverTimestamp(),
+          capturedAtMs: Date.now(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+
+      res.status(200).json({ ok: true, uploaded: true });
+    } catch (error) {
+      console.error('[profile-photo-capture] submit_capture_error', error);
+      res.status(500).json({ ok: false, message: 'Não foi possível enviar a foto para o desktop.' });
+    }
+  });
+
+export const deleteMemberAccount = functions
+  .region('us-central1')
+  .https.onRequest(async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, message: 'Método não permitido.' });
+      return;
+    }
+
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+
+    const body = parseRequestBody(req);
+    const memberUid = String(body.memberUid || '').trim();
+    if (!memberUid || memberUid.includes('/')) {
+      res.status(400).json({ ok: false, message: 'Membro inválido.' });
+      return;
+    }
+
+    try {
+      const actor = await resolveActorScope(auth);
+      if (!actor.active || !canManageMembers(actor.role)) {
+        res.status(403).json({ ok: false, message: 'Permissão negada para excluir membros.' });
+        return;
+      }
+      if (memberUid === actor.licenseId) {
+        res.status(400).json({ ok: false, message: 'O administrador principal não pode ser excluído.' });
+        return;
+      }
+      if (memberUid === actor.uid) {
+        res.status(400).json({ ok: false, message: 'Você não pode excluir seu próprio acesso.' });
+        return;
+      }
+
+      const db = admin.firestore();
+      const membersRef = db
+        .collection('users')
+        .doc(actor.licenseId)
+        .collection(MEMBER_SUBCOLLECTION);
+      const relatedMember = await collectRelatedMemberDocs(membersRef, memberUid);
+      if (relatedMember.docs.length === 0) {
+        res.status(404).json({ ok: false, message: 'Membro não encontrado.' });
+        return;
+      }
+
+      const resolvedMemberUid = String(relatedMember.resolvedMemberUid || memberUid).trim();
+      if (!resolvedMemberUid || resolvedMemberUid.includes('/')) {
+        res.status(400).json({ ok: false, message: 'UID do membro inválido.' });
+        return;
+      }
+      const relatedAuthUids = Array.from(
+        new Set([memberUid, resolvedMemberUid, ...relatedMember.relatedUids])
+      )
+        .map((uid) => String(uid || '').trim())
+        .filter((uid) => uid && !uid.includes('/'));
+      if (relatedAuthUids.includes(actor.licenseId)) {
+        res.status(400).json({ ok: false, message: 'O administrador principal não pode ser excluído.' });
+        return;
+      }
+      if (relatedAuthUids.includes(actor.uid)) {
+        res.status(400).json({ ok: false, message: 'Você não pode excluir seu próprio acesso.' });
+        return;
+      }
+      const refsToDelete = new Map<string, FirebaseFirestore.DocumentReference>();
+      relatedMember.refs.forEach((ref) => refsToDelete.set(ref.path, ref));
+      refsToDelete.set(membersRef.doc(memberUid).path, membersRef.doc(memberUid));
+      refsToDelete.set(membersRef.doc(resolvedMemberUid).path, membersRef.doc(resolvedMemberUid));
+
+      const membershipRefs = new Map<string, FirebaseFirestore.DocumentReference>();
+      relatedAuthUids.forEach((uid) => {
+        membershipRefs.set(
+          db.collection(MEMBERSHIP_COLLECTION).doc(uid).path,
+          db.collection(MEMBERSHIP_COLLECTION).doc(uid)
+        );
+      });
+
+      await deleteDocumentRefs([
+        ...Array.from(refsToDelete.values()),
+        ...Array.from(membershipRefs.values())
+      ]);
+
+      const authUidsToDelete = relatedAuthUids.filter(
+        (uid) => uid && uid !== actor.uid && uid !== actor.licenseId
+      );
+      for (const authUid of authUidsToDelete) {
+        await admin
+          .auth()
+          .deleteUser(authUid)
+          .catch((error: any) => {
+            if (isAuthUserNotFoundError(error)) return;
+            throw error;
+          });
+      }
+
+      res.status(200).json({
+        ok: true,
+        deletedUid: resolvedMemberUid,
+        deletedDocIds: Array.from(refsToDelete.values()).map((ref) => ref.id),
+        deletedAuthUids: authUidsToDelete
+      });
+    } catch (error) {
+      console.error('[members] delete_error', error);
+      res.status(500).json({ ok: false, message: 'Falha ao excluir o membro.' });
     }
   });
 

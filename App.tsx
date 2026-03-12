@@ -23,11 +23,13 @@ import TourDecisionModal from './components/TourDecisionModal';
 import MobileQuickAccessFooter from './components/mobile/MobileQuickAccessFooter';
 import DesktopQuickAccessFooter from './components/desktop/DesktopQuickAccessFooter';
 import DesktopFirstAccessTour from './components/DesktopFirstAccessTour';
+import ProfileEditorModal from './components/ProfileEditorModal';
+import ProfilePhotoCaptureRoute from './components/ProfilePhotoCaptureRoute';
 import Landing from './Pages/Landing';
 import Termos from './Pages/Termos';
 import Privacidade from './Pages/Privacidade';
 import Reembolso from './Pages/Reembolso';
-import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference, ExpenseType, ExpenseTypeOption, AgendaItem, Transfer } from './types';
+import { ViewState, CompanyInfo, Account, CreditCard, Expense, Income, LicenseRecord, ThemePreference, ExpenseType, ExpenseTypeOption, AgendaItem, Transfer, MemberPermissions, MemberRole } from './types';
 import { COMPANY_DATA, DEFAULT_COMPANY_INFO, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_TYPES, DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_EXPENSE_TYPES } from './constants';
 import { dataService } from './services/dataService';
 import { seedDevAnnualCoverage, seedDevUserData } from './services/devSeedService';
@@ -44,6 +46,7 @@ import { auth, db, firebaseDebugInfo } from './services/firebase';
 import { preferencesService } from './services/preferencesService';
 import { betaKeysService } from './services/betaKeysService';
 import { masterFeedbackService } from './services/masterFeedbackService';
+import { membersService } from './services/membersService';
 import {
   ArrowUpCircle,
   ArrowDownUp,
@@ -81,6 +84,7 @@ import APP_VERSION from './appVersion';
 import type { AuditEntityType } from './services/auditService';
 import { APP_VERSION as LOGIN_APP_VERSION, BUILD_TIME } from './version';
 import { BUILD_ID } from './utils/buildInfo';
+import { buildDefaultPermissionsForRole, canAccessView } from './utils/memberAccess';
 
 const roundToCents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -171,6 +175,137 @@ const currencyFormatter = new Intl.NumberFormat('pt-BR', {
 });
 
 const formatCurrency = (value: number) => currencyFormatter.format(value || 0);
+
+const normalizeTransferText = (value?: string | null) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const containsTransferKeyword = (value?: string | null) =>
+  normalizeTransferText(value).includes('transfer');
+
+const isTransferExpense = (expense?: Expense | null) => {
+  if (!expense) return false;
+  return [expense.description, expense.category, expense.paymentMethod, expense.notes].some(containsTransferKeyword);
+};
+
+const isTransferIncome = (income?: Income | null) => {
+  if (!income) return false;
+  return [income.description, income.category, income.paymentMethod, income.notes].some(containsTransferKeyword);
+};
+
+const getDateDiffInDays = (first?: string, second?: string) => {
+  if (!first || !second) return Number.POSITIVE_INFINITY;
+  const a = new Date(`${first}T12:00:00`);
+  const b = new Date(`${second}T12:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return Number.POSITIVE_INFINITY;
+  const diff = Math.abs(a.getTime() - b.getTime());
+  return Math.round(diff / 86_400_000);
+};
+
+const findLinkedIncomeForTransferExpense = (expense: Expense, incomes: Income[]) => {
+  if (!isTransferExpense(expense)) return null;
+  const sourceAmount = roundToCents(Number(expense.amount || 0));
+  if (sourceAmount <= 0) return null;
+
+  const sourceDescription = normalizeTransferText(expense.description);
+  const sourceCategory = normalizeTransferText(expense.category);
+  const ranked = incomes
+    .filter(candidate => {
+      if (candidate.locked) return false;
+      const candidateAmount = roundToCents(Number(candidate.amount || 0));
+      if (Math.abs(candidateAmount - sourceAmount) > 0.009) return false;
+      if (candidate.accountId && expense.accountId && candidate.accountId === expense.accountId) return false;
+      const candidateIsTransfer = isTransferIncome(candidate);
+      if (!candidateIsTransfer) return false;
+      return true;
+    })
+    .map(candidate => {
+      const candidateDescription = normalizeTransferText(candidate.description);
+      const candidateCategory = normalizeTransferText(candidate.category);
+      const transferContext = isTransferIncome(candidate);
+      const nearestDateDiff = Math.min(
+        getDateDiffInDays(expense.date, candidate.date),
+        getDateDiffInDays(expense.dueDate, candidate.date)
+      );
+      const sameDescription = Boolean(sourceDescription && candidateDescription && sourceDescription === candidateDescription);
+      const sameCategory = Boolean(sourceCategory && candidateCategory && sourceCategory === candidateCategory);
+      const likelyPair = sameDescription || (transferContext && nearestDateDiff <= 3);
+      if (!likelyPair) return null;
+
+      let score = 0;
+      if (sameDescription) score += 8;
+      if (sameCategory) score += 2;
+      if (transferContext) score += 2;
+      if (nearestDateDiff === 0) score += 2;
+      else if (nearestDateDiff <= 1) score += 1;
+      if (candidate.accountId && expense.accountId && candidate.accountId !== expense.accountId) score += 1;
+
+      return { candidate, score, nearestDateDiff };
+    })
+    .filter((item): item is { candidate: Income; score: number; nearestDateDiff: number } => Boolean(item))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.nearestDateDiff !== b.nearestDateDiff) return a.nearestDateDiff - b.nearestDateDiff;
+      return a.candidate.id.localeCompare(b.candidate.id);
+    });
+
+  return ranked[0]?.candidate || null;
+};
+
+const findLinkedExpenseForTransferIncome = (income: Income, expenses: Expense[]) => {
+  if (!isTransferIncome(income)) return null;
+  const sourceAmount = roundToCents(Number(income.amount || 0));
+  if (sourceAmount <= 0) return null;
+
+  const sourceDescription = normalizeTransferText(income.description);
+  const sourceCategory = normalizeTransferText(income.category);
+  const ranked = expenses
+    .filter(candidate => {
+      if (candidate.locked) return false;
+      const candidateAmount = roundToCents(Number(candidate.amount || 0));
+      if (Math.abs(candidateAmount - sourceAmount) > 0.009) return false;
+      if (candidate.accountId && income.accountId && candidate.accountId === income.accountId) return false;
+      const candidateIsTransfer = isTransferExpense(candidate);
+      if (!candidateIsTransfer) return false;
+      return true;
+    })
+    .map(candidate => {
+      const candidateDescription = normalizeTransferText(candidate.description);
+      const candidateCategory = normalizeTransferText(candidate.category);
+      const transferContext = isTransferExpense(candidate);
+      const nearestDateDiff = Math.min(
+        getDateDiffInDays(income.date, candidate.date),
+        getDateDiffInDays(income.date, candidate.dueDate)
+      );
+      const sameDescription = Boolean(sourceDescription && candidateDescription && sourceDescription === candidateDescription);
+      const sameCategory = Boolean(sourceCategory && candidateCategory && sourceCategory === candidateCategory);
+      const likelyPair = sameDescription || (transferContext && nearestDateDiff <= 3);
+      if (!likelyPair) return null;
+
+      let score = 0;
+      if (sameDescription) score += 8;
+      if (sameCategory) score += 2;
+      if (transferContext) score += 2;
+      if (nearestDateDiff === 0) score += 2;
+      else if (nearestDateDiff <= 1) score += 1;
+      if (candidate.accountId && income.accountId && candidate.accountId !== income.accountId) score += 1;
+
+      return { candidate, score, nearestDateDiff };
+    })
+    .filter((item): item is { candidate: Expense; score: number; nearestDateDiff: number } => Boolean(item))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.nearestDateDiff !== b.nearestDateDiff) return a.nearestDateDiff - b.nearestDateDiff;
+      return a.candidate.id.localeCompare(b.candidate.id);
+    });
+
+  return ranked[0]?.candidate || null;
+};
+
 type LicenseAccessReason =
   | 'not_authorized'
   | 'not_found'
@@ -204,6 +339,7 @@ type CurrentUserState = {
   licenseId: string;
   tenantId: string;
   email?: string;
+  photoDataUrl?: string | null;
 };
 
 const useRecoveryMode = () => {
@@ -302,6 +438,10 @@ const AppInner: React.FC = () => {
     resetPassword: authResetPassword
   } = useAuth();
   const [currentUser, setCurrentUser] = useState<CurrentUserState | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<MemberRole>('owner');
+  const [currentUserPermissions, setCurrentUserPermissions] = useState<MemberPermissions>(() =>
+    buildDefaultPermissionsForRole('owner')
+  );
   const [preferencesLoading, setPreferencesLoading] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [resolvedLicenseId, setResolvedLicenseId] = useState<string | null>(null);
@@ -343,6 +483,10 @@ const AppInner: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>(ViewState.DASHBOARD);
   const [onboardingSettings, setOnboardingSettings] = useState<OnboardingSettings | null>(null);
   const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const onboardingScopeId = useMemo(() => {
+      const scopedLicenseId = (currentUser?.licenseId || resolvedLicenseId || '').trim();
+      return scopedLicenseId || null;
+  }, [currentUser?.licenseId, resolvedLicenseId]);
   const firstAccessScopeId = useMemo(() => {
       const uid = authUser?.uid?.trim();
       if (uid) return uid;
@@ -430,14 +574,33 @@ const AppInner: React.FC = () => {
   const isLandingRoute = currentPath === '/';
   const isUpgradeRoute = currentPath === '/upgrade';
   const isLoginRoute = currentPath === '/login';
+  const isPhotoCaptureRoute = currentPath === '/photo-capture';
   const isTermsRoute = currentPath === '/termos';
   const isPrivacyRoute = currentPath === '/privacidade';
   const isRefundRoute = currentPath === '/reembolso';
-  const isPublicRoute = isLandingRoute || isUpgradeRoute || isLoginRoute || isTermsRoute || isPrivacyRoute || isRefundRoute;
+  const photoCaptureSessionId = useMemo(() => {
+      const params = new URLSearchParams(currentSearch || '');
+      return String(params.get('session') || '').trim();
+  }, [currentSearch]);
+  const photoCaptureSessionToken = useMemo(() => {
+      const params = new URLSearchParams(currentSearch || '');
+      return String(params.get('token') || '').trim();
+  }, [currentSearch]);
+  const hasPhotoCaptureSessionParams = Boolean(photoCaptureSessionId && photoCaptureSessionToken);
+  const shouldRenderPhotoCaptureRoute = isPhotoCaptureRoute || hasPhotoCaptureSessionParams;
+  const isPublicRoute =
+    isLandingRoute ||
+    isUpgradeRoute ||
+    isLoginRoute ||
+    shouldRenderPhotoCaptureRoute ||
+    isTermsRoute ||
+    isPrivacyRoute ||
+    isRefundRoute;
   const shouldUseAppShellLayout =
       !isLandingRoute &&
       !isUpgradeRoute &&
       !isLoginRoute &&
+      !shouldRenderPhotoCaptureRoute &&
       !isTermsRoute &&
       !isPrivacyRoute &&
       !isRefundRoute;
@@ -795,6 +958,12 @@ const AppInner: React.FC = () => {
       setCurrentPath(path);
       setCurrentSearch(search);
   };
+
+  useEffect(() => {
+      if (!hasPhotoCaptureSessionParams) return;
+      if (currentPath === '/photo-capture') return;
+      updateRoute('/photo-capture', currentSearch || '');
+  }, [currentPath, currentSearch, hasPhotoCaptureSessionParams]);
 
   const stripeCheckoutEndpointOverride = (import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || '').trim();
   const stripeFunctionsBaseUrl = (import.meta.env.VITE_FUNCTIONS_BASE_URL || '').trim();
@@ -1501,6 +1670,7 @@ const AppInner: React.FC = () => {
 
   useEffect(() => {
       if (typeof window === 'undefined') return;
+      if (shouldRenderPhotoCaptureRoute) return;
       if (!authUser) {
           // When returning from Stripe there may be an email in the URL or
           // stored in localStorage from the checkout flow. If an email exists,
@@ -1541,10 +1711,11 @@ const AppInner: React.FC = () => {
       if (isLandingRoute) {
         updateRoute('/app', '');
       }
-  }, [authUser, isLandingRoute, isLoginRoute, isOnboardingRoute, currentSearch]);
+  }, [authUser, isLandingRoute, isLoginRoute, isOnboardingRoute, currentSearch, shouldRenderPhotoCaptureRoute]);
 
   useEffect(() => {
       if (!isStandalone || !isBetaHost) return;
+      if (shouldRenderPhotoCaptureRoute) return;
       if (!isLandingRoute) return;
       if (isUpgradeRoute) return;
       const target = authUser ? '/app' : '/login';
@@ -1555,7 +1726,7 @@ const AppInner: React.FC = () => {
         target
       });
       updateRoute(target, '');
-  }, [authUser, currentPath, currentSearch, isBetaHost, isLandingRoute, isUpgradeRoute, isStandalone]);
+  }, [authUser, currentPath, currentSearch, isBetaHost, isLandingRoute, isUpgradeRoute, isStandalone, shouldRenderPhotoCaptureRoute]);
 
   useEffect(() => {
       const { checkout, sessionId } = getCheckoutParams(currentSearch);
@@ -1679,23 +1850,39 @@ const AppInner: React.FC = () => {
 
   useEffect(() => {
       if (!isOnboardingRoute || !authUser) return;
+      if (licenseResolveState !== 'ready') return;
+      if (currentUserRole !== 'owner') {
+        updateRoute('/', '');
+        return;
+      }
       // Only leave the onboarding route automatically when onboarding is complete.
       if (onboardingSettings?.onboardingCompleted) {
         updateRoute('/', '');
       }
-  }, [authUser, isOnboardingRoute]);
+  }, [authUser, isOnboardingRoute, onboardingSettings?.onboardingCompleted, licenseResolveState, currentUserRole]);
 
   // Ensure authenticated users who haven't completed onboarding are routed
   // to the onboarding path so they see the 4-step company setup.
   useEffect(() => {
       if (!authUser) return;
+      if (shouldRenderPhotoCaptureRoute) return;
+      if (licenseResolveState !== 'ready') return;
+      if (currentUserRole !== 'owner') return;
       if (onboardingLoading) return;
       const completed = onboardingSettings?.onboardingCompleted === true;
       if (!completed && currentPath !== '/onboarding' && currentPath !== '/upgrade') {
           console.log('[onboarding-route] directing new user to onboarding', { currentPath });
           updateRoute('/onboarding', '');
       }
-  }, [authUser, onboardingLoading, onboardingSettings, currentPath]);
+  }, [
+      authUser,
+      onboardingLoading,
+      onboardingSettings,
+      currentPath,
+      shouldRenderPhotoCaptureRoute,
+      licenseResolveState,
+      currentUserRole
+  ]);
   const normalizeIdentity = (value: string) => {
     try {
       return normalizeEmail(value);
@@ -1873,6 +2060,8 @@ const AppInner: React.FC = () => {
     setLicenseReason(null);
     setResolvedLicenseId(null);
     setCurrentUser(null);
+    setCurrentUserRole('owner');
+    setCurrentUserPermissions(buildDefaultPermissionsForRole('owner'));
     setLicenseCryptoEpoch(null);
     setLicenseRetryToken(prev => prev + 1);
   };
@@ -1976,15 +2165,20 @@ const AppInner: React.FC = () => {
   const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
   const agendaNotifyPatchedRef = useRef<Set<string>>(new Set());
   const [companySheetOpen, setCompanySheetOpen] = useState(false);
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [profileEditorSaving, setProfileEditorSaving] = useState(false);
+  const [profileEditorError, setProfileEditorError] = useState('');
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [auditModalState, setAuditModalState] = useState<{
     isOpen: boolean;
     entityTypes?: AuditEntityType[] | null;
   }>({ isOpen: false, entityTypes: null });
+  const canAccessAuditView = canAccessView(ViewState.AUDIT, currentUserRole, currentUserPermissions);
   const openAuditPanel = useCallback((entityTypes: AuditEntityType[] | null = null) => {
+    if (!canAccessAuditView) return;
     setAuditModalState({ isOpen: true, entityTypes });
     setCurrentView(ViewState.AUDIT);
-  }, [setCurrentView]);
+  }, [setCurrentView, canAccessAuditView]);
   const [licenseMeta, setLicenseMeta] = useState<LicenseRecord | null>(null);
   const [licenseCryptoEpoch, setLicenseCryptoEpoch] = useState<number | null>(null);
   const balanceRepairInFlightRef = useRef(false);
@@ -2191,7 +2385,46 @@ const AppInner: React.FC = () => {
     root.style.setProperty('--mm-view-accent-strong', viewAccent);
   }, [viewAccent]);
 
-  const desktopDockNavigationOrder = useMemo<ViewState[]>(
+  const hasViewAccess = useCallback(
+    (view: ViewState) => {
+      if (!currentUser) return false;
+      if (isMobile && view === ViewState.REPORTS) return false;
+      return canAccessView(view, currentUserRole, currentUserPermissions);
+    },
+    [currentUser, currentUserRole, currentUserPermissions, isMobile]
+  );
+
+  const resolveFirstAllowedView = useCallback(() => {
+    const fallbackOrder: ViewState[] = [
+      ViewState.DASHBOARD,
+      ViewState.LAUNCHES,
+      ViewState.ACCOUNTS,
+      ViewState.INCOMES,
+      ViewState.VARIABLE_EXPENSES,
+      ViewState.FIXED_EXPENSES,
+      ViewState.PERSONAL_EXPENSES,
+      ViewState.YIELDS,
+      ViewState.INVOICES,
+      ViewState.REPORTS,
+      ViewState.DAS,
+      ViewState.AGENDA,
+      ViewState.AUDIT,
+      ViewState.SETTINGS
+    ];
+    return fallbackOrder.find((view) => hasViewAccess(view)) || ViewState.DASHBOARD;
+  }, [hasViewAccess]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentView === ViewState.LOGIN || currentView === ViewState.MASTER) return;
+    if (hasViewAccess(currentView)) return;
+    const fallback = resolveFirstAllowedView();
+    if (fallback !== currentView) {
+      setCurrentView(fallback);
+    }
+  }, [currentUser, currentView, hasViewAccess, resolveFirstAllowedView]);
+
+  const desktopDockBaseOrder = useMemo<ViewState[]>(
     () => [
       ViewState.DASHBOARD,
       ViewState.ACCOUNTS,
@@ -2209,7 +2442,7 @@ const AppInner: React.FC = () => {
     []
   );
 
-  const mobileDockNavigationOrder = useMemo<ViewState[]>(
+  const mobileDockBaseOrder = useMemo<ViewState[]>(
     () => [
       ViewState.DASHBOARD,
       ViewState.LAUNCHES,
@@ -2220,6 +2453,16 @@ const AppInner: React.FC = () => {
       ViewState.AGENDA
     ],
     []
+  );
+
+  const desktopDockNavigationOrder = useMemo(
+    () => desktopDockBaseOrder.filter((view) => hasViewAccess(view)),
+    [desktopDockBaseOrder, hasViewAccess]
+  );
+
+  const mobileDockNavigationOrder = useMemo(
+    () => mobileDockBaseOrder.filter((view) => hasViewAccess(view)),
+    [mobileDockBaseOrder, hasViewAccess]
   );
 
   const navigateDockByDirection = useCallback(
@@ -2263,7 +2506,7 @@ const AppInner: React.FC = () => {
     ]
   );
 
-  const canAccessSettings = Boolean(currentUser);
+  const canAccessSettings = Boolean(currentUser) && hasViewAccess(ViewState.SETTINGS);
   const mobileQuickAccessItems = useMemo(
     () => [
       {
@@ -2272,6 +2515,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Início',
         icon: <Home size={18} className="text-indigo-500 dark:text-indigo-400" />,
         onClick: () => setCurrentView(ViewState.DASHBOARD),
+        showWhen: hasViewAccess(ViewState.DASHBOARD),
         isActive: currentView === ViewState.DASHBOARD
       },
       {
@@ -2280,14 +2524,16 @@ const AppInner: React.FC = () => {
         shortLabel: 'Lanç.',
         icon: <ArrowDownUp size={18} className="text-cyan-500 dark:text-cyan-400" />,
         onClick: () => setCurrentView(ViewState.LAUNCHES),
+        showWhen: hasViewAccess(ViewState.LAUNCHES),
         isActive: currentView === ViewState.LAUNCHES
       },
       {
         id: 'accounts',
-        label: 'Contas Bancárias',
+        label: 'Contas',
         shortLabel: 'Contas',
         icon: <Wallet size={18} className="text-blue-500 dark:text-blue-400" />,
         onClick: () => setCurrentView(ViewState.ACCOUNTS),
+        showWhen: hasViewAccess(ViewState.ACCOUNTS),
         isActive: currentView === ViewState.ACCOUNTS
       },
       {
@@ -2296,6 +2542,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Rend.',
         icon: <TrendingUp size={18} className="text-violet-500 dark:text-violet-400" />,
         onClick: () => setCurrentView(ViewState.YIELDS),
+        showWhen: hasViewAccess(ViewState.YIELDS),
         isActive: currentView === ViewState.YIELDS
       },
       {
@@ -2304,6 +2551,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Faturas',
         icon: <CreditCardIcon size={18} className="text-rose-500 dark:text-rose-400" />,
         onClick: () => setCurrentView(ViewState.INVOICES),
+        showWhen: hasViewAccess(ViewState.INVOICES),
         isActive: currentView === ViewState.INVOICES
       },
       {
@@ -2312,6 +2560,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Relatórios',
         icon: <ReportsBarsIcon size={18} />,
         onClick: () => setCurrentView(ViewState.REPORTS),
+        showWhen: hasViewAccess(ViewState.REPORTS),
         isActive: currentView === ViewState.REPORTS
       },
       {
@@ -2320,10 +2569,11 @@ const AppInner: React.FC = () => {
         shortLabel: 'Agenda',
         icon: <CalendarDays size={18} className="text-sky-500 dark:text-sky-400" />,
         onClick: () => setCurrentView(ViewState.AGENDA),
+        showWhen: hasViewAccess(ViewState.AGENDA),
         isActive: currentView === ViewState.AGENDA
       }
     ],
-    [currentView, setCurrentView, resolveExpenseColor, fixedExpenseLabel, variableExpenseLabel, personalExpenseLabel]
+    [currentView, setCurrentView, hasViewAccess]
   );
 
   const desktopQuickAccessItems = useMemo(
@@ -2334,7 +2584,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Início',
         icon: <Home size={28} className="text-indigo-500 dark:text-indigo-400" />,
         onClick: () => setCurrentView(ViewState.DASHBOARD),
-        showWhen: true,
+        showWhen: hasViewAccess(ViewState.DASHBOARD),
         isActive: currentView === ViewState.DASHBOARD
       },
       {
@@ -2343,6 +2593,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Contas',
         icon: <Wallet size={28} className="text-blue-500 dark:text-blue-400" />,
         onClick: () => setCurrentView(ViewState.ACCOUNTS),
+        showWhen: hasViewAccess(ViewState.ACCOUNTS),
         isActive: currentView === ViewState.ACCOUNTS
       },
       {
@@ -2351,6 +2602,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Entradas',
         icon: <ArrowUpCircle size={28} className="text-emerald-500 dark:text-emerald-400" />,
         onClick: () => setCurrentView(ViewState.INCOMES),
+        showWhen: hasViewAccess(ViewState.INCOMES),
         isActive: currentView === ViewState.INCOMES
       },
       {
@@ -2359,6 +2611,7 @@ const AppInner: React.FC = () => {
         shortLabel: fixedExpenseLabel,
         icon: <Repeat size={28} style={{ color: resolveExpenseColor('fixed') }} />,
         onClick: () => setCurrentView(ViewState.FIXED_EXPENSES),
+        showWhen: hasViewAccess(ViewState.FIXED_EXPENSES),
         isActive: currentView === ViewState.FIXED_EXPENSES
       },
       {
@@ -2367,6 +2620,7 @@ const AppInner: React.FC = () => {
         shortLabel: variableExpenseLabel,
         icon: <ShoppingCart size={28} style={{ color: resolveExpenseColor('variable') }} />,
         onClick: () => setCurrentView(ViewState.VARIABLE_EXPENSES),
+        showWhen: hasViewAccess(ViewState.VARIABLE_EXPENSES),
         isActive: currentView === ViewState.VARIABLE_EXPENSES
       },
       {
@@ -2375,6 +2629,7 @@ const AppInner: React.FC = () => {
         shortLabel: personalExpenseLabel,
         icon: <User size={28} style={{ color: resolveExpenseColor('personal') }} />,
         onClick: () => setCurrentView(ViewState.PERSONAL_EXPENSES),
+        showWhen: hasViewAccess(ViewState.PERSONAL_EXPENSES),
         isActive: currentView === ViewState.PERSONAL_EXPENSES
       },
       {
@@ -2383,6 +2638,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Rend.',
         icon: <TrendingUp size={28} className="text-violet-500 dark:text-violet-400" />,
         onClick: () => setCurrentView(ViewState.YIELDS),
+        showWhen: hasViewAccess(ViewState.YIELDS),
         isActive: currentView === ViewState.YIELDS
       },
       {
@@ -2391,6 +2647,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Faturas',
         icon: <CreditCardIcon size={28} className="text-rose-500 dark:text-rose-400" />,
         onClick: () => setCurrentView(ViewState.INVOICES),
+        showWhen: hasViewAccess(ViewState.INVOICES),
         isActive: currentView === ViewState.INVOICES
       },
       {
@@ -2399,6 +2656,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Relatórios',
         icon: <ReportsBarsIcon size={28} />,
         onClick: () => setCurrentView(ViewState.REPORTS),
+        showWhen: hasViewAccess(ViewState.REPORTS),
         isActive: currentView === ViewState.REPORTS
       },
       {
@@ -2407,6 +2665,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'DAS',
         icon: <FileText size={28} className="text-teal-500 dark:text-teal-400" />,
         onClick: () => setCurrentView(ViewState.DAS),
+        showWhen: hasViewAccess(ViewState.DAS),
         isActive: currentView === ViewState.DAS
       },
       {
@@ -2415,6 +2674,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Agenda',
         icon: <CalendarDays size={28} className="text-sky-500 dark:text-sky-400" />,
         onClick: () => setCurrentView(ViewState.AGENDA),
+        showWhen: hasViewAccess(ViewState.AGENDA),
         isActive: currentView === ViewState.AGENDA
       },
       {
@@ -2435,6 +2695,7 @@ const AppInner: React.FC = () => {
         shortLabel: 'Auditoria',
         icon: <History size={28} className="text-zinc-500 dark:text-zinc-400" />,
         onClick: () => openAuditPanel(null),
+        showWhen: hasViewAccess(ViewState.AUDIT),
         isActive: currentView === ViewState.AUDIT
       },
       {
@@ -2443,10 +2704,11 @@ const AppInner: React.FC = () => {
         shortLabel: 'Calc.',
         icon: <Calculator size={28} className="text-zinc-500 dark:text-zinc-400" />,
         onClick: () => setIsCalculatorOpen(true),
+        showWhen: true,
         isActive: isCalculatorOpen
       }
     ],
-    [currentView, setCurrentView, resolveExpenseColor, openAuditPanel, isCalculatorOpen, setIsCalculatorOpen, isMasterUser]
+    [currentView, setCurrentView, resolveExpenseColor, openAuditPanel, isCalculatorOpen, setIsCalculatorOpen, isMasterUser, hasViewAccess, fixedExpenseLabel, variableExpenseLabel, personalExpenseLabel]
   );
 
   const [viewDate, setViewDate] = useState<Date>(new Date());
@@ -3119,6 +3381,8 @@ const AppInner: React.FC = () => {
       }
       if (!uid) {
           setCurrentUser(null);
+          setCurrentUserRole('owner');
+          setCurrentUserPermissions(buildDefaultPermissionsForRole('owner'));
           setCurrentView(ViewState.LOGIN);
           setLicenseResolveState('idle');
           setResolvedLicenseId(null);
@@ -3129,36 +3393,84 @@ const AppInner: React.FC = () => {
           return;
       }
 
-      const setupUser = () => {
-          if (!isActive) return;
-          setCurrentUser({
-              username: authUser?.displayName || authUser?.email || authUser?.uid || 'Usuário',
-              licenseId: uid,
-              tenantId: uid,
-              email: normalizedEmail
-          });
-          setCurrentView(prev => prev === ViewState.LOGIN ? ViewState.DASHBOARD : prev);
-          setResolvedLicenseId(uid);
-          setLicenseResolveState('ready');
-          setLicenseReason(null);
-          setLicenseBlockedDetail('');
-      };
-
       const run = async () => {
           console.info('[auth] ready', { uid });
           console.info('[auth] uid', { uid });
-          setupUser();
+          const membership = await membersService.getMyMembership(uid);
+          const claimsAccess = membership
+              ? null
+              : await membersService.getMyAccessFromClaims(
+                    uid,
+                    normalizedEmail || authUser?.email || '',
+                    authUser?.displayName || ''
+                );
+          let resolvedAccess = membership || claimsAccess;
+          if (!resolvedAccess) {
+              const allowOwnerFallback = await membersService.canUseOwnerFallback(
+                  uid,
+                  normalizedEmail || authUser?.email || ''
+              );
+              if (allowOwnerFallback) {
+                  resolvedAccess = membersService.buildOwnerAccess(
+                      uid,
+                      normalizedEmail || authUser?.email || '',
+                      authUser?.displayName || ''
+                  );
+              }
+          }
+
+          if (membership && !membership.active) {
+              if (!isActive) return;
+              setCurrentUser(null);
+              setCurrentUserRole('employee');
+              setCurrentUserPermissions(buildDefaultPermissionsForRole('employee'));
+              setResolvedLicenseId(null);
+              setLicenseResolveState('blocked');
+              setLicenseReason('not_authorized');
+              setLicenseBlockedDetail('Seu acesso foi desativado pelo administrador.');
+              setCurrentView(ViewState.LOGIN);
+              return;
+          }
+
+          if (!resolvedAccess?.licenseId) {
+              if (!isActive) return;
+              setCurrentUser(null);
+              setCurrentUserRole('employee');
+              setCurrentUserPermissions(buildDefaultPermissionsForRole('employee'));
+              setResolvedLicenseId(null);
+              setLicenseResolveState('blocked');
+              setLicenseReason('permission_denied');
+              setLicenseBlockedDetail('Não foi possível identificar sua licença. Peça ao proprietário para reativar seu acesso.');
+              setCurrentView(ViewState.LOGIN);
+              return;
+          }
+
+          if (!isActive) return;
+          setCurrentUser({
+              username: resolvedAccess.name || authUser?.displayName || authUser?.email || authUser?.uid || 'Usuário',
+              licenseId: resolvedAccess.licenseId,
+              tenantId: uid,
+              email: resolvedAccess.email || normalizedEmail,
+              photoDataUrl: resolvedAccess.photoDataUrl || null
+          });
+          setCurrentUserRole(resolvedAccess.role);
+          setCurrentUserPermissions(resolvedAccess.permissions || buildDefaultPermissionsForRole(resolvedAccess.role || 'employee'));
+          setCurrentView(prev => prev === ViewState.LOGIN ? ViewState.DASHBOARD : prev);
+          setResolvedLicenseId(resolvedAccess.licenseId);
+          setLicenseResolveState('ready');
+          setLicenseReason(null);
+          setLicenseBlockedDetail('');
           try {
-              const pingKey = `meumei_last_active_ping:${uid}`;
+              const pingKey = `meumei_last_active_ping:${resolvedAccess.licenseId}`;
               const now = Date.now();
               const lastPing = Number(localStorage.getItem(pingKey) || 0);
               const SIX_HOURS = 6 * 60 * 60 * 1000;
               if (!Number.isFinite(lastPing) || now - lastPing > SIX_HOURS) {
                   localStorage.setItem(pingKey, String(now));
-                  void dataService.updateLastActive(uid);
+                  void dataService.updateLastActive(resolvedAccess.licenseId);
               }
           } catch {
-              void dataService.updateLastActive(uid);
+              void dataService.updateLastActive(resolvedAccess.licenseId);
           }
           await loadPreferencesFor(uid);
       };
@@ -3172,11 +3484,11 @@ const AppInner: React.FC = () => {
       return () => {
           isActive = false;
       };
-  }, [authUser?.email, authUser?.uid, licenseRetryToken, isStandalone]);
+  }, [authUser?.email, authUser?.uid, authUser?.displayName, licenseRetryToken, isStandalone]);
 
   useEffect(() => {
-      const uid = authUser?.uid || null;
-      if (!uid) {
+      const scopeId = onboardingScopeId;
+      if (!authUser || !scopeId) {
           setOnboardingSettings(null);
           setOnboardingLoading(false);
           return;
@@ -3184,7 +3496,7 @@ const AppInner: React.FC = () => {
       let isActive = true;
       setOnboardingLoading(true);
       onboardingService
-          .getStatus(uid)
+          .getStatus(scopeId)
           .then((status) => {
               if (!isActive) return;
               setOnboardingSettings(status ?? { onboardingCompleted: false });
@@ -3197,7 +3509,7 @@ const AppInner: React.FC = () => {
       return () => {
           isActive = false;
       };
-  }, [authUser?.uid]);
+  }, [authUser?.uid, onboardingScopeId]);
 
   useEffect(() => {
       if (!isBetaHost) {
@@ -3205,14 +3517,24 @@ const AppInner: React.FC = () => {
           setEntitlementError(null);
           return;
       }
-      const email = authUser?.email || '';
+      if (!authUser) {
+          setEntitlementStatus('idle');
+          setEntitlementError(null);
+          return;
+      }
+      if (currentUserRole !== 'owner') {
+          setEntitlementStatus('active');
+          setEntitlementError(null);
+          return;
+      }
+      const email = authUser.email || '';
       if (!email) {
           setEntitlementStatus('idle');
           setEntitlementError(null);
           return;
       }
       void checkEntitlement('auth');
-  }, [authUser?.email, authUser?.uid, entitlementRetryToken, isBetaHost]);
+  }, [authUser?.email, authUser?.uid, currentUserRole, entitlementRetryToken, isBetaHost]);
 
   useEffect(() => {
       if (typeof window === 'undefined') return;
@@ -3574,7 +3896,7 @@ const AppInner: React.FC = () => {
           console.info('[crypto][epoch] ready', { licenseId, cryptoEpoch });
           const licenseRecord = await dataService.getLicenseRecord(licenseId);
           setLicenseMeta(licenseRecord || null);
-          const companySource = authUser?.uid ? await dataService.getCompany(authUser.uid) : null;
+          const companySource = await dataService.getCompany(licenseId);
           if (companySource) {
               const normalizedStartDate = companySource.startDate || COMPANY_DATA.monthStartISO;
               const companyWithAdjustedStart = { ...companySource, startDate: normalizedStartDate };
@@ -4180,6 +4502,10 @@ const AppInner: React.FC = () => {
       setHasLoggedOut(true);
       stopRealtimeSubscriptions();
       setCurrentUser(null);
+      setCurrentUserRole('owner');
+      setCurrentUserPermissions(buildDefaultPermissionsForRole('owner'));
+      setProfileEditorOpen(false);
+      setProfileEditorError('');
       applyAccounts([]);
       applyExpenses([]);
       setIncomes([]);
@@ -4201,10 +4527,10 @@ const AppInner: React.FC = () => {
   };
 
   const handleOpenCompanySheet = async () => {
-      const uid = authUser?.uid || null;
-      if (uid) {
+      const licenseId = currentUser?.licenseId || null;
+      if (licenseId) {
           try {
-              const latest = await dataService.getCompany(uid);
+              const latest = await dataService.getCompany(licenseId);
               if (latest) {
                   setCompanyInfo(latest);
               }
@@ -4215,18 +4541,91 @@ const AppInner: React.FC = () => {
       setCompanySheetOpen(true);
   };
 
+  const handleOpenProfileEditor = useCallback(() => {
+      setProfileEditorError('');
+      setProfileEditorOpen(true);
+  }, []);
+
+  const handleSaveMyProfile = useCallback(
+      async (payload: { name: string; photoDataUrl: string | null }) => {
+          setProfileEditorSaving(true);
+          setProfileEditorError('');
+          try {
+              if (currentUserRole === 'owner') {
+                  const licenseId = currentUser?.licenseId || null;
+                  if (!licenseId) {
+                      setProfileEditorError('Não foi possível identificar a empresa para salvar.');
+                      return false;
+                  }
+                  const trimmedName = String(payload.name || '').trim();
+                  const previousCompany = companyInfo;
+                  const nextCompany: CompanyInfo = {
+                      ...companyInfo,
+                      name: trimmedName || companyInfo.name,
+                      logoDataUrl: payload.photoDataUrl || null
+                  };
+                  setCompanyInfo(nextCompany);
+                  try {
+                      await dataService.saveCompany(nextCompany, licenseId);
+                      const refreshed = await dataService.getCompany(licenseId);
+                      if (refreshed) {
+                          setCompanyInfo(refreshed);
+                      }
+                      setProfileEditorOpen(false);
+                      return true;
+                  } catch (companyError: any) {
+                      setCompanyInfo(previousCompany);
+                      setProfileEditorError(
+                          companyError?.message || 'Não foi possível atualizar os dados da empresa.'
+                      );
+                      return false;
+                  }
+              }
+
+              const response = await membersService.updateMyProfile(payload);
+              if (!response.ok || !response.data?.member) {
+                  setProfileEditorError(response.message || 'Não foi possível atualizar seu perfil.');
+                  return false;
+              }
+              const member = response.data.member;
+              setCurrentUser((prev) =>
+                  prev
+                      ? {
+                            ...prev,
+                            username: member.name || prev.username,
+                            email: member.email || prev.email,
+                            photoDataUrl: member.photoDataUrl || null
+                        }
+                      : prev
+              );
+              setProfileEditorOpen(false);
+              return true;
+          } catch (error: any) {
+              setProfileEditorError(error?.message || 'Não foi possível atualizar seu perfil.');
+              return false;
+          } finally {
+              setProfileEditorSaving(false);
+          }
+      },
+      [companyInfo, currentUser?.licenseId, currentUserRole]
+  );
+
   // --- DATA MODIFIERS (Optimistic UI + Firebase) ---
 
   const handleUpdateCompany = async (newInfo: CompanyInfo) => {
-      const uid = authUser?.uid || null;
-      if (!uid) {
+      if (currentUserRole !== 'owner') {
+          console.warn('[company] save_blocked', { reason: 'owner_only', role: currentUserRole });
+          return;
+      }
+      const licenseId = currentUser?.licenseId || null;
+      if (!licenseId) {
           console.warn('Usuário não encontrado ao salvar dados da empresa.');
           return;
       }
       setCompanyInfo(newInfo);
       try {
-          await dataService.saveCompany(newInfo, uid);
-          const refreshed = await dataService.getCompany(uid);
+          await dataService.saveCompany(newInfo, licenseId);
+          const refreshed = await dataService.getCompany(licenseId);
           if (refreshed) {
               setCompanyInfo(refreshed);
           }
@@ -4236,13 +4635,13 @@ const AppInner: React.FC = () => {
   };
 
   const persistOnboarding = async (patch: OnboardingSettings) => {
-      const uid = authUser?.uid || null;
-      if (!uid) {
-          console.warn('[onboarding] persist_skipped', { reason: 'uid_missing' });
+      const scopeId = onboardingScopeId;
+      if (!scopeId) {
+          console.warn('[onboarding] persist_skipped', { reason: 'scope_missing' });
           return;
       }
       try {
-          await onboardingService.saveStatus(uid, patch);
+          await onboardingService.saveStatus(scopeId, patch);
           setOnboardingSettings(prev => ({ ...(prev || {}), ...patch }));
       } catch (error) {
           console.error('[onboarding] persist_error', { message: (error as any)?.message });
@@ -4679,6 +5078,7 @@ const AppInner: React.FC = () => {
       
       // Handle Balance Reversal Logic locally first
       const exp = expenses.find(e => e.id === id);
+      const linkedIncome = exp ? findLinkedIncomeForTransferExpense(exp, incomes) : null;
       if (exp) {
           handleAuditLog({
               actionType: 'expense_deleted',
@@ -4693,27 +5093,76 @@ const AppInner: React.FC = () => {
               }
           });
       }
+      const accountDeltas = new Map<string, number>();
+      const addDelta = (accountId: string | undefined, delta: number) => {
+          if (!accountId || Number.isNaN(delta) || Math.abs(delta) < 0.0001) return;
+          accountDeltas.set(accountId, roundToCents((accountDeltas.get(accountId) || 0) + delta));
+      };
+
       if (exp && exp.status === 'paid' && exp.accountId) {
-          const baseAccounts = accountsRef.current;
-          const accIndex = baseAccounts.findIndex(a => a.id === exp.accountId);
-          if (accIndex > -1) {
-              const mutationId = `expense:delete:${exp.id}:${exp.accountId}:${exp.amount}:${exp.status}`;
-              const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
-                  source: 'app',
-                  action: 'expense_delete',
-                  accountId: exp.accountId,
-                  entityId: exp.id,
-                  amount: exp.amount,
-                  status: exp.status
-              });
-              if (shouldApply) {
-                  const newAccounts = [...baseAccounts];
-                  newAccounts[accIndex].currentBalance += Number(exp.amount);
-                  applyAccounts(newAccounts);
-                  if (!newAccounts[accIndex].locked) {
-                      dataService.upsertAccount(newAccounts[accIndex], currentUser.licenseId, cryptoEpoch);
-                  }
+          const mutationId = `expense:delete:${exp.id}:${exp.accountId}:${exp.amount}:${exp.status}`;
+          const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+              source: 'app',
+              action: 'expense_delete',
+              accountId: exp.accountId,
+              entityId: exp.id,
+              amount: exp.amount,
+              status: exp.status
+          });
+          if (shouldApply) {
+              addDelta(exp.accountId, Number(exp.amount));
+          }
+      }
+
+      if (linkedIncome && !linkedIncome.locked) {
+          handleAuditLog({
+              actionType: 'income_deleted',
+              description: `Receita "${linkedIncome.description}" excluída automaticamente ao remover transferência vinculada (${formatCurrency(linkedIncome.amount)}).`,
+              entityType: 'income',
+              entityId: linkedIncome.id,
+              metadata: {
+                  description: linkedIncome.description,
+                  amount: linkedIncome.amount,
+                  category: linkedIncome.category,
+                  date: linkedIncome.date,
+                  linkedBy: 'expense_delete',
+                  linkedExpenseId: exp?.id || null
               }
+          });
+
+          if (linkedIncome.status === 'received' && linkedIncome.accountId) {
+              const linkedMutationId = `income:delete:linked:${linkedIncome.id}:${linkedIncome.accountId}:${linkedIncome.amount}:${linkedIncome.status}`;
+              const shouldApplyLinked = shouldApplyLegacyBalanceMutation(linkedMutationId, {
+                  source: 'app',
+                  action: 'income_delete_linked',
+                  accountId: linkedIncome.accountId,
+                  entityId: linkedIncome.id,
+                  amount: linkedIncome.amount,
+                  status: linkedIncome.status
+              });
+              if (shouldApplyLinked) {
+                  addDelta(linkedIncome.accountId, -Number(linkedIncome.amount));
+              }
+          }
+
+          setIncomes(prev => prev.filter(item => item.id !== linkedIncome.id));
+          dataService.deleteIncome(linkedIncome.id, currentUser.licenseId);
+      }
+
+      if (accountDeltas.size > 0) {
+          const baseAccounts = accountsRef.current;
+          const updatedAccounts = baseAccounts.map(account => {
+              const delta = accountDeltas.get(account.id);
+              if (delta === undefined) return account;
+              return {
+                  ...account,
+                  currentBalance: roundToCents(Number(account.currentBalance || 0) + delta)
+              };
+          });
+          const changedAccounts = updatedAccounts.filter(account => accountDeltas.has(account.id) && !account.locked);
+          applyAccounts(updatedAccounts);
+          if (changedAccounts.length) {
+              dataService.upsertAccounts(changedAccounts, currentUser.licenseId, cryptoEpoch);
           }
       }
 
@@ -4781,6 +5230,7 @@ const AppInner: React.FC = () => {
       if (!cryptoEpoch) return;
 
       const inc = incomes.find(i => i.id === id);
+      const linkedExpense = inc ? findLinkedExpenseForTransferIncome(inc, expenses) : null;
       if (inc) {
           handleAuditLog({
               actionType: 'income_deleted',
@@ -4795,27 +5245,76 @@ const AppInner: React.FC = () => {
               }
           });
       }
+      const accountDeltas = new Map<string, number>();
+      const addDelta = (accountId: string | undefined, delta: number) => {
+          if (!accountId || Number.isNaN(delta) || Math.abs(delta) < 0.0001) return;
+          accountDeltas.set(accountId, roundToCents((accountDeltas.get(accountId) || 0) + delta));
+      };
+
       if (inc && inc.status === 'received' && inc.accountId) {
-          const baseAccounts = accountsRef.current;
-          const accIndex = baseAccounts.findIndex(a => a.id === inc.accountId);
-          if (accIndex > -1) {
-              const mutationId = `income:delete:${inc.id}:${inc.accountId}:${inc.amount}:${inc.status}`;
-              const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
-                  source: 'app',
-                  action: 'income_delete',
-                  accountId: inc.accountId,
-                  entityId: inc.id,
-                  amount: inc.amount,
-                  status: inc.status
-              });
-              if (shouldApply) {
-                  const newAccounts = [...baseAccounts];
-                  newAccounts[accIndex].currentBalance -= Number(inc.amount);
-                  applyAccounts(newAccounts);
-                  if (!newAccounts[accIndex].locked) {
-                      dataService.upsertAccount(newAccounts[accIndex], currentUser.licenseId, cryptoEpoch);
-                  }
+          const mutationId = `income:delete:${inc.id}:${inc.accountId}:${inc.amount}:${inc.status}`;
+          const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
+              source: 'app',
+              action: 'income_delete',
+              accountId: inc.accountId,
+              entityId: inc.id,
+              amount: inc.amount,
+              status: inc.status
+          });
+          if (shouldApply) {
+              addDelta(inc.accountId, -Number(inc.amount));
+          }
+      }
+
+      if (linkedExpense && !linkedExpense.locked) {
+          handleAuditLog({
+              actionType: 'expense_deleted',
+              description: `Despesa "${linkedExpense.description}" excluída automaticamente ao remover transferência vinculada (${formatCurrency(linkedExpense.amount)}).`,
+              entityType: 'expense',
+              entityId: linkedExpense.id,
+              metadata: {
+                  description: linkedExpense.description,
+                  amount: linkedExpense.amount,
+                  category: linkedExpense.category,
+                  dueDate: linkedExpense.dueDate,
+                  linkedBy: 'income_delete',
+                  linkedIncomeId: inc?.id || null
               }
+          });
+
+          if (linkedExpense.status === 'paid' && linkedExpense.accountId) {
+              const linkedMutationId = `expense:delete:linked:${linkedExpense.id}:${linkedExpense.accountId}:${linkedExpense.amount}:${linkedExpense.status}`;
+              const shouldApplyLinked = shouldApplyLegacyBalanceMutation(linkedMutationId, {
+                  source: 'app',
+                  action: 'expense_delete_linked',
+                  accountId: linkedExpense.accountId,
+                  entityId: linkedExpense.id,
+                  amount: linkedExpense.amount,
+                  status: linkedExpense.status
+              });
+              if (shouldApplyLinked) {
+                  addDelta(linkedExpense.accountId, Number(linkedExpense.amount));
+              }
+          }
+
+          applyExpenses(prev => prev.filter(item => item.id !== linkedExpense.id));
+          dataService.deleteExpense(linkedExpense.id, currentUser.licenseId);
+      }
+
+      if (accountDeltas.size > 0) {
+          const baseAccounts = accountsRef.current;
+          const updatedAccounts = baseAccounts.map(account => {
+              const delta = accountDeltas.get(account.id);
+              if (delta === undefined) return account;
+              return {
+                  ...account,
+                  currentBalance: roundToCents(Number(account.currentBalance || 0) + delta)
+              };
+          });
+          const changedAccounts = updatedAccounts.filter(account => accountDeltas.has(account.id) && !account.locked);
+          applyAccounts(updatedAccounts);
+          if (changedAccounts.length) {
+              dataService.upsertAccounts(changedAccounts, currentUser.licenseId, cryptoEpoch);
           }
       }
 
@@ -5193,6 +5692,13 @@ const AppInner: React.FC = () => {
   };
 
   const legacyTotalBalance = accounts.reduce((acc, curr) => acc + curr.currentBalance, 0);
+  const isViewingCurrentMonth = useMemo(() => {
+      const now = new Date();
+      return (
+          viewDate.getMonth() === now.getMonth() &&
+          viewDate.getFullYear() === now.getFullYear()
+      );
+  }, [viewDate]);
   const baseRealBalances = useMemo(() => {
       return computeRealBalances({
           accounts,
@@ -5221,15 +5727,20 @@ const AppInner: React.FC = () => {
   }, [accounts, incomes, expenses, transfers, yields, viewDate, balanceDebugEnabled, baseRealBalances]);
 
   const totalBalanceDiff = Math.abs((realBalances.total || 0) - legacyTotalBalance);
-  const totalBalance = totalBalanceDiff > 0.01 ? legacyTotalBalance : realBalances.total;
+  const totalBalance = useMemo(() => {
+      // Em meses passados, o dashboard deve refletir o saldo do período selecionado.
+      if (!isViewingCurrentMonth) return realBalances.total;
+      return totalBalanceDiff > 0.01 ? legacyTotalBalance : realBalances.total;
+  }, [isViewingCurrentMonth, legacyTotalBalance, realBalances.total, totalBalanceDiff]);
   useEffect(() => {
+      if (!isViewingCurrentMonth) return;
       if (totalBalanceDiff <= 0.01) return;
       console.warn('[balances] dashboard_balance_fallback', {
           auditedTotal: Number(realBalances.total.toFixed(2)),
           accountsTotal: Number(legacyTotalBalance.toFixed(2)),
           diff: Number(totalBalanceDiff.toFixed(2))
       });
-  }, [legacyTotalBalance, realBalances.total, totalBalanceDiff]);
+  }, [isViewingCurrentMonth, legacyTotalBalance, realBalances.total, totalBalanceDiff]);
   const balanceSnapshot = useMemo(() => ({
       byAccountId: realBalances.byAccountId,
       diffs: realBalances.diffs,
@@ -5240,6 +5751,7 @@ const AppInner: React.FC = () => {
   }), [legacyTotalBalance, realBalances]);
   useEffect(() => {
       if (!currentUser?.licenseId || !licenseCryptoEpoch) return;
+      if (!isViewingCurrentMonth) return;
       if (balanceRepairInFlightRef.current) return;
 
       const repairable = accounts
@@ -5290,6 +5802,7 @@ const AppInner: React.FC = () => {
       accounts,
       applyAccounts,
       currentUser?.licenseId,
+      isViewingCurrentMonth,
       licenseCryptoEpoch,
       realBalances.byAccountId
   ]);
@@ -5650,7 +6163,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 )}
                 <GlobalHeader 
                     companyName={companyInfo.name}
-                    username={currentUser?.email || ''}
+                    username={currentUser?.username || currentUser?.email || ''}
                     viewDate={viewDate}
                     summary={headerSummary}
                     onMonthChange={handleMonthChange}
@@ -5663,13 +6176,19 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                       setMasterInitialMode('feedback');
                       setCurrentView(ViewState.MASTER);
                     }}
-                    onOpenReports={() => setCurrentView(ViewState.REPORTS)}
-                    onOpenAgenda={() => setCurrentView(ViewState.AGENDA)}
+                    onOpenReports={() => hasViewAccess(ViewState.REPORTS) && setCurrentView(ViewState.REPORTS)}
+                    onOpenAgenda={() => hasViewAccess(ViewState.AGENDA) && setCurrentView(ViewState.AGENDA)}
                     onLogout={handleLogout}
                     onCompanyClick={handleOpenCompanySheet}
                     onOpenCalculator={() => setIsCalculatorOpen(true)}
                     onOpenAudit={isMobile ? () => {} : () => openAuditPanel(null)}
                     canAccessSettings={canAccessSettings}
+                    onOpenProfile={handleOpenProfileEditor}
+                    userPhotoDataUrl={
+                      currentUserRole === 'owner'
+                        ? companyInfo.logoDataUrl || null
+                        : currentUser?.photoDataUrl || null
+                    }
                     versionLabel={APP_VERSION}
                     entitlementBadge={entitlementBadge}
                     renewalInfo={renewalInfo}
@@ -6335,6 +6854,15 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       return <Reembolso />;
   }
 
+  if (shouldRenderPhotoCaptureRoute) {
+      return (
+          <ProfilePhotoCaptureRoute
+              sessionId={photoCaptureSessionId}
+              sessionToken={photoCaptureSessionToken}
+          />
+      );
+  }
+
   if (isUpgradeRoute) {
       return <Landing />;
   }
@@ -6367,7 +6895,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       return renderLoggedOutFallback();
   }
 
-  if (isBetaHost && !isUpgradeRoute) {
+  if (isBetaHost && !isUpgradeRoute && currentUserRole === 'owner') {
       if (entitlementStatus === 'loading' || entitlementStatus === 'idle') {
           return renderEntitlementLoading();
       }
@@ -6376,11 +6904,11 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
       }
   }
 
-  if (onboardingLoading) {
+  if (onboardingLoading && currentUserRole === 'owner') {
       return renderOnboardingLoading();
   }
 
-  const shouldShowOnboarding = !onboardingCompleted;
+  const shouldShowOnboarding = currentUserRole === 'owner' && !onboardingCompleted;
   if (shouldShowOnboarding) {
       return (
           <OnboardingWizard
@@ -6429,7 +6957,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 }}
                 onOpenYields={() => setCurrentView(ViewState.YIELDS)}
                 onOpenInvoices={() => setCurrentView(ViewState.INVOICES)}
-                onOpenReports={() => setCurrentView(ViewState.REPORTS)}
+                onOpenReports={() => hasViewAccess(ViewState.REPORTS) && setCurrentView(ViewState.REPORTS)}
                 onOpenLaunches={() => setCurrentView(ViewState.LAUNCHES)}
                 onOpenExpenseAll={() => {
                     setMobileExpensesScope('all');
@@ -6788,24 +7316,47 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           />
       )}
 
-        {currentView === ViewState.SETTINGS && canAccessSettings && (
+        {currentView === ViewState.SETTINGS && canAccessSettings && renderLayout(
           <Settings 
             onBack={() => setCurrentView(ViewState.DASHBOARD)}
             userId={authUser?.uid}
-          companyInfo={companyInfo}
-          onUpdateCompany={handleUpdateCompany}
-          onSystemReset={handleSystemReset}
+            companyScopeId={currentUser?.licenseId}
+            companyInfo={companyInfo}
+            onUpdateCompany={handleUpdateCompany}
+            onSystemReset={handleSystemReset}
             onOpenInstall={openModalManual}
             isAppInstalled={isPwaInstalled}
             isMasterUser={isMasterUser}
             tipsEnabled={tipsEnabled}
             onUpdateTipsEnabled={handleTipsEnabledChange}
             appVersion={APP_VERSION}
-        />
-      )}
+            currentUserRole={currentUserRole}
+          />
+        )}
       <CalculatorModal 
           isOpen={isCalculatorOpen}
           onClose={() => setIsCalculatorOpen(false)}
+      />
+      <ProfileEditorModal
+          isOpen={profileEditorOpen}
+          username={
+            currentUserRole === 'owner'
+              ? companyInfo.name || currentUser?.username || ''
+              : currentUser?.username || ''
+          }
+          initialPhotoDataUrl={
+            currentUserRole === 'owner'
+              ? companyInfo.logoDataUrl || null
+              : currentUser?.photoDataUrl || null
+          }
+          profileMode={currentUserRole === 'owner' ? 'company' : 'person'}
+          saving={profileEditorSaving}
+          errorMessage={profileEditorError}
+          onClose={() => {
+            if (profileEditorSaving) return;
+            setProfileEditorOpen(false);
+          }}
+          onSave={handleSaveMyProfile}
       />
       {isMobile && isQuickExpenseOpen && (
           <NewExpenseModal

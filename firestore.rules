@@ -10,16 +10,63 @@ function isOwner(uid) {
   return isSignedIn() && request.auth.uid == uid;
 }
 
+function membershipPath() {
+  return /databases/$(database)/documents/memberships/$(request.auth.uid);
+}
+
+function hasMembershipDoc() {
+  return isSignedIn() && exists(membershipPath());
+}
+
+function membershipData() {
+  return hasMembershipDoc() ? get(membershipPath()).data : null;
+}
+
+function isActiveMemberOf(uid) {
+  return hasMembershipDoc()
+    && membershipData().active == true
+    && membershipData().licenseId == uid;
+}
+
+function isLicenseUser(uid) {
+  return isOwner(uid) || isActiveMemberOf(uid);
+}
+
+function isLicenseManager(uid) {
+  return isOwner(uid)
+    || (
+      isActiveMemberOf(uid)
+      && (
+        membershipData().role == 'owner'
+        || membershipData().role == 'admin'
+      )
+    );
+}
+
 function hasAuthEmail() {
   return isSignedIn() && request.auth.token.email != null;
 }
 
 match /users/{uid} {
-  allow read, create, update, delete: if isOwner(uid);
+  allow read, create, update, delete: if isLicenseUser(uid);
 
-  match /{document=**} {
-    allow read, create, update, delete: if isOwner(uid);
+  match /members/{memberUid} {
+    allow read: if isLicenseManager(uid);
+    allow write: if false;
   }
+
+  match /{collectionId}/{docId} {
+    allow read, create, update, delete: if isLicenseUser(uid) && collectionId != 'members';
+
+    match /{subPath=**} {
+      allow read, create, update, delete: if isLicenseUser(uid) && collectionId != 'members';
+    }
+  }
+}
+
+match /memberships/{uid} {
+  allow read: if isSignedIn() && request.auth.uid == uid;
+  allow write: if false;
 }
 
 match /userGoals/{uid} {

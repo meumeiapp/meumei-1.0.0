@@ -6,9 +6,10 @@
 // completa quando os dados essenciais estão prontos.
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  ArrowLeft, 
   Trash2, 
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   Building2,
   Save,
   CheckCircle2,
@@ -19,21 +20,40 @@ import {
   FileText,
   AlertOctagon,
   Calendar,
-  ChevronDown,
   Download,
   Lightbulb,
   Sprout,
   Keyboard,
   Bell,
-  Bug
+  Bug,
+  Users,
+  Camera,
+  Upload,
+  X,
+  UserCircle2
 } from 'lucide-react';
-import { CompanyInfo } from '../types';
+import { CompanyInfo, MemberPermissions, MemberRecord, MemberRole } from '../types';
 import { debugLog } from '../utils/debug';
 import { dataService } from '../services/dataService';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizeEmail } from '../utils/normalizeEmail';
 import useIsMobile from '../hooks/useIsMobile';
 import { notificationsService } from '../services/notificationsService';
+import { membersService } from '../services/membersService';
+import {
+  MEMBER_PERMISSION_META,
+  buildDefaultPermissionsForRole,
+  canManageCompany,
+  canManageMembers,
+  normalizeMemberPermissions,
+  normalizeMemberRole
+} from '../utils/memberAccess';
+import {
+  buildMobilePhotoCaptureLink,
+  canCapturePhotoOnThisDevice,
+  copyTextToClipboard,
+  processProfileImageFile
+} from '../utils/profileImage';
 
 type ConfigErrorStage = 'entitlement' | 'company' | 'timeout';
 
@@ -42,8 +62,9 @@ type ConfigErrorState = {
   error: Error;
 };
 
-type SettingsSectionId =
+type SettingsPanelId =
   | 'company'
+  | 'members'
   | 'install'
   | 'feedback'
   | 'notifications'
@@ -93,48 +114,19 @@ const getConfigErrorCopy = (state: ConfigErrorState) => {
 
 const SettingsSection: React.FC<{
   label: string;
-  collapsed: boolean;
-  onToggle: () => void;
   className?: string;
   children: React.ReactNode;
-  collapsible?: boolean;
-}> = ({ label, collapsed, onToggle, className, children, collapsible = true }) => {
-  const isCollapsed = collapsible && collapsed;
-  const toggleLabel = isCollapsed ? `Expandir ${label}` : `Recolher ${label}`;
+}> = ({ label, className, children }) => {
   return (
     <section
       className={`rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-6 shadow-sm relative overflow-hidden ${className || ''}`}
     >
-      {collapsible && (
-        <div className="absolute right-3 top-3 z-10">
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label={toggleLabel}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-indigo-200 bg-indigo-600 text-white shadow-md transition hover:bg-indigo-500 hover:border-indigo-300 dark:border-indigo-400/40 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400"
-          >
-            <ChevronDown size={16} className={`transition-transform ${isCollapsed ? 'rotate-180' : ''}`} />
-          </button>
-        </div>
-      )}
-      {isCollapsed ? (
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={toggleLabel}
-          className="w-full rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/80 dark:bg-white/5 px-4 py-3 text-left transition hover:border-indigo-200 dark:hover:border-indigo-500/40"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-wider text-zinc-400">Recolhido</p>
-              <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{label}</p>
-            </div>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">Clique para expandir</span>
-          </div>
-        </button>
-      ) : (
-        children
-      )}
+      <div className="mb-4">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">
+          {label}
+        </p>
+      </div>
+      {children}
     </section>
   );
 };
@@ -142,6 +134,7 @@ const SettingsSection: React.FC<{
 interface SettingsProps {
   onBack: () => void;
   userId?: string;
+  companyScopeId?: string;
   isMasterUser?: boolean;
   companyInfo: CompanyInfo;
   onUpdateCompany: (info: CompanyInfo) => Promise<void> | void;
@@ -151,11 +144,13 @@ interface SettingsProps {
   tipsEnabled?: boolean;
   onUpdateTipsEnabled?: (enabled: boolean) => void;
   appVersion?: string;
+  currentUserRole?: MemberRole;
 }
 
 const Settings: React.FC<SettingsProps> = ({ 
     onBack, 
     userId,
+    companyScopeId,
     isMasterUser = false,
     companyInfo, 
     onUpdateCompany,
@@ -164,7 +159,8 @@ const Settings: React.FC<SettingsProps> = ({
     isAppInstalled,
     tipsEnabled,
     onUpdateTipsEnabled,
-    appVersion
+    appVersion,
+    currentUserRole = 'owner'
 }) => {
   
   // Local state for editing company info
@@ -211,15 +207,6 @@ const Settings: React.FC<SettingsProps> = ({
   })();
   const [configErrorState, setConfigErrorState] = useState<ConfigErrorState | null>(null);
   const [isFetchingConfig, setIsFetchingConfig] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState<Partial<Record<SettingsSectionId, boolean>>>(() => ({
-      company: true,
-      install: true,
-      feedback: true,
-      notifications: true,
-      tips: true,
-      shortcuts: true,
-      danger: true
-  }));
   const [notificationsEnabled, setNotificationsEnabled] = useState(
       notificationsService.getLocalEnabled()
   );
@@ -236,9 +223,55 @@ const Settings: React.FC<SettingsProps> = ({
       tone: 'idle' | 'success' | 'error';
       message: string;
   }>({ tone: 'idle', message: '' });
+  const canManageMembersOnScreen = canManageMembers(currentUserRole);
+  const canManageCompanyOnScreen = canManageCompany(currentUserRole);
+  const [members, setMembers] = useState<MemberRecord[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersSaving, setMembersSaving] = useState(false);
+  const [membersMessage, setMembersMessage] = useState<{
+      tone: 'idle' | 'success' | 'error';
+      text: string;
+  }>({ tone: 'idle', text: '' });
+  const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [newMemberPassword, setNewMemberPassword] = useState('');
+  const [newMemberPhotoDataUrl, setNewMemberPhotoDataUrl] = useState<string | null>(null);
+  const [newMemberPhotoBusy, setNewMemberPhotoBusy] = useState(false);
+  const [cameraProbeBusy, setCameraProbeBusy] = useState(false);
+  const [newMemberRole, setNewMemberRole] = useState<MemberRole>('employee');
+  const [newMemberPermissions, setNewMemberPermissions] = useState<MemberPermissions>(() =>
+      buildDefaultPermissionsForRole('employee')
+  );
+  const [showNewMemberPermissions, setShowNewMemberPermissions] = useState(false);
+  const [expandedMemberUid, setExpandedMemberUid] = useState<string | null>(null);
+  const [deleteCandidateUid, setDeleteCandidateUid] = useState<string | null>(null);
+  const [memberPasswordDrafts, setMemberPasswordDrafts] = useState<Record<string, string>>({});
+  const newMemberCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const newMemberUploadInputRef = useRef<HTMLInputElement | null>(null);
   const resolvedTipsEnabled = typeof tipsEnabled === 'boolean' ? tipsEnabled : true;
   const actionButtonBase =
       'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition h-10 w-full sm:w-48 whitespace-nowrap';
+  const roleLabelMap: Record<MemberRole, string> = {
+      owner: 'Proprietário',
+      admin: 'Administrador',
+      employee: 'Funcionário'
+  };
+  const memberSummary = useMemo(() => {
+      let admins = 0;
+      let employees = 0;
+      let active = 0;
+      members.forEach((member) => {
+          if (member.role === 'admin') admins += 1;
+          if (member.role === 'employee') employees += 1;
+          if (member.active) active += 1;
+      });
+      return {
+          total: members.length,
+          admins,
+          employees,
+          active
+      };
+  }, [members]);
   const shortcutGroups = useMemo(() => {
       const quickAccessLabel = 'Navegar pelos botões do Acesso Rápido (do Início até Agenda, em ciclo).';
 
@@ -266,13 +299,361 @@ const Settings: React.FC<SettingsProps> = ({
           }
       ];
   }, [isMobile]);
-  const isSectionCollapsed = (id: SettingsSectionId) => Boolean(collapsedSections[id]);
-  const toggleSection = (id: SettingsSectionId) => {
-      setCollapsedSections((prev) => ({
+  const panelCards = useMemo<Array<{
+      id: SettingsPanelId;
+      title: string;
+      subtitle: string;
+      icon: React.ReactNode;
+      accent: string;
+      visible: boolean;
+  }>>(
+      () => [
+          {
+              id: 'company',
+              title: 'Empresa',
+              subtitle: 'Dados da empresa',
+              icon: <Building2 size={18} />,
+              accent: 'from-amber-500/20 via-amber-500/5 to-transparent',
+              visible: !isMobile && canManageCompanyOnScreen
+          },
+          {
+              id: 'members',
+              title: 'Membros',
+              subtitle: 'Acessos e papéis',
+              icon: <Users size={18} />,
+              accent: 'from-cyan-500/20 via-cyan-500/5 to-transparent',
+              visible: !isMobile && canManageMembersOnScreen
+          },
+          {
+              id: 'install',
+              title: 'Instalar',
+              subtitle: 'App na tela inicial',
+              icon: <Download size={18} />,
+              accent: 'from-emerald-500/20 via-emerald-500/5 to-transparent',
+              visible: true
+          },
+          {
+              id: 'feedback',
+              title: 'Feedback',
+              subtitle: 'Bug ou melhoria',
+              icon: <Bug size={18} />,
+              accent: 'from-sky-500/20 via-sky-500/5 to-transparent',
+              visible: !isMasterUser
+          },
+          {
+              id: 'notifications',
+              title: 'Notificações',
+              subtitle: 'Alertas no celular',
+              icon: <Bell size={18} />,
+              accent: 'from-violet-500/20 via-violet-500/5 to-transparent',
+              visible: isMobile
+          },
+          {
+              id: 'tips',
+              title: 'Dicas',
+              subtitle: 'Assistência visual',
+              icon: <Lightbulb size={18} />,
+              accent: 'from-indigo-500/20 via-indigo-500/5 to-transparent',
+              visible: !isMobile
+          },
+          {
+              id: 'shortcuts',
+              title: 'Atalhos',
+              subtitle: 'Teclas rápidas',
+              icon: <Keyboard size={18} />,
+              accent: 'from-sky-500/20 via-sky-500/5 to-transparent',
+              visible: !isMobile
+          },
+          {
+              id: 'danger',
+              title: 'Zona de perigo',
+              subtitle: 'Resetar sistema',
+              icon: <AlertTriangle size={18} />,
+              accent: 'from-rose-500/20 via-rose-500/5 to-transparent',
+              visible: !isMobile
+          }
+      ],
+      [isMobile, canManageMembersOnScreen, canManageCompanyOnScreen, isMasterUser]
+  );
+  const availablePanelCards = useMemo(
+      () => panelCards.filter((card) => card.visible),
+      [panelCards]
+  );
+  const [activePanel, setActivePanel] = useState<SettingsPanelId>('install');
+  useEffect(() => {
+      if (availablePanelCards.length === 0) return;
+      const exists = availablePanelCards.some((card) => card.id === activePanel);
+      if (!exists) {
+          setActivePanel(availablePanelCards[0].id);
+      }
+  }, [availablePanelCards, activePanel]);
+  const updateMemberDraft = (memberUid: string, patch: Partial<MemberRecord>) => {
+      setMembers((prev) =>
+          prev.map((member) =>
+              member.uid === memberUid
+                  ? { ...member, ...patch }
+                  : member
+          )
+      );
+  };
+  const updateMemberPermissionDraft = (memberUid: string, key: keyof MemberPermissions, checked: boolean) => {
+      setMembers((prev) =>
+          prev.map((member) =>
+              member.uid === memberUid
+                  ? {
+                        ...member,
+                        permissions: {
+                            ...member.permissions,
+                            [key]: checked
+                        }
+                    }
+                  : member
+          )
+      );
+  };
+  const setMemberPasswordDraft = (memberUid: string, value: string) => {
+      setMemberPasswordDrafts((prev) => ({
           ...prev,
-          [id]: !prev[id]
+          [memberUid]: value
       }));
   };
+  const getMemberInitial = (value: string) => {
+      const text = String(value || '').trim();
+      if (!text) return 'U';
+      return text.charAt(0).toUpperCase();
+  };
+  const handleSelectNewMemberPhoto = async (files: FileList | null) => {
+      const file = files?.[0];
+      if (!file) return;
+      setNewMemberPhotoBusy(true);
+      try {
+          const photoDataUrl = await processProfileImageFile(file);
+          setNewMemberPhotoDataUrl(photoDataUrl);
+      } catch (error: any) {
+          setMembersMessage({
+              tone: 'error',
+              text: error?.message || 'Não foi possível processar a foto.'
+          });
+      } finally {
+          setNewMemberPhotoBusy(false);
+      }
+  };
+  const handleSelectMemberPhoto = async (memberUid: string, files: FileList | null) => {
+      const file = files?.[0];
+      if (!file) return;
+      try {
+          const photoDataUrl = await processProfileImageFile(file);
+          updateMemberDraft(memberUid, { photoDataUrl });
+      } catch (error: any) {
+          setMembersMessage({
+              tone: 'error',
+              text: error?.message || 'Não foi possível processar a foto.'
+          });
+      }
+  };
+  const handleCameraCaptureRequest = async (openCameraInput: () => void) => {
+      if (cameraProbeBusy || newMemberPhotoBusy || membersSaving) return;
+      setCameraProbeBusy(true);
+      setMembersMessage({ tone: 'idle', text: '' });
+      try {
+          const canCaptureHere = await canCapturePhotoOnThisDevice();
+          if (canCaptureHere) {
+              openCameraInput();
+              return;
+          }
+          const mobileLink = buildMobilePhotoCaptureLink();
+          if (!mobileLink) {
+              setMembersMessage({
+                  tone: 'error',
+                  text: 'Não foi possível preparar o acesso mobile para captura de foto.'
+              });
+              return;
+          }
+          const copied = await copyTextToClipboard(mobileLink);
+          setMembersMessage({
+              tone: 'success',
+              text: copied
+                  ? 'Sem câmera neste dispositivo. Link mobile copiado para você abrir no celular.'
+                  : `Sem câmera neste dispositivo. Abra no celular: ${mobileLink}`
+          });
+      } finally {
+          setCameraProbeBusy(false);
+      }
+  };
+  const loadMembers = async () => {
+      if (!canManageMembersOnScreen) return;
+      setMembersLoading(true);
+      setMembersMessage({ tone: 'idle', text: '' });
+      const response = await membersService.listMembers();
+      if (!response.ok) {
+          setMembersMessage({
+              tone: 'error',
+              text: response.message || 'Não foi possível carregar os membros.'
+          });
+          setMembersLoading(false);
+          return;
+      }
+      const loadedMembers = response.data?.members || [];
+      setMembers(loadedMembers);
+      setMemberPasswordDrafts((prev) => {
+          const next: Record<string, string> = {};
+          const allowedUids = new Set(loadedMembers.map((member) => member.uid));
+          Object.entries(prev).forEach(([uid, draftPassword]) => {
+              if (allowedUids.has(uid) && draftPassword) {
+                  next[uid] = draftPassword;
+              }
+          });
+          return next;
+      });
+      setMembersLoading(false);
+  };
+  const handleCreateMember = async () => {
+      if (!canManageMembersOnScreen) return;
+      setMembersSaving(true);
+      setMembersMessage({ tone: 'idle', text: '' });
+      const response = await membersService.createMemberAccount({
+          name: newMemberName.trim(),
+          email: newMemberEmail.trim().toLowerCase(),
+          password: newMemberPassword,
+          role: newMemberRole,
+          permissions: normalizeMemberPermissions(newMemberPermissions, newMemberRole),
+          photoDataUrl: newMemberPhotoDataUrl
+      });
+      if (!response.ok || !response.data?.member) {
+          setMembersMessage({
+              tone: 'error',
+              text: response.message || 'Não foi possível criar o membro.'
+          });
+          setMembersSaving(false);
+          return;
+      }
+      setMembers((prev) => [response.data!.member!, ...prev]);
+      setExpandedMemberUid(response.data.member.uid);
+      setDeleteCandidateUid(null);
+      setNewMemberName('');
+      setNewMemberEmail('');
+      setNewMemberPassword('');
+      setNewMemberPhotoDataUrl(null);
+      setNewMemberRole('employee');
+      setNewMemberPermissions(buildDefaultPermissionsForRole('employee'));
+      setShowNewMemberPermissions(false);
+      setMembersMessage({
+          tone: 'success',
+          text: 'Membro criado com sucesso.'
+      });
+      setMembersSaving(false);
+  };
+  const handlePersistMember = async (member: MemberRecord) => {
+      if (!canManageMembersOnScreen) return;
+      setMembersSaving(true);
+      setMembersMessage({ tone: 'idle', text: '' });
+      const sanitizedName = String(member.name || '').trim();
+      const sanitizedEmail = String(member.email || '').trim().toLowerCase();
+      const draftPassword = String(memberPasswordDrafts[member.uid] || '');
+      const payloadPassword = draftPassword.trim().length > 0 ? draftPassword : undefined;
+      const response = await membersService.updateMemberAccess({
+          memberUid: member.uid,
+          role: normalizeMemberRole(member.role, 'employee'),
+          permissions: normalizeMemberPermissions(member.permissions, member.role),
+          active: member.active,
+          name: sanitizedName,
+          email: sanitizedEmail,
+          password: payloadPassword,
+          photoDataUrl: member.photoDataUrl || null
+      });
+      if (!response.ok || !response.data?.member) {
+          setMembersMessage({
+              tone: 'error',
+              text: response.message || 'Não foi possível atualizar o membro.'
+          });
+          setMembersSaving(false);
+          return;
+      }
+      setMembers((prev) =>
+          prev.map((item) => (item.uid === member.uid ? response.data!.member! : item))
+      );
+      setMemberPasswordDrafts((prev) => {
+          if (!(member.uid in prev)) return prev;
+          const next = { ...prev };
+          delete next[member.uid];
+          return next;
+      });
+      setMembersMessage({
+          tone: 'success',
+          text: `Acesso atualizado para ${response.data.member.name}.`
+      });
+      setMembersSaving(false);
+  };
+  const handleDeleteMember = async (memberUid: string) => {
+      if (!canManageMembersOnScreen) return;
+      const member = members.find((item) => item.uid === memberUid);
+      if (!member) return;
+      setMembersSaving(true);
+      setMembersMessage({ tone: 'idle', text: '' });
+      const response = await membersService.deleteMemberAccount({ memberUid });
+      if (!response.ok) {
+          setMembersMessage({
+              tone: 'error',
+              text: response.message || 'Não foi possível excluir o membro.'
+          });
+          setMembersSaving(false);
+          return;
+      }
+      const deletedUid = String(response.data?.deletedUid || memberUid).trim();
+      setMembers((prev) =>
+          prev.filter(
+              (item) =>
+                  item.uid !== memberUid &&
+                  item.uid !== deletedUid &&
+                  item.email.toLowerCase() !== member.email.toLowerCase()
+          )
+      );
+      setMemberPasswordDrafts((prev) => {
+          const next = { ...prev };
+          delete next[memberUid];
+          if (deletedUid) delete next[deletedUid];
+          return next;
+      });
+
+      const refreshResponse = await membersService.listMembers();
+      let stillExists = false;
+      if (refreshResponse.ok) {
+          const refreshedMembers = refreshResponse.data?.members || [];
+          setMembers(refreshedMembers);
+          stillExists = refreshedMembers.some(
+              (item) =>
+                  item.uid === memberUid ||
+                  (deletedUid && item.uid === deletedUid) ||
+                  item.email.toLowerCase() === member.email.toLowerCase()
+          );
+      }
+
+      setDeleteCandidateUid(null);
+      setExpandedMemberUid((prev) => (prev === memberUid ? null : prev));
+      setMembersMessage(
+          stillExists
+              ? {
+                    tone: 'error',
+                    text: `A exclusão de ${member.name} não foi confirmada no servidor. Tente novamente em alguns segundos.`
+                }
+              : {
+                    tone: 'success',
+                    text: `${member.name} foi removido(a) com sucesso.`
+                }
+      );
+      setMembersSaving(false);
+  };
+  const setNewMemberPermission = (key: keyof MemberPermissions, checked: boolean) => {
+      setNewMemberPermissions((prev) => ({
+          ...prev,
+          [key]: checked
+      }));
+  };
+  const countEnabledPermissions = (permissions: MemberPermissions) =>
+      MEMBER_PERMISSION_META.reduce(
+          (total, permission) => (permissions[permission.key] ? total + 1 : total),
+          0
+      );
   const timeoutRef = useRef<number | null>(null);
   const matrixCharset = useMemo(() => '01MEUMEI-SYSTEM-REBOOT::', []);
   const setupMatrixAudio = () => {
@@ -346,6 +727,38 @@ const Settings: React.FC<SettingsProps> = ({
       }
   };
 
+  useEffect(() => {
+      setNewMemberPermissions(buildDefaultPermissionsForRole(newMemberRole));
+  }, [newMemberRole]);
+
+  useEffect(() => {
+      if (newMemberRole === 'admin' && showNewMemberPermissions) {
+          setShowNewMemberPermissions(false);
+      }
+  }, [newMemberRole, showNewMemberPermissions]);
+
+  useEffect(() => {
+      if (currentUserRole === 'owner') return;
+      if (newMemberRole === 'admin') {
+          setNewMemberRole('employee');
+      }
+  }, [currentUserRole, newMemberRole]);
+
+  useEffect(() => {
+      if (!userId) return;
+      if (!canManageMembersOnScreen) return;
+      void loadMembers();
+  }, [userId, canManageMembersOnScreen]);
+
+  useEffect(() => {
+      if (expandedMemberUid && !members.some((member) => member.uid === expandedMemberUid)) {
+          setExpandedMemberUid(null);
+      }
+      if (deleteCandidateUid && !members.some((member) => member.uid === deleteCandidateUid)) {
+          setDeleteCandidateUid(null);
+      }
+  }, [members, expandedMemberUid, deleteCandidateUid]);
+
   // Sync with prop if it changes externally (rare but safe)
   useEffect(() => {
       setEditedInfo(companyInfo);
@@ -412,7 +825,8 @@ useEffect(() => {
         startLoadingTimeout();
         debugLog('settings:loading-config', { userId });
         try {
-            const latest = await dataService.getCompany(userId);
+            const companyTargetId = companyScopeId || userId;
+            const latest = companyTargetId ? await dataService.getCompany(companyTargetId) : null;
             if (!isActive) return;
             if (latest) {
                 setEditedInfo(prev => ({
@@ -438,7 +852,7 @@ useEffect(() => {
         isActive = false;
         clearLoadingTimeout();
     };
-}, [userId]);
+}, [userId, companyScopeId]);
 
   useEffect(() => {
       if (!isMobile) return;
@@ -515,6 +929,10 @@ useEffect(() => {
   };
 
   const handleSaveCompany = async () => {
+    if (!canManageCompanyOnScreen) {
+        console.warn('[settings] company_save_blocked', { reason: 'owner_only', currentUserRole });
+        return;
+    }
     if (!editedInfo.name.trim()) return;
     try {
         await onUpdateCompany(editedInfo);
@@ -773,39 +1191,115 @@ useEffect(() => {
       };
   }, [resetPhase]);
 
-  return (
-    <div className="min-h-screen mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter pb-20 transition-colors duration-300">
-      
-      {/* Header */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6 flex items-center gap-4">
-        <button 
-          onClick={onBack}
-          className="p-2.5 rounded-xl bg-white dark:bg-zinc-800/50 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400 transition-colors border border-zinc-200 dark:border-zinc-700/50 shadow-sm"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Configurações</h1>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">Gerencie as preferências e dados do sistema</p>
-        </div>
+  const renderPanelCardsGrid = (mode: 'desktop' | 'mobile') => (
+      <div
+          className={
+              mode === 'desktop'
+                  ? 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3'
+                  : 'grid grid-cols-2 sm:grid-cols-3 gap-3'
+          }
+      >
+          {availablePanelCards.map((card) => {
+              const active = card.id === activePanel;
+              return (
+                  <button
+                      key={card.id}
+                      type="button"
+                      onClick={() => setActivePanel(card.id)}
+                      className={`relative overflow-hidden rounded-xl border p-3 text-left transition ${
+                          active
+                              ? 'border-indigo-400/60 bg-indigo-500/10 shadow-[0_8px_24px_rgba(79,70,229,0.22)]'
+                              : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 hover:border-indigo-300 dark:hover:border-indigo-600/40'
+                      }`}
+                  >
+                      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${card.accent}`} />
+                      <div className="relative z-10 flex items-center justify-between gap-2">
+                          <div className="rounded-lg border border-white/20 bg-white/60 dark:bg-white/10 p-2 text-zinc-700 dark:text-zinc-200">
+                              {card.icon}
+                          </div>
+                          {active && (
+                              <span className="rounded-full bg-indigo-600 text-white text-xs font-bold px-2 py-0.5">
+                                  Aberto
+                              </span>
+                          )}
+                      </div>
+                      <p className="relative z-10 mt-2 text-sm font-semibold text-zinc-900 dark:text-white truncate">
+                          {card.title}
+                      </p>
+                      <p className="relative z-10 text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                          {card.subtitle}
+                      </p>
+                  </button>
+              );
+          })}
       </div>
+  );
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+  return (
+    <div className="min-h-full mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300">
+      {!isMobile && (
+          <>
+              <header className="w-full px-4 sm:px-6 pt-6 pb-3 relative z-10">
+                  <div className="max-w-7xl mx-auto">
+                      <div className="min-w-0 text-center">
+                          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white truncate">
+                              Configurações
+                          </h1>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                              Gerencie as preferências e dados do sistema
+                          </p>
+                      </div>
+                  </div>
+              </header>
+
+              {availablePanelCards.length > 0 && (
+                  <div className="w-full px-4 sm:px-6 pb-2 relative z-10">
+                      <div className="max-w-7xl mx-auto">
+                          <div className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+                              {renderPanelCardsGrid('desktop')}
+                          </div>
+                      </div>
+                  </div>
+              )}
+          </>
+      )}
+
+      {isMobile && (
+          <header className="w-full px-4 sm:px-6 pt-6 pb-4">
+              <div className="flex items-center justify-center">
+                  <div className="min-w-0 text-center">
+                      <h1 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white truncate">
+                          Configurações
+                      </h1>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                          Preferências e dados do sistema
+                      </p>
+                  </div>
+              </div>
+          </header>
+      )}
+
+      <main
+          className={`w-full ${isMobile ? 'px-4 sm:px-6 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+16px)]' : 'max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] pb-6'} space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500`}
+      >
 
         {isFetchingConfig && (
             <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-white/5 p-3 text-xs text-zinc-500 dark:text-zinc-400 font-semibold uppercase tracking-widest">
                 Carregando configurações em segundo plano...
             </div>
         )}
-        <div>
-            <div className="space-y-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                    {isMobile && availablePanelCards.length > 0 && (
+                        <section className="xl:col-span-12 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] p-4 shadow-sm">
+                            {renderPanelCardsGrid('mobile')}
+                        </section>
+                    )}
                     
                     {/* Company Management Card */}
-                    {!isMobile && (
+                    {!isMobile && canManageCompanyOnScreen && activePanel === 'company' && (
                     <SettingsSection
                         label="Gestão da Empresa"
-                        collapsed={isSectionCollapsed('company')}
-                        onToggle={() => toggleSection('company')}
+                        className="xl:col-span-12"
                     >
                         {/* ... (Company Details Form Content same as before) ... */}
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 relative z-10 gap-4">
@@ -965,11 +1459,550 @@ useEffect(() => {
                     </SettingsSection>
                     )}
 
+                    {!isMobile && canManageMembersOnScreen && activePanel === 'members' && (
+                    <SettingsSection
+                        label="Gestão de equipe"
+                        className="xl:col-span-12"
+                    >
+                        <div className="flex items-start gap-4">
+                            <div className="p-3 bg-cyan-100 dark:bg-cyan-900/20 rounded-xl text-cyan-600 dark:text-cyan-300">
+                                <Users size={22} />
+                            </div>
+                            <div className="flex-1">
+                                <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Membros</h2>
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                    Controle quem entra no sistema, o papel de cada pessoa e o que ela pode acessar.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 xl:grid-cols-4 gap-2.5">
+                            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 px-3 py-2.5">
+                                <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">Total de membros</p>
+                                <p className="mt-0.5 text-lg font-bold text-zinc-900 dark:text-white">{memberSummary.total}</p>
+                            </div>
+                            <div className="rounded-xl border border-emerald-200/70 dark:border-emerald-900/40 bg-emerald-50/80 dark:bg-emerald-900/20 px-3 py-2.5">
+                                <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Ativos</p>
+                                <p className="mt-0.5 text-lg font-bold text-emerald-700 dark:text-emerald-200">{memberSummary.active}</p>
+                            </div>
+                            <div className="rounded-xl border border-cyan-200/70 dark:border-cyan-900/40 bg-cyan-50/80 dark:bg-cyan-900/20 px-3 py-2.5">
+                                <p className="text-xs font-bold uppercase tracking-wide text-cyan-700 dark:text-cyan-300">Administradores</p>
+                                <p className="mt-0.5 text-lg font-bold text-cyan-700 dark:text-cyan-200">{memberSummary.admins}</p>
+                            </div>
+                            <div className="rounded-xl border border-indigo-200/70 dark:border-indigo-900/40 bg-indigo-50/80 dark:bg-indigo-900/20 px-3 py-2.5">
+                                <p className="text-xs font-bold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Funcionários</p>
+                                <p className="mt-0.5 text-lg font-bold text-indigo-700 dark:text-indigo-200">{memberSummary.employees}</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Novo membro</p>
+                                <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                                    <span>
+                                        {newMemberRole === 'admin'
+                                            ? 'Administrador recebe todos os acessos.'
+                                            : `${countEnabledPermissions(newMemberPermissions)} acessos selecionados.`}
+                                    </span>
+                                    {newMemberRole !== 'admin' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowNewMemberPermissions((prev) => !prev)}
+                                            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/40 px-2 py-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                                        >
+                                            {showNewMemberPermissions ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                            Permissões
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200/70 dark:border-zinc-700/70 bg-white dark:bg-zinc-950/30 px-3 py-2">
+                                <div className="h-12 w-12 overflow-hidden rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/70 flex items-center justify-center">
+                                    {newMemberPhotoDataUrl ? (
+                                        <img
+                                            src={newMemberPhotoDataUrl}
+                                            alt="Prévia da foto do membro"
+                                            className="h-full w-full object-cover"
+                                        />
+                                    ) : (
+                                        <span className="text-sm font-bold text-zinc-500 dark:text-zinc-300">
+                                            {getMemberInitial(newMemberName || newMemberEmail)}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <input
+                                        ref={newMemberCameraInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        capture="user"
+                                        className="hidden"
+                                        onChange={(event) => {
+                                            void handleSelectNewMemberPhoto(event.target.files);
+                                            event.currentTarget.value = '';
+                                        }}
+                                    />
+                                    <input
+                                        ref={newMemberUploadInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={(event) => {
+                                            void handleSelectNewMemberPhoto(event.target.files);
+                                            event.currentTarget.value = '';
+                                        }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            void handleCameraCaptureRequest(() => newMemberCameraInputRef.current?.click())
+                                        }
+                                        disabled={newMemberPhotoBusy || cameraProbeBusy || membersSaving}
+                                        className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/40 px-2 py-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        <Camera size={12} /> {cameraProbeBusy ? 'Verificando...' : 'Fotografar'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => newMemberUploadInputRef.current?.click()}
+                                        disabled={newMemberPhotoBusy}
+                                        className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/40 px-2 py-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        <Upload size={12} /> Enviar foto
+                                    </button>
+                                    {newMemberPhotoDataUrl && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setNewMemberPhotoDataUrl(null)}
+                                            className="inline-flex items-center gap-1 rounded-lg border border-rose-300 dark:border-rose-900/60 px-2 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                                        >
+                                            <X size={12} /> Remover
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                <div className="md:col-span-1">
+                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">Nome</label>
+                                    <input
+                                        type="text"
+                                        value={newMemberName}
+                                        onChange={(event) => setNewMemberName(event.target.value)}
+                                        placeholder="Nome do membro"
+                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                    />
+                                </div>
+                                <div className="md:col-span-1">
+                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">E-mail</label>
+                                    <input
+                                        type="email"
+                                        value={newMemberEmail}
+                                        onChange={(event) => setNewMemberEmail(event.target.value)}
+                                        placeholder="membro@empresa.com"
+                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                    />
+                                </div>
+                                <div className="md:col-span-1">
+                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">Senha inicial</label>
+                                    <input
+                                        type="password"
+                                        value={newMemberPassword}
+                                        onChange={(event) => setNewMemberPassword(event.target.value)}
+                                        placeholder="Mínimo 6 caracteres"
+                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                    />
+                                </div>
+                                <div className="md:col-span-1">
+                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">Papel</label>
+                                    <select
+                                        value={newMemberRole}
+                                        onChange={(event) => setNewMemberRole(normalizeMemberRole(event.target.value, 'employee'))}
+                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                    >
+                                        <option value="employee">Funcionário</option>
+                                        {currentUserRole === 'owner' && (
+                                            <option value="admin">Administrador</option>
+                                        )}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {newMemberRole !== 'admin' && showNewMemberPermissions && (
+                                <div>
+                                    <p className="text-xs font-bold uppercase tracking-wide text-zinc-500 mb-1.5">
+                                        Permissões de acesso
+                                    </p>
+                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5">
+                                        {MEMBER_PERMISSION_META.map((permission) => (
+                                            <label
+                                                key={`new-member-${permission.key}`}
+                                                className="flex items-center gap-2 rounded-lg border border-zinc-200/70 dark:border-zinc-700/70 bg-white dark:bg-zinc-950/40 px-2 py-1.5"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(newMemberPermissions[permission.key])}
+                                                    onChange={(event) => setNewMemberPermission(permission.key, event.target.checked)}
+                                                    className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+                                                />
+                                                <span className="text-xs font-semibold leading-tight text-zinc-800 dark:text-zinc-100">
+                                                    {permission.label}
+                                                </span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex items-center justify-end">
+                                <button
+                                    type="button"
+                                    onClick={handleCreateMember}
+                                    disabled={membersSaving || newMemberPhotoBusy}
+                                    className={`${actionButtonBase} bg-cyan-600 text-white hover:bg-cyan-500 ${
+                                        membersSaving || newMemberPhotoBusy ? 'cursor-not-allowed opacity-70' : ''
+                                    }`}
+                                >
+                                    {membersSaving ? 'Salvando...' : 'Adicionar membro'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {membersMessage.text && (
+                            <div
+                                className={`mt-4 rounded-lg border px-3 py-2 text-xs ${
+                                    membersMessage.tone === 'success'
+                                        ? 'border-emerald-200 dark:border-emerald-900/40 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                                        : 'border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-300'
+                                }`}
+                            >
+                                {membersMessage.text}
+                            </div>
+                        )}
+
+                        <div className="mt-5 space-y-3">
+                            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 px-3 py-2.5">
+                                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Equipe cadastrada</p>
+                            </div>
+
+                            {membersLoading && (
+                                <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                    Carregando membros...
+                                </div>
+                            )}
+
+                            {!membersLoading && members.length === 0 && (
+                                <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+                                    Nenhum membro cadastrado ainda.
+                                </div>
+                            )}
+
+                            {!membersLoading && members.length > 0 && (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                            {members.map((member) => (
+                                <div
+                                    key={member.uid}
+                                    className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/30 p-3 space-y-3"
+                                >
+                                    <div className="flex flex-col gap-2.5 xl:flex-row xl:items-start xl:justify-between">
+                                        <div className="min-w-0 flex items-start gap-3">
+                                            <div className="h-11 w-11 overflow-hidden rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/70 flex items-center justify-center shrink-0">
+                                                {member.photoDataUrl ? (
+                                                    <img
+                                                        src={member.photoDataUrl}
+                                                        alt={`Foto de ${member.name}`}
+                                                        className="h-full w-full object-cover"
+                                                    />
+                                                ) : (
+                                                    <span className="text-sm font-bold text-zinc-500 dark:text-zinc-300">
+                                                        {getMemberInitial(member.name || member.email)}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="min-w-0">
+                                            <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{member.name}</p>
+                                            <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{member.email}</p>
+                                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                                <span className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300">
+                                                    {roleLabelMap[member.role]}
+                                                </span>
+                                                <span
+                                                    className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+                                                        member.active
+                                                            ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                            : 'border-rose-400/40 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                                                    }`}
+                                                >
+                                                    {member.active ? 'Ativo' : 'Inativo'}
+                                                </span>
+                                                <span className="rounded-full border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+                                                    {member.role === 'admin'
+                                                        ? 'Todos os acessos'
+                                                        : `${countEnabledPermissions(member.permissions)} acessos`}
+                                                </span>
+                                            </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => setExpandedMemberUid((prev) => (prev === member.uid ? null : member.uid))}
+                                                className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                                            >
+                                                {expandedMemberUid === member.uid ? (
+                                                    <>
+                                                        <ChevronUp size={13} /> Recolher
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <ChevronDown size={13} /> Editar
+                                                    </>
+                                                )}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setDeleteCandidateUid((prev) => (prev === member.uid ? null : member.uid))
+                                                }
+                                                disabled={membersSaving || member.uid === firebaseUser?.uid}
+                                                className={`inline-flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                                                    membersSaving || member.uid === firebaseUser?.uid
+                                                        ? 'cursor-not-allowed border border-rose-300/40 text-rose-300/60 dark:text-rose-400/50'
+                                                        : 'border border-rose-300 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20'
+                                                }`}
+                                            >
+                                                <Trash2 size={12} /> Excluir
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {expandedMemberUid === member.uid && (
+                                        <div className="space-y-2 rounded-lg border border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-50/90 dark:bg-zinc-900/30 p-2.5">
+                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                                <div>
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">Nome</label>
+                                                    <input
+                                                        type="text"
+                                                        value={member.name}
+                                                        onChange={(event) => updateMemberDraft(member.uid, { name: event.target.value })}
+                                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">E-mail</label>
+                                                    <input
+                                                        type="email"
+                                                        value={member.email}
+                                                        onChange={(event) => updateMemberDraft(member.uid, { email: event.target.value })}
+                                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">Nova senha</label>
+                                                    <input
+                                                        type="password"
+                                                        value={memberPasswordDrafts[member.uid] || ''}
+                                                        onChange={(event) => setMemberPasswordDraft(member.uid, event.target.value)}
+                                                        placeholder="Opcional"
+                                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold uppercase tracking-wide text-zinc-500">Papel</label>
+                                                    <select
+                                                        value={member.role}
+                                                        disabled={currentUserRole !== 'owner' && member.role === 'admin'}
+                                                        onChange={(event) => {
+                                                            const role = normalizeMemberRole(event.target.value, 'employee');
+                                                            updateMemberDraft(member.uid, {
+                                                                role,
+                                                                permissions: normalizeMemberPermissions(member.permissions, role)
+                                                            });
+                                                        }}
+                                                        className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                                    >
+                                                        <option value="employee">Funcionário</option>
+                                                        {(currentUserRole === 'owner' || member.role === 'admin') && (
+                                                            <option value="admin">Administrador</option>
+                                                        )}
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200/70 dark:border-zinc-700/70 bg-white dark:bg-zinc-950/30 px-2.5 py-1.5">
+                                                <div className="h-10 w-10 overflow-hidden rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/70 flex items-center justify-center">
+                                                    {member.photoDataUrl ? (
+                                                        <img
+                                                            src={member.photoDataUrl}
+                                                            alt={`Foto de ${member.name}`}
+                                                            className="h-full w-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <UserCircle2 size={20} className="text-zinc-400" />
+                                                    )}
+                                                </div>
+                                                <input
+                                                    id={`member-photo-camera-${member.uid}`}
+                                                    type="file"
+                                                    accept="image/*"
+                                                    capture="user"
+                                                    className="hidden"
+                                                    onChange={(event) => {
+                                                        void handleSelectMemberPhoto(member.uid, event.target.files);
+                                                        event.currentTarget.value = '';
+                                                    }}
+                                                />
+                                                <input
+                                                    id={`member-photo-upload-${member.uid}`}
+                                                    type="file"
+                                                    accept="image/*"
+                                                    className="hidden"
+                                                    onChange={(event) => {
+                                                        void handleSelectMemberPhoto(member.uid, event.target.files);
+                                                        event.currentTarget.value = '';
+                                                    }}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        void handleCameraCaptureRequest(() => {
+                                                            const input = document.getElementById(
+                                                                `member-photo-camera-${member.uid}`
+                                                            ) as HTMLInputElement | null;
+                                                            input?.click();
+                                                        })
+                                                    }
+                                                    disabled={cameraProbeBusy || membersSaving}
+                                                    className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/40 px-2 py-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                    <Camera size={12} /> {cameraProbeBusy ? 'Verificando...' : 'Fotografar'}
+                                                </button>
+                                                <label
+                                                    htmlFor={`member-photo-upload-${member.uid}`}
+                                                    className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/40 px-2 py-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+                                                >
+                                                    <Upload size={12} /> Enviar foto
+                                                </label>
+                                                {member.photoDataUrl && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => updateMemberDraft(member.uid, { photoDataUrl: null })}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-rose-300 dark:border-rose-900/60 px-2 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                                                    >
+                                                        <X size={12} /> Remover
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <label className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-[#1a1a1a] px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-300">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={member.active}
+                                                        disabled={currentUserRole !== 'owner' && member.role === 'admin'}
+                                                        onChange={(event) => updateMemberDraft(member.uid, { active: event.target.checked })}
+                                                        className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+                                                    />
+                                                    {member.active ? 'Ativo' : 'Inativo'}
+                                                </label>
+
+                                                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                    {member.role === 'admin'
+                                                        ? 'Administrador com todos os acessos.'
+                                                        : `${countEnabledPermissions(member.permissions)} acessos selecionados.`}
+                                                </span>
+                                            </div>
+
+                                            {member.role !== 'admin' && (
+                                                <details className="rounded-lg border border-zinc-200/70 dark:border-zinc-700/70 bg-white dark:bg-zinc-950/30 px-2.5 py-1.5">
+                                                    <summary className="cursor-pointer list-none text-xs font-bold uppercase tracking-wide text-zinc-500">
+                                                        Permissões de acesso
+                                                    </summary>
+                                                    <div className="mt-2 grid grid-cols-2 lg:grid-cols-4 gap-1.5">
+                                                        {MEMBER_PERMISSION_META.map((permission) => (
+                                                            <label
+                                                                key={`${member.uid}-${permission.key}`}
+                                                                className="flex items-center gap-2 rounded-lg border border-zinc-200/70 dark:border-zinc-700/70 bg-white dark:bg-zinc-950/40 px-2 py-1.5"
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={Boolean(member.permissions[permission.key])}
+                                                                    disabled={currentUserRole !== 'owner' && member.role === 'admin'}
+                                                                    onChange={(event) =>
+                                                                        updateMemberPermissionDraft(member.uid, permission.key, event.target.checked)
+                                                                    }
+                                                                    className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+                                                                />
+                                                                <span className="text-xs font-semibold leading-tight text-zinc-800 dark:text-zinc-100">
+                                                                    {permission.label}
+                                                                </span>
+                                                            </label>
+                                                        ))}
+                                                    </div>
+                                                </details>
+                                            )}
+
+                                            <div className="flex justify-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handlePersistMember(member)}
+                                                    disabled={membersSaving || (currentUserRole !== 'owner' && member.role === 'admin')}
+                                                    className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold text-white transition ${
+                                                        membersSaving || (currentUserRole !== 'owner' && member.role === 'admin')
+                                                            ? 'cursor-not-allowed bg-zinc-500/70'
+                                                            : 'bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-700 dark:hover:bg-zinc-600'
+                                                    }`}
+                                                >
+                                                    Salvar alterações
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {deleteCandidateUid === member.uid && (
+                                        <div className="rounded-lg border border-rose-300/70 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-3">
+                                            <p className="text-xs font-semibold text-rose-700 dark:text-rose-300">
+                                                Excluir este usuário remove o acesso dele em definitivo.
+                                            </p>
+                                            <p className="mt-1 text-[11px] text-rose-700/90 dark:text-rose-300/90">
+                                                Usuário: {member.name} ({member.email})
+                                            </p>
+                                            <div className="mt-3 flex justify-end gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setDeleteCandidateUid(null)}
+                                                    className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                                                >
+                                                    Cancelar
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteMember(member.uid)}
+                                                    disabled={membersSaving}
+                                                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white ${
+                                                        membersSaving
+                                                            ? 'cursor-not-allowed bg-rose-500/60'
+                                                            : 'bg-rose-600 hover:bg-rose-500'
+                                                    }`}
+                                                >
+                                                    Confirmar exclusão
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            </div>
+                            )}
+                        </div>
+                    </SettingsSection>
+                    )}
+
+                    {activePanel === 'install' && (
                     <SettingsSection
                         label="Instalar app"
-                        collapsed={isMobile ? false : isSectionCollapsed('install')}
-                        onToggle={() => toggleSection('install')}
-                        collapsible={!isMobile}
+                        className="xl:col-span-12"
                     >
                         <div className="flex items-start gap-4">
                             <div className="p-3 bg-emerald-100 dark:bg-emerald-900/20 rounded-xl text-emerald-600 dark:text-emerald-400">
@@ -1001,13 +2034,12 @@ useEffect(() => {
                             </button>
                         </div>
                     </SettingsSection>
+                    )}
 
-                    {!isMasterUser && (
+                    {!isMasterUser && activePanel === 'feedback' && (
                     <SettingsSection
                         label="Reportar bug ou melhoria"
-                        collapsed={isMobile ? false : isSectionCollapsed('feedback')}
-                        onToggle={() => toggleSection('feedback')}
-                        collapsible={!isMobile}
+                        className="xl:col-span-12"
                     >
                         <div className="flex items-start gap-4">
                             <div className="p-3 bg-sky-100 dark:bg-sky-900/20 rounded-xl text-sky-600 dark:text-sky-300">
@@ -1092,12 +2124,10 @@ useEffect(() => {
                     </SettingsSection>
                     )}
 
-                    {isMobile && (
+                    {isMobile && activePanel === 'notifications' && (
                         <SettingsSection
                             label="Notificações"
-                            collapsed={false}
-                            onToggle={() => toggleSection('notifications')}
-                            collapsible={false}
+                            className="xl:col-span-12"
                         >
                             <div className="flex items-start gap-4">
                                 <div className="p-3 bg-violet-100 dark:bg-violet-900/20 rounded-xl text-violet-600 dark:text-violet-300">
@@ -1196,11 +2226,10 @@ useEffect(() => {
                         </SettingsSection>
                     )}
 
-                    {!isMobile && (
+                    {!isMobile && activePanel === 'tips' && (
                     <SettingsSection
                         label="Dicas do meumei"
-                        collapsed={isSectionCollapsed('tips')}
-                        onToggle={() => toggleSection('tips')}
+                        className="xl:col-span-12"
                     >
                         <div className="flex items-start gap-4">
                             <div className="p-3 bg-indigo-100 dark:bg-indigo-900/20 rounded-xl text-indigo-600 dark:text-indigo-300">
@@ -1239,11 +2268,10 @@ useEffect(() => {
                     </SettingsSection>
                     )}
 
-                    {!isMobile && (
+                    {!isMobile && activePanel === 'shortcuts' && (
                     <SettingsSection
                         label="Atalhos do teclado"
-                        collapsed={isSectionCollapsed('shortcuts')}
-                        onToggle={() => toggleSection('shortcuts')}
+                        className="xl:col-span-12"
                     >
                         <div className="flex items-start gap-4">
                             <div className="p-3 bg-sky-100 dark:bg-sky-900/20 rounded-xl text-sky-600 dark:text-sky-300">
@@ -1293,46 +2321,40 @@ useEffect(() => {
                     </SettingsSection>
                     )}
 
-                    {!isMobile && (
-                        <div className="grid grid-cols-1 gap-6">
-                            <SettingsSection
-                                label="Zona de Perigo"
-                                collapsed={isSectionCollapsed('danger')}
-                                onToggle={() => toggleSection('danger')}
-                                className="border-red-100 dark:border-red-900/30 flex flex-col"
-                                collapsible
-                            >
-                                <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
-                                <div className="relative z-10 space-y-3 flex-1">
-                                    <div className="inline-flex items-center gap-2 rounded-full bg-red-600/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-300">
-                                        <AlertTriangle size={12} />
-                                        Ação Irreversível
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2.5 bg-red-100 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400">
-                                            <AlertTriangle size={20} />
-                                        </div>
-                                        <h2 className="text-base font-bold text-red-700 dark:text-red-400">Zona de Perigo</h2>
-                                    </div>
-                                    <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                                        Essa ação apagará <strong>TODOS</strong> os dados do sistema e não poderá ser desfeita.
-                                    </p>
-                                    <p className="text-xs font-semibold text-red-600 dark:text-red-300">
-                                        Só continue se tiver certeza absoluta e estiver preparado para perder todas as informações.
-                                    </p>
+                    {!isMobile && activePanel === 'danger' && (
+                        <SettingsSection
+                            label="Zona de Perigo"
+                            className="xl:col-span-12 border-red-100 dark:border-red-900/30 flex flex-col"
+                        >
+                            <div className="absolute inset-y-0 right-0 w-24 opacity-5 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,#ef4444_8px,#ef4444_16px)] pointer-events-none"></div>
+                            <div className="relative z-10 space-y-3 flex-1">
+                                <div className="inline-flex items-center gap-2 rounded-full bg-red-600/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-300">
+                                    <AlertTriangle size={12} />
+                                    Ação Irreversível
                                 </div>
-                                <div className="relative z-10 flex justify-end mt-4">
-                                    <button
-                                        onClick={openResetModal}
-                                        className={`${actionButtonBase} bg-red-600 text-white hover:bg-red-500`}
-                                    >
-                                        <Trash2 size={16} /> Resetar Sistema
-                                    </button>
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-red-100 dark:bg-red-900/20 rounded-lg text-red-600 dark:text-red-400">
+                                        <AlertTriangle size={20} />
+                                    </div>
+                                    <h2 className="text-base font-bold text-red-700 dark:text-red-400">Zona de Perigo</h2>
                                 </div>
-                            </SettingsSection>
-                        </div>
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                                    Essa ação apagará <strong>TODOS</strong> os dados do sistema e não poderá ser desfeita.
+                                </p>
+                                <p className="text-xs font-semibold text-red-600 dark:text-red-300">
+                                    Só continue se tiver certeza absoluta e estiver preparado para perder todas as informações.
+                                </p>
+                            </div>
+                            <div className="relative z-10 flex justify-end mt-4">
+                                <button
+                                    onClick={openResetModal}
+                                    className={`${actionButtonBase} bg-red-600 text-white hover:bg-red-500`}
+                                >
+                                    <Trash2 size={16} /> Resetar Sistema
+                                </button>
+                            </div>
+                        </SettingsSection>
                     )}
-                </div>
         </div>
 
       </main>

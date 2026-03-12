@@ -1148,42 +1148,83 @@ const AccountsView: React.FC<AccountsViewProps> = ({
               </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2">
-              {(onOpenAudit || tourAccountAuditEntries.length > 0) && (
+          {isMobile ? (
+              <div className="space-y-2">
+                  {(onOpenAudit || tourAccountAuditEntries.length > 0) && (
+                      <button
+                          onClick={handleAccountsAuditClick}
+                          data-tour-anchor="accounts-audit-button"
+                          className={`w-full mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius}`}
+                          title="Auditoria do dia"
+                      >
+                          <History size={14} />
+                          Auditoria
+                      </button>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                      <button
+                          onClick={openTransferSheet}
+                          disabled={!onCreateTransfer || eligibleTransferAccounts.length < 2}
+                          className={`w-full mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} ${
+                              !onCreateTransfer || eligibleTransferAccounts.length < 2 ? 'opacity-60 cursor-not-allowed' : ''
+                          }`}
+                          title={
+                              eligibleTransferAccounts.length < 2
+                                  ? 'Cadastre ao menos duas contas para transferir'
+                                  : 'Transferência entre contas'
+                          }
+                      >
+                          <ArrowRightLeft size={14} />
+                          Transferir
+                      </button>
+                      <button
+                          onClick={handleOpenNew}
+                          data-tour-anchor="accounts-new"
+                          disabled={tourSimulatedAccounts.length > 0}
+                          className={`w-full mm-mobile-primary-cta mm-btn-base mm-btn-primary mm-btn-primary-blue ${headerPrimaryRadius}`}
+                      >
+                          Nova Conta
+                      </button>
+                  </div>
+              </div>
+          ) : (
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                  {(onOpenAudit || tourAccountAuditEntries.length > 0) && (
+                      <button
+                          onClick={handleAccountsAuditClick}
+                          data-tour-anchor="accounts-audit-button"
+                          className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7`}
+                          title="Auditoria do dia"
+                      >
+                          <History size={14} />
+                          Auditoria
+                      </button>
+                  )}
                   <button
-                      onClick={handleAccountsAuditClick}
-                      data-tour-anchor="accounts-audit-button"
-                      className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7`}
-                      title="Auditoria do dia"
+                      onClick={openTransferSheet}
+                      disabled={!onCreateTransfer || eligibleTransferAccounts.length < 2}
+                      className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7 ${
+                          !onCreateTransfer || eligibleTransferAccounts.length < 2 ? 'opacity-60 cursor-not-allowed' : ''
+                      }`}
+                      title={
+                          eligibleTransferAccounts.length < 2
+                              ? 'Cadastre ao menos duas contas para transferir'
+                              : 'Transferência entre contas'
+                      }
                   >
-                      <History size={14} />
-                      Auditoria
+                      <ArrowRightLeft size={14} />
+                      Transferir
                   </button>
-              )}
-              <button
-                  onClick={openTransferSheet}
-                  disabled={!onCreateTransfer || eligibleTransferAccounts.length < 2}
-                  className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7 ${
-                      !onCreateTransfer || eligibleTransferAccounts.length < 2 ? 'opacity-60 cursor-not-allowed' : ''
-                  }`}
-                  title={
-                      eligibleTransferAccounts.length < 2
-                          ? 'Cadastre ao menos duas contas para transferir'
-                          : 'Transferência entre contas'
-                  }
-              >
-                  <ArrowRightLeft size={14} />
-                  Transferir
-              </button>
-              <button
-                  onClick={handleOpenNew}
-                  data-tour-anchor="accounts-new"
-                  disabled={tourSimulatedAccounts.length > 0}
-                  className={`${isMobile ? 'w-full' : 'inline-flex min-w-[236px] px-8'} mm-mobile-primary-cta mm-btn-base mm-btn-primary mm-btn-primary-blue ${headerPrimaryRadius}`}
-              >
-                  Nova Conta
-              </button>
-          </div>
+                  <button
+                      onClick={handleOpenNew}
+                      data-tour-anchor="accounts-new"
+                      disabled={tourSimulatedAccounts.length > 0}
+                      className={`inline-flex min-w-[236px] px-8 mm-mobile-primary-cta mm-btn-base mm-btn-primary mm-btn-primary-blue ${headerPrimaryRadius}`}
+                  >
+                      Nova Conta
+                  </button>
+              </div>
+          )}
       </div>
   );
 

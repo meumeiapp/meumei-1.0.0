@@ -65,6 +65,7 @@ export interface CompanyInfo {
   phone: string;
   email: string;
   website: string;
+  logoDataUrl?: string | null;
   licenseId?: string; // Primary Key for Tenant
 }
 
@@ -99,6 +100,43 @@ export enum ViewState {
   REPORTS = 'REPORTS',
   AUDIT = 'AUDIT',
   MASTER = 'MASTER'
+}
+
+export type MemberRole = 'owner' | 'admin' | 'employee';
+
+export const MEMBER_PERMISSION_KEYS = [
+  'dashboard',
+  'launches',
+  'accounts',
+  'incomes',
+  'expenses',
+  'yields',
+  'invoices',
+  'reports',
+  'das',
+  'agenda',
+  'audit',
+  'settings'
+] as const;
+
+export type MemberPermissionKey = typeof MEMBER_PERMISSION_KEYS[number];
+export type MemberPermissions = Record<MemberPermissionKey, boolean>;
+
+export interface MemberRecord {
+  uid: string;
+  licenseId: string;
+  name: string;
+  email: string;
+  photoDataUrl?: string | null;
+  role: MemberRole;
+  active: boolean;
+  permissions: MemberPermissions;
+  createdAtMs?: number | null;
+  updatedAtMs?: number | null;
+  createdByUid?: string | null;
+  createdByEmail?: string | null;
+  disabledAtMs?: number | null;
+  lastLoginAtMs?: number | null;
 }
 
 export type LockedReason = 'decrypt_failed' | 'missing_salt' | 'epoch_mismatch';

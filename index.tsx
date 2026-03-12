@@ -47,7 +47,9 @@ const updateAppViewportMetrics = () => {
   document.documentElement.style.setProperty('--app-height', `${height}px`);
   document.documentElement.style.setProperty('--app-width', `${width}px`);
   const minSide = Math.min(width, height);
-  document.documentElement.classList.toggle('is-mobile', minSide <= 767);
+  const isCoarsePointer = window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+  const isMobile = isCoarsePointer ? minSide <= 900 : width <= 767;
+  document.documentElement.classList.toggle('is-mobile', isMobile);
 };
 
 const getScrollableAncestor = (el: Element | null) => {

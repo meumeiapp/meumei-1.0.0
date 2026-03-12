@@ -108,6 +108,69 @@
           }
         },
         {
+          "source": "/api/listMembers",
+          "function": {
+            "functionId": "listMembers",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/createProfilePhotoCaptureSession",
+          "function": {
+            "functionId": "createProfilePhotoCaptureSession",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/getProfilePhotoCaptureSession",
+          "function": {
+            "functionId": "getProfilePhotoCaptureSession",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/consumeProfilePhotoCaptureSession",
+          "function": {
+            "functionId": "consumeProfilePhotoCaptureSession",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/submitProfilePhotoCapture",
+          "function": {
+            "functionId": "submitProfilePhotoCapture",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/createMemberAccount",
+          "function": {
+            "functionId": "createMemberAccount",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/updateMemberAccess",
+          "function": {
+            "functionId": "updateMemberAccess",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/updateMyMemberProfile",
+          "function": {
+            "functionId": "updateMyMemberProfile",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/api/deleteMemberAccount",
+          "function": {
+            "functionId": "deleteMemberAccount",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "/api/listUserFeedback",
           "function": {
             "functionId": "listUserFeedback",

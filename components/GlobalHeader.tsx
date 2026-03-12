@@ -6,11 +6,9 @@ import {
   ChevronLeft, 
   ChevronRight, 
   Building2,
-  ExternalLink,
   Sun,
   Moon,
   Bot,
-  RefreshCw,
   Bug
 } from 'lucide-react';
 import Logo from './Logo';
@@ -43,6 +41,8 @@ interface GlobalHeaderProps {
   onOpenCalculator: () => void;
   onOpenAudit: () => void;
   canAccessSettings: boolean;
+  onOpenProfile?: () => void;
+  userPhotoDataUrl?: string | null;
   versionLabel?: string;
   entitlementBadge?: {
     label: string;
@@ -77,6 +77,8 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   onOpenCalculator,
   onOpenAudit,
   canAccessSettings,
+  onOpenProfile,
+  userPhotoDataUrl,
   summary,
   versionLabel,
   entitlementBadge,
@@ -90,8 +92,13 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   
   const isMobile = useIsMobile();
   const isCompactHeight = useIsCompactHeight();
-  const [isUpdateReady, setIsUpdateReady] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
+  const formatSystemTime = () =>
+    new Date().toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  const [systemTimeLabel, setSystemTimeLabel] = useState<string>(formatSystemTime);
   const monthLabel = viewDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
   const safeMonthLabel = monthLabel || '';
   const capitalizedMonthLabel = safeMonthLabel
@@ -130,64 +137,42 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      setIsUpdateReady(sessionStorage.getItem('meumei_sw_update_ready') === '1');
-    } catch {}
-    const onUpdateReady = () => setIsUpdateReady(true);
-    window.addEventListener('meumei:pwa-update-ready', onUpdateReady as EventListener);
-    return () => {
-      window.removeEventListener('meumei:pwa-update-ready', onUpdateReady as EventListener);
-    };
+    const syncTime = () => setSystemTimeLabel(formatSystemTime());
+    syncTime();
+    const intervalId = window.setInterval(syncTime, 30_000);
+    return () => window.clearInterval(intervalId);
   }, []);
-
-  const handleDesktopRefresh = async () => {
-    if (typeof window === 'undefined') return;
-    try {
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        regs.forEach(reg => reg.waiting?.postMessage({ type: 'SKIP_WAITING' }));
-        await Promise.all(regs.map(reg => reg.update().catch(() => undefined)));
-      }
-      if ('BroadcastChannel' in window) {
-        const channel = new BroadcastChannel('meumei_sw');
-        channel.postMessage({ type: 'please_reload', source: 'manual_refresh' });
-        channel.close();
-      }
-      try {
-        sessionStorage.removeItem('meumei_sw_update_ready');
-        sessionStorage.removeItem('meumei_sw_update_reason');
-      } catch {}
-    } finally {
-      window.setTimeout(() => window.location.reload(), 120);
-    }
-  };
 
   const headerMarginClass = isCompactHeight ? 'mb-2 md:mb-3' : 'mb-3 md:mb-4';
   const headerPaddingClass = isCompactHeight ? 'pt-1 pb-2 md:pt-1.5 md:pb-3' : 'pt-1.5 pb-3 md:pt-2 md:pb-4';
+  const headerActionCardClass =
+    'h-8 w-8 md:h-9 md:w-9 inline-flex items-center justify-center backdrop-blur-md rounded-xl text-white transition-all border border-white/5';
+  const headerNeutralCardClass = `${headerActionCardClass} bg-white/10 hover:bg-white/20 hover:scale-105`;
+  const companyTooltip = companyName ? `Dados da empresa: ${companyName}` : 'Dados da empresa';
+  const profileTooltip = [username, versionLabel].filter(Boolean).join(' • ') || 'Perfil';
 
   const monthSelector = (
-    <div id="month-selector-bar" className="w-full px-4 pb-[5px]">
-      <div className="mx-auto w-full max-w-[240px] flex items-center justify-between bg-[#1a1a1a]/90 border border-white/10 p-0.5 rounded-full shadow-lg shadow-black/40">
+    <div id="month-selector-bar" className="w-full px-4 pt-1 pb-[5px]">
+      <div className="mx-auto w-full max-w-[236px] flex items-center justify-between bg-[#1a1a1a]/90 border border-white/10 p-0.5 rounded-full shadow-lg shadow-black/40">
         <button
           onClick={() => onMonthChange(-1)}
           disabled={!canGoBack}
-          className={`w-7 h-7 flex items-center justify-center rounded-full transition-all ${!canGoBack ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:bg-zinc-800 active:scale-95'}`}
+          className={`w-6 h-6 flex items-center justify-center rounded-full transition-all ${!canGoBack ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:bg-zinc-800 active:scale-95'}`}
         >
-          <ChevronLeft size={16} />
+          <ChevronLeft size={14} />
         </button>
 
-        <div className="flex flex-col items-center justify-center px-2">
-          <span className="text-[11px] font-semibold text-white capitalize leading-none">
+        <div className="flex items-center justify-center px-1.5">
+          <span className="inline-flex w-[146px] items-center justify-center h-5 rounded-full border border-white/10 bg-white/10 px-2.5 text-[10px] font-semibold text-white capitalize leading-none whitespace-nowrap">
             {mobileMonthLabel}
           </span>
         </div>
 
         <button
           onClick={() => onMonthChange(1)}
-          className="w-7 h-7 flex items-center justify-center rounded-full text-white hover:bg-zinc-800 active:scale-95 transition-all"
+          className="w-6 h-6 flex items-center justify-center rounded-full text-white hover:bg-zinc-800 active:scale-95 transition-all"
         >
-          <ChevronRight size={16} />
+          <ChevronRight size={14} />
         </button>
       </div>
     </div>
@@ -213,6 +198,8 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                     onLogout={onLogout}
                     onCompanyClick={onCompanyClick}
                     canAccessSettings={canAccessSettings}
+                    onOpenProfile={onOpenProfile}
+                    userPhotoDataUrl={userPhotoDataUrl}
                     versionLabel={versionLabel}
                     entitlementBadge={entitlementBadge}
                     renewalInfo={renewalInfo}
@@ -247,126 +234,123 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                      onLogout={onLogout}
                      onCompanyClick={onCompanyClick}
                      canAccessSettings={canAccessSettings}
+                     onOpenProfile={onOpenProfile}
+                     userPhotoDataUrl={userPhotoDataUrl}
                      versionLabel={versionLabel}
                  />
              ) : (
                  <div className="relative">
                         <div className="flex items-center justify-between gap-3 md:gap-4">
-                        <div className="flex flex-col items-start justify-center gap-1 min-w-0 max-w-[45%] md:max-w-none">
-                          <div className="rounded-2xl border border-white/10 bg-white/10 backdrop-blur-md px-2.5 py-2 md:px-3 md:py-2 shadow-sm shadow-black/20">
-                            <button 
+                        <div className="flex items-center justify-start min-w-0 max-w-[45%] md:max-w-none">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <button
                                 onClick={onCompanyClick}
-                                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-md px-2.5 py-0.5 md:px-3 md:py-1 rounded-full border border-white/5 transition-all group max-w-full"
-                                title="Ver dados da empresa"
+                                className={`${headerNeutralCardClass} group`}
+                                title={companyTooltip}
+                                aria-label="Ver dados da empresa"
                             >
-                                <Building2 size={14} className="text-indigo-200 group-hover:text-white transition-colors shrink-0" />
-                                <span className="text-[11px] md:text-xs font-semibold text-white tracking-wide truncate max-w-[180px] sm:max-w-[220px] md:max-w-[260px]">{companyName}</span>
-                                <ExternalLink size={11} className="text-white/50 group-hover:text-white transition-colors ml-1 shrink-0" />
+                                <Building2 size={15} className="text-indigo-200 group-hover:text-white transition-colors" />
                             </button>
-                            {entitlementBadge && (
-                                <span className="mt-1 inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
-                                    {entitlementBadge.label}
-                                </span>
-                            )}
-                            {renewalInfo && (
-                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-white/70">
-                                    <span>
-                                        {renewalInfo.label} {renewalInfo.dateLabel}
-                                    </span>
-                                    {Number.isFinite(renewalInfo.daysLeft) && (
-                                        <span>• faltam {renewalInfo.daysLeft} dias</span>
-                                    )}
-                                    {onRenew && (
-                                        <button
-                                            type="button"
-                                            onClick={onRenew}
-                                            className="rounded-full border border-white/25 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-white/80 hover:text-white hover:border-white/60 transition"
-                                        >
-                                            {renewalInfo.ctaLabel || 'Renovar'}
-                                        </button>
-                                    )}
-                                </div>
-                            )}
+                            <span
+                                className="text-[10px] md:text-[11px] font-semibold text-white/90 truncate max-w-[140px] sm:max-w-[180px] md:max-w-[220px]"
+                                title={companyName || 'Empresa'}
+                            >
+                                {companyName || 'Empresa'}
+                            </span>
                           </div>
                         </div>
 
                         <div className="flex items-center justify-end min-w-0 max-w-[45%] md:max-w-none">
-                            <div className="flex flex-col items-end gap-2 min-w-0">
-                                <div className="flex flex-wrap items-center justify-end gap-2">
-                                    {assistantHidden && onOpenAssistant && (
-                                        <button
-                                            onClick={onOpenAssistant}
-                                            aria-label="Abrir ajudante"
-                                            className="p-1.5 md:p-2 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
-                                            title="Ajudante"
-                                        >
-                                            <Bot size={15} />
-                                        </button>
-                                    )}
+                            <div className="flex items-center justify-end gap-2 min-w-0">
+                                {assistantHidden && onOpenAssistant && (
                                     <button
-                                        onClick={() => onThemeChange(isDark ? 'light' : 'dark')}
-                                        aria-label={isDark ? 'Ativar tema claro' : 'Ativar tema escuro'}
-                                        className="p-1.5 md:p-2 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
-                                        title={isDark ? 'Tema claro' : 'Tema escuro'}
+                                        onClick={onOpenAssistant}
+                                        aria-label="Abrir ajudante"
+                                        className={headerNeutralCardClass}
+                                        title="Ajudante"
                                     >
-                                        {isDark ? <Sun size={15} /> : <Moon size={15} />}
+                                        <Bot size={15} />
                                     </button>
-                                    {canAccessSettings && (
+                                )}
+                                <button
+                                    onClick={() => onThemeChange(isDark ? 'light' : 'dark')}
+                                    aria-label={isDark ? 'Ativar tema claro' : 'Ativar tema escuro'}
+                                    className={headerNeutralCardClass}
+                                    title={isDark ? 'Tema claro' : 'Tema escuro'}
+                                >
+                                    {isDark ? <Sun size={15} /> : <Moon size={15} />}
+                                </button>
+                                {canAccessSettings && (
+                                    <button
+                                        onClick={isMasterUser ? handleOpenFeedback : onOpenSettings}
+                                        aria-label={isMasterUser ? 'Bugs e melhorias' : 'Reportar bug ou melhoria'}
+                                        className={`relative ${headerNeutralCardClass}`}
+                                        title={isMasterUser ? 'Bugs e melhorias' : 'Reportar bug ou melhoria'}
+                                    >
+                                        <Bug size={15} />
+                                        {isMasterUser && hasBugNotification && (
+                                            <span className="pointer-events-none absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] leading-none font-bold flex items-center justify-center border border-red-300/80 shadow-md shadow-red-900/30">
+                                                {bugNotificationLabel}
+                                            </span>
+                                        )}
+                                    </button>
+                                )}
+                                {canAccessSettings && (
+                                    <button
+                                        onClick={onOpenSettings}
+                                        aria-label="Abrir configurações"
+                                        className={headerNeutralCardClass}
+                                        title="Configurações"
+                                    >
+                                        <Settings size={15} />
+                                    </button>
+                                )}
+                                <button
+                                    onClick={onLogout}
+                                    aria-label="Sair da conta"
+                                    className={`${headerActionCardClass} bg-red-500/20 hover:bg-red-500/30 hover:scale-105`}
+                                    title="Sair"
+                                >
+                                    <LogOut size={15} />
+                                </button>
+                                {onOpenProfile ? (
+                                    <div className="flex items-center gap-2 min-w-0">
                                         <button
-                                            onClick={isMasterUser ? handleOpenFeedback : onOpenSettings}
-                                            aria-label={isMasterUser ? 'Bugs e melhorias' : 'Reportar bug ou melhoria'}
-                                            className="relative p-1.5 md:p-2 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
-                                            title={isMasterUser ? 'Bugs e melhorias' : 'Reportar bug ou melhoria'}
+                                            type="button"
+                                            onClick={onOpenProfile}
+                                            className={`${headerNeutralCardClass} group overflow-hidden`}
+                                            title={profileTooltip}
                                         >
-                                            <Bug size={15} />
-                                            {isMasterUser && hasBugNotification && (
-                                                <span className="pointer-events-none absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] leading-none font-bold flex items-center justify-center border border-red-300/80 shadow-md shadow-red-900/30">
-                                                    {bugNotificationLabel}
+                                            {userPhotoDataUrl ? (
+                                                <img src={userPhotoDataUrl} alt="Foto de perfil" className="h-full w-full object-cover" />
+                                            ) : (
+                                                <span className="text-[11px] font-semibold text-white">
+                                                    {getInitial(username || '?')}
                                                 </span>
                                             )}
                                         </button>
-                                    )}
-                                    <button
-                                        onClick={handleDesktopRefresh}
-                                        aria-label={isUpdateReady ? 'Atualizar para nova versão' : 'Atualizar aplicativo'}
-                                        className={`p-1.5 md:p-2 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border ${
-                                          isUpdateReady
-                                            ? 'bg-emerald-500/30 hover:bg-emerald-500/40 border-emerald-300/40'
-                                            : 'bg-white/10 hover:bg-white/20 border-white/5'
-                                        }`}
-                                        title={isUpdateReady ? 'Nova versão disponível. Atualizar agora' : 'Atualizar aplicativo'}
-                                    >
-                                        <RefreshCw size={15} />
-                                    </button>
-                                    {canAccessSettings && (
-                                        <button 
-                                            onClick={onOpenSettings}
-                                            aria-label="Abrir configurações"
-                                            className="p-1.5 md:p-2 bg-white/10 hover:bg-white/20 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
-                                            title="Configurações"
+                                        <span
+                                            className="text-[10px] md:text-[11px] font-semibold text-white/90 truncate max-w-[95px] sm:max-w-[120px] md:max-w-[150px]"
+                                            title={profileTooltip}
                                         >
-                                            <Settings size={15} />
-                                        </button>
-                                    )}
-                                    <button 
-                                        onClick={onLogout}
-                                        aria-label="Sair da conta"
-                                        className="p-1.5 md:p-2 bg-red-500/20 hover:bg-red-500/30 hover:scale-105 backdrop-blur-md rounded-xl text-white transition-all border border-white/5"
-                                        title="Sair"
-                                    >
-                                        <LogOut size={15} />
-                                    </button>
-                                </div>
-                                <div className="flex flex-col items-end gap-1">
-                                  <p className="text-[10px] md:text-[11px] text-white/80 max-w-[180px] sm:max-w-[220px] md:max-w-[260px] truncate">
-                                      {username}
-                                  </p>
-                                  {versionLabel && (
-                                    <span className="text-[10px] text-white/60 leading-none">
-                                        {versionLabel}
-                                    </span>
-                                  )}
-                                </div>
+                                            {username || 'Usuário'}
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <div className={`${headerActionCardClass} bg-white/10`} title={profileTooltip}>
+                                            <span className="text-[11px] font-semibold text-white">
+                                                {getInitial(username || '?')}
+                                            </span>
+                                        </div>
+                                        <span
+                                            className="text-[10px] md:text-[11px] font-semibold text-white/90 truncate max-w-[95px] sm:max-w-[120px] md:max-w-[150px]"
+                                            title={profileTooltip}
+                                        >
+                                            {username || 'Usuário'}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                      </div>
@@ -380,30 +364,30 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
          </div>
 
          {/* BOTTOM EDGE: Month Selector (Overlapping) */}
-         <div id="month-selector-bar" className="absolute bottom-0 left-0 right-0 translate-y-[60%] md:translate-y-1/2 z-20 w-full px-4">
-            <div className="mx-auto w-full max-w-[260px] md:max-w-[280px] flex items-center justify-between bg-[#1a1a1a] dark:bg-black border border-white/10 dark:border-zinc-800 p-0.5 md:p-1 rounded-full shadow-2xl shadow-black/40">
+         <div id="month-selector-bar" className="absolute bottom-0 left-0 right-0 translate-y-[76%] md:translate-y-[68%] z-20 w-full px-4">
+            <div className="mx-auto w-full max-w-[286px] md:max-w-[304px] flex items-center justify-between bg-[#1a1a1a] dark:bg-black border border-white/10 dark:border-zinc-800 p-0.5 rounded-full shadow-2xl shadow-black/40">
                 <button 
                     onClick={() => onMonthChange(-1)}
                     disabled={!canGoBack}
-                    className={`w-7 h-7 md:w-9 md:h-9 flex items-center justify-center rounded-full transition-all ${!canGoBack ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:bg-zinc-800 active:scale-95'}`}
+                    className={`w-6 h-6 md:w-8 md:h-8 flex items-center justify-center rounded-full transition-all ${!canGoBack ? 'text-zinc-600 cursor-not-allowed' : 'text-white hover:bg-zinc-800 active:scale-95'}`}
                 >
-                    <ChevronLeft size={16} />
+                    <ChevronLeft size={14} />
                 </button>
                 
-                <div className="flex flex-col items-center justify-center px-2 md:px-3">
-                    <>
-                        <span className="text-[9px] font-medium text-zinc-400 uppercase tracking-widest leading-none mb-0.5">Mês Atual</span>
-                        <span className="text-[10px] md:text-xs font-bold text-white capitalize leading-none">
-                            {capitalizedMonthLabel}
-                        </span>
-                    </>
+                <div className="flex items-center justify-center gap-1.5 px-1.5 md:px-2">
+                    <span className="inline-flex items-center justify-center h-5 md:h-6 rounded-full border border-white/10 bg-zinc-900/70 px-2.5 md:px-3 text-[9px] md:text-[10px] font-semibold text-zinc-200 tabular-nums leading-none">
+                        {systemTimeLabel}
+                    </span>
+                    <span className="inline-flex w-[112px] md:w-[132px] items-center justify-center h-5 md:h-6 rounded-full border border-white/10 bg-white/10 px-3 md:px-3.5 text-[10px] md:text-[11px] font-bold text-white capitalize leading-none whitespace-nowrap">
+                        {mobileMonthLabel}
+                    </span>
                 </div>
 
                 <button 
                     onClick={() => onMonthChange(1)}
-                    className="w-7 h-7 md:w-9 md:h-9 flex items-center justify-center rounded-full text-white hover:bg-zinc-800 active:scale-95 transition-all"
+                    className="w-6 h-6 md:w-8 md:h-8 flex items-center justify-center rounded-full text-white hover:bg-zinc-800 active:scale-95 transition-all"
                 >
-                    <ChevronRight size={16} />
+                    <ChevronRight size={14} />
                 </button>
             </div>
          </div>

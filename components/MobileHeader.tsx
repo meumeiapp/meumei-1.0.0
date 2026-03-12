@@ -15,6 +15,8 @@ interface MobileHeaderProps {
   onLogout: () => void;
   onCompanyClick: () => void;
   canAccessSettings: boolean;
+  onOpenProfile?: () => void;
+  userPhotoDataUrl?: string | null;
   versionLabel?: string;
   entitlementBadge?: {
     label: string;
@@ -35,6 +37,8 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
   onOpenAudit,
   onOpenCalculator,
   onLogout,
+  onOpenProfile,
+  userPhotoDataUrl,
   canAccessSettings,
   versionLabel,
   entitlementBadge,
@@ -73,7 +77,28 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
 
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3">
           <p className="text-[10px] uppercase tracking-wider text-zinc-400 mb-1">Conta ativa</p>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{username}</p>
+          <button
+            type="button"
+            onClick={() => {
+              closeMenu();
+              onOpenProfile?.();
+            }}
+            className="w-full flex items-center gap-2 text-left"
+          >
+            <div className="h-8 w-8 overflow-hidden rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center shrink-0">
+              {userPhotoDataUrl ? (
+                <img src={userPhotoDataUrl} alt="Foto de perfil" className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-xs font-bold text-zinc-500 dark:text-zinc-300">
+                  {(username || 'U').trim().charAt(0).toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{username}</p>
+              <p className="text-[11px] text-cyan-600 dark:text-cyan-300">Toque para editar perfil</p>
+            </div>
+          </button>
         </div>
 
         <div className="flex flex-col gap-2">

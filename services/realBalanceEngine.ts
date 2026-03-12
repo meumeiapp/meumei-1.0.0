@@ -48,6 +48,15 @@ type ComputeParams = {
 const roundToCents = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
 
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
 const parseDate = (value?: string) => {
   if (!value) return null;
   const trimmed = value.trim();
@@ -91,15 +100,48 @@ const resolveBalanceAnchor = (account: Account, cutoffDate: Date) => {
     const sorted = [...account.balanceHistory]
       .map(entry => {
         const parsed = parseDate(entry.date);
+        const value = toFiniteNumber(entry.value);
+        const previousValue = toFiniteNumber((entry as any).previousValue);
+        const newValue = toFiniteNumber((entry as any).newValue);
+        const delta = toFiniteNumber((entry as any).delta);
+        const source = String((entry as any).source || '').trim().toLowerCase();
         return Number.isFinite(entry.value) && parsed
-          ? { ...entry, parsed }
-          : null;
+          ? { ...entry, value: Number(entry.value), previousValue, newValue, delta, source, parsed }
+          : (value !== null && parsed
+              ? { ...entry, value, previousValue, newValue, delta, source, parsed }
+              : null);
       })
-      .filter((entry): entry is { date: string; value: number; parsed: Date; source?: string } => Boolean(entry))
-      .filter(entry => !['invoice_pay', 'invoice_reopen', 'invoice_payment', 'invoice_reversal'].includes(entry.source || ''))
+      .filter(
+        (
+          entry
+        ): entry is {
+          date: string;
+          value: number;
+          previousValue: number | null;
+          newValue: number | null;
+          delta: number | null;
+          source: string;
+          parsed: Date;
+        } => Boolean(entry)
+      )
+      .filter(entry => !['invoice_pay', 'invoice_reopen', 'invoice_payment', 'invoice_reversal'].includes(entry.source))
+      .filter(entry => {
+        // Legacy snapshots with no source and empty deltas are auto-generated checkpoints.
+        // Using them as anchors can freeze stale balances after deletes.
+        const hasSource = entry.source.length > 0;
+        if (hasSource) return true;
+        const previous = Math.abs(Number(entry.previousValue || 0));
+        const next = Math.abs(Number(entry.newValue || 0));
+        const delta = Math.abs(Number(entry.delta || 0));
+        return previous > 0.0001 || next > 0.0001 || delta > 0.0001;
+      })
       .sort((a, b) => a.parsed.getTime() - b.parsed.getTime());
     if (sorted.length) {
-      const eligible = sorted.filter(entry => entry.parsed.getTime() <= cutoffDate.getTime());
+      const preferred = sorted.filter(entry =>
+        ['manual_edit', 'manual_adjustment'].includes(entry.source)
+      );
+      const pool = preferred.length ? preferred : sorted;
+      const eligible = pool.filter(entry => entry.parsed.getTime() <= cutoffDate.getTime());
       const chosen = eligible.length ? eligible[eligible.length - 1] : null;
       if (chosen) {
         anchorDate = chosen.parsed;
@@ -184,8 +226,9 @@ export const computeRealBalances = ({
     const parsed = parseDate(dateValue);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
     const anchorDate = anchorByAccountId[income.accountId];
-    // Dates are day-granular, so transactions on the anchor day are already reflected in anchor.value.
-    if (anchorDate && parsed.getTime() <= anchorDate.getTime()) return;
+    // Using <= here drops same-day launches created after a manual anchor and causes
+    // "received but not credited" behavior in accounts. Keep only strictly older items out.
+    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
     const amount = roundToCents(income.amount);
     const next = roundToCents((byAccountId[income.accountId] || 0) + amount);
     byAccountId[income.accountId] = next;
@@ -213,7 +256,7 @@ export const computeRealBalances = ({
     const parsed = parseDate(dateValue);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
     const anchorDate = anchorByAccountId[expense.accountId];
-    if (anchorDate && parsed.getTime() <= anchorDate.getTime()) return;
+    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
     const amount = roundToCents(expense.amount);
     const next = roundToCents((byAccountId[expense.accountId] || 0) - amount);
     byAccountId[expense.accountId] = next;
@@ -242,7 +285,7 @@ export const computeRealBalances = ({
     let applied = false;
 
     const fromAnchorDate = anchorByAccountId[transfer.fromAccountId];
-    if (!fromAnchorDate || parsed.getTime() > fromAnchorDate.getTime()) {
+    if (!fromAnchorDate || parsed.getTime() >= fromAnchorDate.getTime()) {
       const nextFrom = roundToCents((byAccountId[transfer.fromAccountId] || 0) - amount);
       byAccountId[transfer.fromAccountId] = nextFrom;
       applied = true;
@@ -257,7 +300,9 @@ export const computeRealBalances = ({
     }
 
     const toAnchorDate = anchorByAccountId[transfer.toAccountId];
-    if (!toAnchorDate || parsed.getTime() > toAnchorDate.getTime()) {
+    // Transfer on the same day must be applied; otherwise one side can remain stale
+    // when a manual anchor exists for that day (observed in production on accounts view).
+    if (!toAnchorDate || parsed.getTime() >= toAnchorDate.getTime()) {
       const nextTo = roundToCents((byAccountId[transfer.toAccountId] || 0) + amount);
       byAccountId[transfer.toAccountId] = nextTo;
       applied = true;
@@ -281,7 +326,7 @@ export const computeRealBalances = ({
     const parsed = parseDate(yieldRecord.date);
     if (!parsed || parsed.getTime() > cutoffDate.getTime()) return;
     const anchorDate = anchorByAccountId[yieldRecord.accountId];
-    if (anchorDate && parsed.getTime() <= anchorDate.getTime()) return;
+    if (anchorDate && parsed.getTime() < anchorDate.getTime()) return;
     const amount = roundToCents(yieldRecord.amount);
     const next = roundToCents((byAccountId[yieldRecord.accountId] || 0) + amount);
     byAccountId[yieldRecord.accountId] = next;
