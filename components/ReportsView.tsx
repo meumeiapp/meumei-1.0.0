@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from 're
 import {
   ArrowLeft,
   Calendar,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Maximize2,
@@ -48,10 +47,19 @@ interface ReportsViewProps {
   companyName: string;
   licenseId?: string;
   expenseTypeOptions?: ExpenseTypeOption[];
+  canExportReports?: boolean;
+  dashboardBalance?: number;
 }
 
 const buildMonthLabel = (date: Date) =>
   date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+const formatDateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const CATEGORY_TREND_COLORS = ['#a855f7', '#38bdf8', '#f97316', '#22c55e', '#ec4899', '#facc15', '#0ea5e9', '#f472b6', '#94a3b8', '#fb923c'];
 
@@ -63,7 +71,9 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   viewDate,
   companyName,
   licenseId,
-  expenseTypeOptions
+  expenseTypeOptions,
+  canExportReports = true,
+  dashboardBalance
 }) => {
   const isMobile = useIsMobile();
   const isCompactHeight = useIsCompactHeight();
@@ -77,7 +87,10 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   const [isRangeModalOpen, setIsRangeModalOpen] = useState(false);
   const [reportAccounts, setReportAccounts] = useState<Account[]>([]);
   const [reportYields, setReportYields] = useState<YieldRecord[]>([]);
+  const [mapFullscreenRequestId, setMapFullscreenRequestId] = useState(0);
+  const [isMapFullscreenActive, setIsMapFullscreenActive] = useState(false);
   const summaryContainerRef = useRef<HTMLDivElement | null>(null);
+  const tabRef = useRef<ReportTab>('map');
   const [isSummaryFullscreen, setIsSummaryFullscreen] = useState(false);
   const [supportsSummaryFullscreen, setSupportsSummaryFullscreen] = useState(false);
   const subHeaderRef = useRef<HTMLDivElement | null>(null);
@@ -107,6 +120,8 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     periodMode === 'custom'
       ? `${selectedStart.toLocaleDateString('pt-BR')} até ${selectedEnd.toLocaleDateString('pt-BR')}`
       : buildMonthLabel(currentMonth);
+  const desktopStartDateValue = useMemo(() => formatDateInputValue(selectedStart), [selectedStart]);
+  const desktopEndDateValue = useMemo(() => formatDateInputValue(selectedEnd), [selectedEnd]);
 
   const context: ReportContext = useMemo(
     () => ({
@@ -164,6 +179,53 @@ const ReportsView: React.FC<ReportsViewProps> = ({
         filters
       ),
     [licenseId, selectedStart, selectedEnd, context, filters]
+  );
+
+  const previousPeriod = useMemo(() => {
+    if (periodMode === 'custom' && customRange.start && customRange.end) {
+      const currentDurationMs = Math.max(selectedEnd.getTime() - selectedStart.getTime(), 0);
+      const previousEnd = new Date(selectedStart.getTime() - 1000);
+      const previousStart = new Date(previousEnd.getTime() - currentDurationMs);
+      return {
+        start: previousStart,
+        end: previousEnd,
+        label: `${previousStart.toLocaleDateString('pt-BR')} até ${previousEnd.toLocaleDateString('pt-BR')}`
+      };
+    }
+
+    const monthStart = new Date(selectedStart.getFullYear(), selectedStart.getMonth() - 1, 1);
+    const monthEnd = new Date(
+      selectedStart.getFullYear(),
+      selectedStart.getMonth(),
+      0,
+      23,
+      59,
+      59
+    );
+
+    return {
+      start: monthStart,
+      end: monthEnd,
+      label: buildMonthLabel(monthStart)
+    };
+  }, [
+    customRange.end,
+    customRange.start,
+    periodMode,
+    selectedEnd,
+    selectedStart
+  ]);
+
+  const previousSummary = useMemo(
+    () =>
+      getReportSummary(
+        licenseId || 'local',
+        previousPeriod.start,
+        previousPeriod.end,
+        context,
+        filters
+      ),
+    [context, filters, licenseId, previousPeriod.end, previousPeriod.start]
   );
 
   const transactions = useMemo(
@@ -256,13 +318,39 @@ const ReportsView: React.FC<ReportsViewProps> = ({
 
   const headerSummary = useMemo(() => {
     const totalComprometido = summary.totalDespesas;
-    const totalDisponivel = summary.totalReceitas - summary.totalDespesas;
+    const carryover = periodMode === 'month' ? previousSummary.resultado : 0;
+    const shouldMirrorDashboardBalance =
+      periodMode === 'month' &&
+      taxFilter === 'all' &&
+      viewMode === 'caixa' &&
+      Number.isFinite(dashboardBalance);
+    const totalDisponivel = shouldMirrorDashboardBalance
+      ? Number(dashboardBalance)
+      : summary.totalReceitas - summary.totalDespesas + carryover;
     return {
       totalReceitas: summary.totalReceitas,
       totalComprometido,
       totalDisponivel
     };
-  }, [summary.totalDespesas, summary.totalReceitas]);
+  }, [
+    dashboardBalance,
+    periodMode,
+    previousSummary.resultado,
+    summary.totalDespesas,
+    summary.totalReceitas,
+    taxFilter,
+    viewMode
+  ]);
+
+  const financialMapIncomeTotal = useMemo(() => {
+    const shouldMirrorDashboardBalance =
+      periodMode === 'month' &&
+      taxFilter === 'all' &&
+      viewMode === 'caixa' &&
+      Number.isFinite(dashboardBalance);
+    if (!shouldMirrorDashboardBalance) return undefined;
+    return Math.max(Number(dashboardBalance), 0);
+  }, [dashboardBalance, periodMode, taxFilter, viewMode]);
 
   const expenseTypeColors = useMemo(() => {
     const defaults = {
@@ -320,12 +408,75 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     }
   };
 
+  const closeExportPanel = () => {
+    if (tab !== 'export') return false;
+    tabRef.current = 'map';
+    setTab('map');
+    return true;
+  };
+
+  const handleExportToggle = () => {
+    setTab(prev => {
+      const next = prev === 'export' ? 'map' : 'export';
+      tabRef.current = next;
+      return next;
+    });
+  };
+
+  const handleTaxFilterChange = (option: TaxFilter) => {
+    setTaxFilter(option);
+    closeExportPanel();
+  };
+
+  const handleViewModeChange = (option: ViewMode) => {
+    setViewMode(option);
+    closeExportPanel();
+  };
+
+  const applyInlineCustomRange = (start: string, end: string) => {
+    if (!start || !end) return;
+    setCustomRange({ start, end });
+    setPeriodMode('custom');
+    closeExportPanel();
+  };
+
+  const handleDesktopStartDateChange = (value: string) => {
+    if (!value) {
+      handleResetCustomRange();
+      closeExportPanel();
+      return;
+    }
+    const nextEnd = value > desktopEndDateValue ? value : desktopEndDateValue;
+    applyInlineCustomRange(value, nextEnd);
+  };
+
+  const handleDesktopEndDateChange = (value: string) => {
+    if (!value) {
+      handleResetCustomRange();
+      closeExportPanel();
+      return;
+    }
+    const nextStart = value < desktopStartDateValue ? value : desktopStartDateValue;
+    applyInlineCustomRange(nextStart, value);
+  };
+
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+
   useEffect(() => {
     if (!isMobile) return;
     if (tab !== 'summary') {
       setTab('summary');
     }
   }, [isMobile, tab]);
+
+  useEffect(() => {
+    if (canExportReports) return;
+    if (tab !== 'export') return;
+    tabRef.current = 'map';
+    setTab('map');
+  }, [canExportReports, tab]);
 
   useEffect(() => {
     const shouldLock = false;
@@ -423,25 +574,43 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
       if (isRangeModalOpen) {
         setIsRangeModalOpen(false);
         return;
       }
+      if (tabRef.current === 'export') {
+        tabRef.current = 'map';
+        setTab('map');
+        return;
+      }
       onBack();
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [isRangeModalOpen, onBack]);
 
   useEffect(() => {
-    if (!isMobile || typeof window === 'undefined') return;
+    if (typeof window === 'undefined') return;
     const handleDockClick = () => {
       setIsRangeModalOpen(false);
       setIsSummaryFullscreen(false);
     };
+    window.addEventListener('mm:dock-click', handleDockClick);
     window.addEventListener('mm:mobile-dock-click', handleDockClick);
-    return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
-  }, [isMobile]);
+    return () => {
+      window.removeEventListener('mm:dock-click', handleDockClick);
+      window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (tab !== 'map') {
+      setIsMapFullscreenActive(false);
+    }
+  }, [tab]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -469,22 +638,26 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     };
   }, [isMobile]);
 
-  const desktopControlBase = 'mm-btn-chip shrink-0 whitespace-nowrap';
-  const desktopControlActive = 'mm-btn-chip-active-neutral';
-  const desktopControlInactive = '';
-  const getDesktopControlClass = (active: boolean) =>
-    `${desktopControlBase} ${active ? desktopControlActive : desktopControlInactive}`;
   const desktopHeaderControlButtonBase =
-    'mm-btn-chip h-7 px-3 justify-center text-[11px] shrink-0 whitespace-nowrap';
+    'mm-btn-base w-[136px] justify-center shrink-0 whitespace-nowrap rounded-xl';
+  const desktopHeaderControlInactive = 'mm-btn-secondary';
+  const desktopHeaderControlActive =
+    'mm-btn-primary mm-btn-primary-indigo text-white border-indigo-300/60 ring-2 ring-indigo-300/75 dark:ring-indigo-400/70 shadow-[0_16px_30px_rgba(79,70,229,0.45)]';
   const getDesktopHeaderControlClass = (active: boolean) =>
-    `${desktopHeaderControlButtonBase} ${active ? desktopControlActive : desktopControlInactive}`;
+    `${desktopHeaderControlButtonBase} ${active ? desktopHeaderControlActive : desktopHeaderControlInactive}`;
+  const desktopViewSwitchButtonBase =
+    'mm-btn-base w-[136px] justify-center shrink-0 whitespace-nowrap rounded-xl';
+  const desktopViewSwitchInactive = desktopHeaderControlInactive;
+  const desktopViewSwitchActive = desktopHeaderControlActive;
+  const getDesktopViewSwitchClass = (active: boolean) =>
+    `${desktopViewSwitchButtonBase} ${active ? desktopViewSwitchActive : desktopViewSwitchInactive}`;
 
   const periodControlsMobile = (
-    <div className="rounded-none border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
+    <div className="mm-subheader-control-card">
       <div className="flex items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-300">
         <button
           onClick={() => handleMonthChange(-1)}
-          className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+          className="mm-subheader-control-icon-btn"
           aria-label="Mês anterior"
         >
           <ChevronLeft size={14} className="mx-auto" />
@@ -494,7 +667,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
         <button
           onClick={() => handleMonthChange(1)}
-          className="h-7 w-7 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+          className="mm-subheader-control-icon-btn"
           aria-label="Próximo mês"
         >
           <ChevronRight size={14} className="mx-auto" />
@@ -502,7 +675,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       </div>
       <button
         onClick={handleOpenCustomRange}
-        className="mt-2 w-full rounded-none border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-[#151517] py-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+        className="mt-2 w-full mm-btn-base mm-btn-secondary mm-mobile-primary-cta text-xs"
       >
         Personalizar
       </button>
@@ -512,43 +685,43 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   const summaryCards = (
     <div className={isMobile ? 'space-y-2' : 'space-y-3'}>
       <div className={isMobile ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-1 md:grid-cols-3 gap-3'}>
-        <div className={`${isMobile ? 'rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-xl mm-subheader-metric-card mm-mobile-header-card' : 'mm-subheader-metric-card'}`}>
           <div
-            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[10px]' : 'text-[10px]'}`}
+            className="mm-subheader-metric-label"
             style={{ color: incomeAccent }}
           >
-            Receita total
+            Receita do período
           </div>
           <div
-            className={`${isMobile ? 'text-[11px]' : 'text-lg'} font-semibold mt-1`}
+            className="mm-subheader-metric-value"
             style={{ color: incomeAccent }}
           >
             {formatCurrency(headerSummary.totalReceitas)}
           </div>
         </div>
-        <div className={`${isMobile ? 'rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-xl mm-subheader-metric-card mm-mobile-header-card' : 'mm-subheader-metric-card'}`}>
           <div
-            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[10px]' : 'text-[10px]'}`}
+            className="mm-subheader-metric-label"
             style={{ color: expenseAccent }}
           >
-            Total gasto
+            Despesas do período
           </div>
           <div
-            className={`${isMobile ? 'text-[11px]' : 'text-lg'} font-semibold mt-1`}
+            className="mm-subheader-metric-value"
             style={{ color: expenseAccent }}
           >
             {formatCurrency(headerSummary.totalComprometido)}
           </div>
         </div>
-        <div className={`${isMobile ? 'rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-2xl px-4 py-3'}`}>
+        <div className={`${isMobile ? 'rounded-xl mm-subheader-metric-card mm-mobile-header-card' : 'mm-subheader-metric-card'}`}>
           <div
-            className={`uppercase tracking-[0.25em] ${isMobile ? 'text-[10px]' : 'text-[10px]'}`}
+            className="mm-subheader-metric-label"
             style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
           >
-            Total disponível
+            Saldo atual disponível
           </div>
           <div
-            className={`${isMobile ? 'text-[11px]' : 'text-lg'} font-semibold mt-1`}
+            className="mm-subheader-metric-value"
             style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
           >
             {formatCurrency(headerSummary.totalDisponivel)}
@@ -623,31 +796,31 @@ const ReportsView: React.FC<ReportsViewProps> = ({
 
   const desktopSummaryCards = (
     <div className="grid grid-cols-3 gap-2">
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-1.5">
-        <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: incomeAccent }}>
-          Receita total
+      <div className="mm-subheader-metric-card">
+        <div className="mm-subheader-metric-label" style={{ color: incomeAccent }}>
+          Receita do período
         </div>
-        <div className="text-[13px] font-semibold mt-0.5" style={{ color: incomeAccent }}>
+        <div className="mm-subheader-metric-value" style={{ color: incomeAccent }}>
           {formatCurrency(headerSummary.totalReceitas)}
         </div>
       </div>
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-1.5">
-        <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: expenseAccent }}>
-          Total gasto
+      <div className="mm-subheader-metric-card">
+        <div className="mm-subheader-metric-label" style={{ color: expenseAccent }}>
+          Despesas do período
         </div>
-        <div className="text-[13px] font-semibold mt-0.5" style={{ color: expenseAccent }}>
+        <div className="mm-subheader-metric-value" style={{ color: expenseAccent }}>
           {formatCurrency(headerSummary.totalComprometido)}
         </div>
       </div>
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-1.5">
+      <div className="mm-subheader-metric-card">
         <div
-          className="text-[9px] uppercase tracking-[0.25em]"
+          className="mm-subheader-metric-label"
           style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
         >
-          Total disponível
+          Saldo atual disponível
         </div>
         <div
-          className="text-[13px] font-semibold mt-0.5"
+          className="mm-subheader-metric-value"
           style={{ color: headerSummary.totalDisponivel >= 0 ? incomeAccent : expenseAccent }}
         >
           {formatCurrency(headerSummary.totalDisponivel)}
@@ -657,32 +830,39 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   );
 
   const desktopHeaderControls = !isMobile ? (
-    <div className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/80 dark:bg-[#101014]/80 px-3 py-1.5">
-      <div className="grid grid-cols-2 gap-2 items-center">
-        <div className="min-w-0 flex items-center justify-start gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <span className="shrink-0 text-[10px] uppercase tracking-[0.22em] text-zinc-500 dark:text-slate-400">
-            Filtros
-          </span>
-          {(['all', 'PJ', 'PF'] as TaxFilter[]).map(option => (
-            <button
-              key={option}
-              onClick={() => setTaxFilter(option)}
-              title={
-                option === 'all'
-                  ? 'Mostra lançamentos PF e PJ juntos.'
-                  : option === 'PJ'
-                    ? 'Mostra apenas lançamentos de Pessoa Jurídica (PJ).'
-                    : 'Mostra apenas lançamentos de Pessoa Física (PF).'
-              }
-              className={getDesktopHeaderControlClass(taxFilter === option)}
-            >
-              {option === 'all' ? 'Tudo' : option}
-            </button>
-          ))}
+    <div className="w-full overflow-x-auto scrollbar-hide">
+      <div className="flex w-full min-w-max items-center gap-2 pr-1">
+        {(['all', 'PJ', 'PF'] as TaxFilter[]).map(option => (
+          <button
+            key={option}
+            onClick={() => handleTaxFilterChange(option)}
+            title={
+              option === 'all'
+                ? 'Mostra lançamentos PF e PJ juntos.'
+                : option === 'PJ'
+                  ? 'Mostra apenas lançamentos de Pessoa Jurídica (PJ).'
+                  : 'Mostra apenas lançamentos de Pessoa Física (PF).'
+            }
+            className={getDesktopHeaderControlClass(taxFilter === option)}
+          >
+            {option === 'all' ? 'Tudo' : option}
+          </button>
+        ))}
+        {canExportReports && (
+          <button
+            type="button"
+            onClick={handleExportToggle}
+            title="Exportar relatórios ou importar dados para análise externa."
+            className={getDesktopHeaderControlClass(tab === 'export')}
+          >
+            Exportar
+          </button>
+        )}
+        <div className="ml-auto flex items-center gap-2">
           {(['caixa', 'competencia'] as ViewMode[]).map(option => (
             <button
               key={option}
-              onClick={() => setViewMode(option)}
+              onClick={() => handleViewModeChange(option)}
               title={
                 option === 'caixa'
                   ? 'Considera quando o dinheiro entrou/saiu (fluxo de caixa).'
@@ -694,53 +874,101 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  ) : null;
 
-        <div className="min-w-0 flex items-center justify-end gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <span className="shrink-0 text-[10px] uppercase tracking-[0.22em] text-zinc-500 dark:text-slate-400">
-            Modos
-          </span>
-          {([
-            { id: 'financial', label: 'Mapa Financeiro' },
-            { id: 'events', label: 'Mapa de Eventos' }
-          ] as { id: MapMode; label: string }[]).map(item => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => handleMapModeChange(item.id)}
-              title={
-                item.id === 'financial'
-                  ? 'Distribuição de receitas e despesas do período em um mapa.'
-                  : 'Sequência de entradas e saídas por conta/cartão no período.'
-              }
-              className={getDesktopHeaderControlClass(mapMode === item.id)}
-            >
-              {item.id === 'financial' ? 'Financeiro' : 'Eventos'}
-            </button>
-          ))}
+  const desktopViewSwitchControls = !isMobile && tab !== 'export' ? (
+    <div className="mb-3 w-full overflow-x-auto scrollbar-hide -mx-1">
+      <div className="grid w-full min-w-[1120px] grid-cols-[1fr_auto_1fr] items-center gap-2 pr-1">
+        <div className="flex items-center justify-start gap-2">
+          <button
+            type="button"
+            onClick={() => handleMapModeChange('financial')}
+            title="Distribuição de receitas e despesas do período em um mapa."
+            aria-pressed={tab === 'map' && mapMode === 'financial'}
+            className={getDesktopViewSwitchClass(tab === 'map' && mapMode === 'financial')}
+          >
+            Financeiro
+          </button>
+          <button
+            type="button"
+            onClick={() => handleMapModeChange('events')}
+            title="Sequência de entradas e saídas por conta/cartão no período."
+            aria-pressed={tab === 'map' && mapMode === 'events'}
+            className={getDesktopViewSwitchClass(tab === 'map' && mapMode === 'events')}
+          >
+            Eventos
+          </button>
           <button
             type="button"
             onClick={() => setTab('summary')}
             title="Resumo com totais, distribuição e evolução do período."
-            className={getDesktopHeaderControlClass(tab === 'summary')}
+            aria-pressed={tab === 'summary'}
+            className={getDesktopViewSwitchClass(tab === 'summary')}
           >
             Resumo
           </button>
-          <button
-            type="button"
-            onClick={() => setTab('export')}
-            title="Exportar relatórios ou importar dados para análise externa."
-            className={getDesktopHeaderControlClass(tab === 'export')}
+        </div>
+        <div className="flex items-center justify-center gap-2 px-2">
+          <div
+            className={`flex h-[42px] min-w-[220px] items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/95 px-3 shadow-[0_10px_20px_rgba(15,23,42,0.08)] dark:border-zinc-800 dark:bg-[#101014]/90 dark:shadow-[0_12px_24px_rgba(0,0,0,0.3)] ${
+              periodMode === 'custom' ? 'ring-2 ring-indigo-300/70 dark:ring-indigo-400/55' : ''
+            }`}
           >
-            Exportar
-          </button>
-          <button
-            type="button"
-            onClick={handleOpenCustomRange}
-            title="Definir um intervalo de datas personalizado."
-            className={getDesktopHeaderControlClass(periodMode === 'custom')}
+            <label
+              htmlFor="reports-desktop-start-date"
+              className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400"
+            >
+              Data inicial
+            </label>
+            <input
+              id="reports-desktop-start-date"
+              type="date"
+              value={desktopStartDateValue}
+              onChange={event => handleDesktopStartDateChange(event.target.value)}
+              className="w-full border-0 bg-transparent p-0 text-[12px] font-semibold text-zinc-700 outline-none focus:ring-0 dark:text-zinc-200"
+            />
+          </div>
+          <div
+            className={`flex h-[42px] min-w-[220px] items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/95 px-3 shadow-[0_10px_20px_rgba(15,23,42,0.08)] dark:border-zinc-800 dark:bg-[#101014]/90 dark:shadow-[0_12px_24px_rgba(0,0,0,0.3)] ${
+              periodMode === 'custom' ? 'ring-2 ring-indigo-300/70 dark:ring-indigo-400/55' : ''
+            }`}
           >
-            Personalizar
-          </button>
+            <label
+              htmlFor="reports-desktop-end-date"
+              className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400"
+            >
+              Data final
+            </label>
+            <input
+              id="reports-desktop-end-date"
+              type="date"
+              value={desktopEndDateValue}
+              onChange={event => handleDesktopEndDateChange(event.target.value)}
+              className="w-full border-0 bg-transparent p-0 text-[12px] font-semibold text-zinc-700 outline-none focus:ring-0 dark:text-zinc-200"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          {tab === 'map' && (
+            <button
+              type="button"
+              onClick={() => setMapFullscreenRequestId(prev => prev + 1)}
+              title={
+                isMapFullscreenActive
+                  ? 'Sair da tela cheia do mapa.'
+                  : 'Abrir mapa em tela cheia.'
+              }
+              aria-pressed={isMapFullscreenActive}
+              className={getDesktopViewSwitchClass(isMapFullscreenActive)}
+            >
+              <span className="inline-flex items-center gap-2">
+                {isMapFullscreenActive ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                Tela cheia
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -759,14 +987,15 @@ const ReportsView: React.FC<ReportsViewProps> = ({
               }`
         }
       >
+        {!isMobile && desktopViewSwitchControls}
         {tab === 'map' && (
-          <div className={`space-y-4 ${isMobile ? '' : 'flex-1 min-h-0 flex flex-col'}`}>
+          <div className={`space-y-4 ${isMobile ? '' : 'flex-1 min-h-0 flex flex-col -mx-1'}`}>
             {isMobile ? (
               <div className="rounded-none border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-5 text-center text-sm text-zinc-600 dark:text-slate-200">
                 Os mapas estão disponíveis apenas no computador.
               </div>
             ) : (
-              <div className="min-h-[420px] flex-1 flex flex-col" data-tour-anchor="reports-map">
+              <div className="min-h-[var(--mm-map-surface-min-height,320px)] flex-1 flex flex-col pb-[22px]" data-tour-anchor="reports-map">
                 {mapMode === 'financial' ? (
                   <FinancialMap
                     summary={summary}
@@ -775,6 +1004,13 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                     accounts={reportAccounts}
                     creditCards={creditCards}
                     isMobile={isMobile}
+                    hideDesktopRail={true}
+                    fullscreenRequestId={mapFullscreenRequestId}
+                    onFullscreenChange={setIsMapFullscreenActive}
+                    previousCarryover={previousSummary.resultado}
+                    previousPeriodLabel={previousPeriod.label}
+                    incomeTotalOverride={financialMapIncomeTotal}
+                    currentAvailableBalance={headerSummary.totalDisponivel}
                   />
                 ) : (
                   <EventMap
@@ -782,6 +1018,9 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                     accounts={reportAccounts}
                     creditCards={creditCards}
                     isMobile={isMobile}
+                    hideDesktopRail={true}
+                    fullscreenRequestId={mapFullscreenRequestId}
+                    onFullscreenChange={setIsMapFullscreenActive}
                   />
                 )}
               </div>
@@ -818,7 +1057,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                   className={`relative flex-1 ${
                     isSummaryFullscreen
                       ? 'border border-white/10 overflow-hidden rounded-none h-full w-full box-border bg-slate-950/60'
-                      : 'min-h-[360px] overflow-visible self-stretch flex flex-col'
+                      : 'min-h-[var(--mm-summary-min-height,320px)] overflow-visible self-stretch flex flex-col'
                   }`}
                 >
                   <div className={isSummaryFullscreen ? 'h-full p-4 pb-[170px]' : 'flex flex-1 min-h-0 flex-col'}>
@@ -916,7 +1155,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
             </div>
           )
         )}
-        {tab === 'export' && (
+        {canExportReports && tab === 'export' && (
           <ExportImportPanel
             licenseId={licenseId}
             defaultStart={selectedStart}
@@ -946,8 +1185,8 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   );
 
   const desktopSummarySection = (
-    <div className="w-full px-4 sm:px-6 pt-6 relative z-10">
-      <div className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+    <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-6 relative z-10">
+      <div className="mm-subheader mm-subheader-panel w-full">
         <div className="space-y-2">
           <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
             <div className="h-8 w-8" aria-hidden="true" />
@@ -1061,7 +1300,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                     {(['all', 'PJ', 'PF'] as TaxFilter[]).map(option => (
                       <button
                         key={option}
-                        onClick={() => setTaxFilter(option)}
+                        onClick={() => handleTaxFilterChange(option)}
                         className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
                           taxFilter === option
                             ? 'bg-white text-zinc-900 shadow-sm'
@@ -1079,7 +1318,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                     {(['caixa', 'competencia'] as ViewMode[]).map(option => (
                       <button
                         key={option}
-                        onClick={() => setViewMode(option)}
+                        onClick={() => handleViewModeChange(option)}
                         className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
                           viewMode === option
                             ? 'bg-emerald-500/90 text-white'
@@ -1114,129 +1353,15 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     );
   }
 
-  const desktopReportContentHeight =
-    'max(320px, calc(var(--mm-content-available-height, 720px) - var(--mm-subheader-height, 184px) - var(--mm-content-gap, 16px)))';
-
   return (
     <div className="h-full min-h-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 flex flex-col">
       {desktopSummarySection}
       <main
         className="max-w-7xl mx-auto w-full px-4 sm:px-6 mt-[var(--mm-content-gap)] flex-1 min-h-0 flex flex-col"
-        style={{
-          height: desktopReportContentHeight,
-          minHeight: desktopReportContentHeight,
-          maxHeight: desktopReportContentHeight
-        }}
       >
         <div className="flex flex-1 min-h-0 flex-col gap-0">{reportContent}</div>
       </main>
 
-      {isRangeModalOpen && (
-        <div className="fixed inset-0 z-[1200]">
-          <button
-            type="button"
-            onClick={() => setIsRangeModalOpen(false)}
-            className="absolute inset-0 bg-black/60"
-            aria-label="Fechar personalização"
-          />
-          <div className="absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]">
-            <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold truncate">Selecionar período personalizado</p>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Ajuste o intervalo para atualizar o relatório.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsRangeModalOpen(false)}
-                className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
-                aria-label="Fechar personalização"
-              >
-                <ChevronDown size={16} />
-              </button>
-            </div>
-            <div className="pt-3 flex-1 overflow-auto space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <label className="text-[11px] uppercase tracking-[0.3em] text-zinc-500 dark:text-slate-400">Data inicial</label>
-                  <input
-                    type="date"
-                    value={customRange.start}
-                    onChange={event =>
-                      setCustomRange(prev => ({ ...prev, start: event.target.value }))
-                    }
-                    className="w-full rounded-xl bg-white/90 dark:bg-white/5 border border-zinc-200 dark:border-white/10 px-4 py-2 text-sm text-zinc-900 dark:text-white"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[11px] uppercase tracking-[0.3em] text-zinc-500 dark:text-slate-400">Data final</label>
-                  <input
-                    type="date"
-                    value={customRange.end}
-                    onChange={event =>
-                      setCustomRange(prev => ({ ...prev, end: event.target.value }))
-                    }
-                    className="w-full rounded-xl bg-white/90 dark:bg-white/5 border border-zinc-200 dark:border-white/10 px-4 py-2 text-sm text-zinc-900 dark:text-white"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-[#101014]/60 px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-[0.3em] text-zinc-500 dark:text-slate-400">Natureza</div>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {(['all', 'PJ', 'PF'] as TaxFilter[]).map(option => (
-                      <button
-                        key={option}
-                        onClick={() => setTaxFilter(option)}
-                        className={`px-2 py-1 rounded-md text-[10px] font-semibold ${
-                          taxFilter === option
-                            ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                            : 'bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-slate-200'
-                        }`}
-                      >
-                        {option === 'all' ? 'Tudo' : option}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-[#101014]/60 px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-[0.3em] text-zinc-500 dark:text-slate-400">Visão</div>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {(['caixa', 'competencia'] as ViewMode[]).map(option => (
-                      <button
-                        key={option}
-                        onClick={() => setViewMode(option)}
-                        className={`px-2 py-1 rounded-md text-[10px] font-semibold ${
-                          viewMode === option
-                            ? 'bg-emerald-500/90 text-white'
-                            : 'bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-slate-200'
-                        }`}
-                      >
-                        {option === 'caixa' ? 'Caixa' : 'Compet.'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-zinc-200/60 dark:border-zinc-800/60 pt-3">
-              <button
-                onClick={handleResetCustomRange}
-                className="rounded-lg border border-zinc-200 dark:border-zinc-800 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSaveCustomRange}
-                className="rounded-lg py-2 text-xs font-semibold text-white bg-emerald-500 hover:bg-emerald-600 transition"
-              >
-                Aplicar período
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
