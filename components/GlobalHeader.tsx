@@ -43,6 +43,7 @@ interface GlobalHeaderProps {
   canAccessSettings: boolean;
   onOpenProfile?: () => void;
   userPhotoDataUrl?: string | null;
+  userRoleLabel?: string;
   versionLabel?: string;
   entitlementBadge?: {
     label: string;
@@ -79,6 +80,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   canAccessSettings,
   onOpenProfile,
   userPhotoDataUrl,
+  userRoleLabel,
   summary,
   versionLabel,
   entitlementBadge,
@@ -113,6 +115,16 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   const bugNotificationLabel =
     normalizedBugNotificationCount > 99 ? '99+' : String(normalizedBugNotificationCount);
   const handleOpenFeedback = onOpenFeedback || onOpenSettings;
+  const handleMonthSelectorWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!Number.isFinite(event.deltaY) || Math.abs(event.deltaY) < 1) return;
+    event.preventDefault();
+    if (event.deltaY > 0) {
+      onMonthChange(1);
+      return;
+    }
+    if (!canGoBack) return;
+    onMonthChange(-1);
+  };
 
   useEffect(() => {
     const node = headerRef.current;
@@ -149,10 +161,14 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
     'h-8 w-8 md:h-9 md:w-9 inline-flex items-center justify-center backdrop-blur-md rounded-xl text-white transition-all border border-white/5';
   const headerNeutralCardClass = `${headerActionCardClass} bg-white/10 hover:bg-white/20 hover:scale-105`;
   const companyTooltip = companyName ? `Dados da empresa: ${companyName}` : 'Dados da empresa';
-  const profileTooltip = [username, versionLabel].filter(Boolean).join(' • ') || 'Perfil';
+  const profileTooltip = [username, userRoleLabel, versionLabel].filter(Boolean).join(' • ') || 'Perfil';
 
   const monthSelector = (
-    <div id="month-selector-bar" className="w-full px-4 pt-1 pb-[5px]">
+    <div
+      id="month-selector-bar"
+      className="w-full px-4 pt-1 pb-[5px]"
+      onWheel={handleMonthSelectorWheel}
+    >
       <div className="mx-auto w-full max-w-[236px] flex items-center justify-between bg-[#1a1a1a]/90 border border-white/10 p-0.5 rounded-full shadow-lg shadow-black/40">
         <button
           onClick={() => onMonthChange(-1)}
@@ -200,6 +216,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                     canAccessSettings={canAccessSettings}
                     onOpenProfile={onOpenProfile}
                     userPhotoDataUrl={userPhotoDataUrl}
+                    userRoleLabel={userRoleLabel}
                     versionLabel={versionLabel}
                     entitlementBadge={entitlementBadge}
                     renewalInfo={renewalInfo}
@@ -225,6 +242,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
              <MobileHeader
                      companyName={companyName}
                      username={username}
+                     userRoleLabel={userRoleLabel}
                      theme={theme}
                      onThemeChange={onThemeChange}
                      onOpenSettings={onOpenSettings}
@@ -329,12 +347,16 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                                 </span>
                                             )}
                                         </button>
-                                        <span
-                                            className="text-[10px] md:text-[11px] font-semibold text-white/90 truncate max-w-[95px] sm:max-w-[120px] md:max-w-[150px]"
-                                            title={profileTooltip}
-                                        >
-                                            {username || 'Usuário'}
-                                        </span>
+                                        <div className="min-w-0 max-w-[95px] sm:max-w-[120px] md:max-w-[150px]" title={profileTooltip}>
+                                            <p className="text-[10px] md:text-[11px] font-semibold text-white/90 truncate">
+                                                {username || 'Usuário'}
+                                            </p>
+                                            {userRoleLabel && (
+                                                <p className="text-[9px] md:text-[10px] text-white/65 truncate">
+                                                    {userRoleLabel}
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="flex items-center gap-2 min-w-0">
@@ -343,12 +365,16 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                                                 {getInitial(username || '?')}
                                             </span>
                                         </div>
-                                        <span
-                                            className="text-[10px] md:text-[11px] font-semibold text-white/90 truncate max-w-[95px] sm:max-w-[120px] md:max-w-[150px]"
-                                            title={profileTooltip}
-                                        >
-                                            {username || 'Usuário'}
-                                        </span>
+                                        <div className="min-w-0 max-w-[95px] sm:max-w-[120px] md:max-w-[150px]" title={profileTooltip}>
+                                            <p className="text-[10px] md:text-[11px] font-semibold text-white/90 truncate">
+                                                {username || 'Usuário'}
+                                            </p>
+                                            {userRoleLabel && (
+                                                <p className="text-[9px] md:text-[10px] text-white/65 truncate">
+                                                    {userRoleLabel}
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </div>

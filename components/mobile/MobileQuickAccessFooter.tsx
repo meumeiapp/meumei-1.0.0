@@ -17,7 +17,7 @@ interface MobileQuickAccessFooterProps {
 
 const MobileQuickAccessFooter: React.FC<MobileQuickAccessFooterProps> = ({
   items,
-  versionLabel = 'versão 1.0.0'
+  versionLabel = 'versão 1.0.1 Beta'
 }) => {
   const visibleItems = items.filter(item => item.showWhen !== false);
   const shouldUseGridLayout = visibleItems.length > 0 && visibleItems.length <= 6;
@@ -100,6 +100,7 @@ const MobileQuickAccessFooter: React.FC<MobileQuickAccessFooterProps> = ({
               onClick={(event) => {
                 (event.currentTarget as HTMLButtonElement).blur();
                 if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('mm:dock-click'));
                   window.dispatchEvent(new CustomEvent('mm:mobile-dock-click'));
                 }
                 item.onClick();

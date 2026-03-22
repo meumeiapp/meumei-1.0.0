@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Hand, Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
+import { Hand, Minus, Plus, X } from 'lucide-react';
 import type { Account, CreditCard, Expense, Income } from '../../types';
 import type { YieldRecord } from '../../services/yieldsService';
 import { useGlobalActions } from '../../contexts/GlobalActionsContext';
@@ -35,6 +35,7 @@ interface ReportNodeData {
   insight?: string;
   hasChildren?: boolean;
   expanded?: boolean;
+  reservedDetailCount?: number;
   centerDetails?: Array<{
     label: string;
     value: string;
@@ -78,6 +79,19 @@ interface FinancialMapProps {
   currentAvailableBalance?: number;
 }
 
+type NodeDetailLaunchItem = {
+  key: string;
+  title: string;
+  amount: number;
+  dateLabel: string;
+  meta: string;
+  openAction?: {
+    entity: 'expense' | 'income';
+    id: string;
+    subtype?: Expense['type'];
+  };
+};
+
 const hexToRgba = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
   if (normalized.length !== 6) return `rgba(255,255,255,${alpha})`;
@@ -91,7 +105,12 @@ const hexToRgba = (hex: string, alpha: number) => {
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
-const MIN_ZOOM = 0.35;
+const snapToDevicePixel = (value: number, devicePixelRatio: number) =>
+  Math.round(value * devicePixelRatio) / devicePixelRatio;
+
+const normalizeViewportScale = (value: number) => Number(value.toFixed(4));
+
+const MIN_ZOOM = 0.12;
 const MAX_ZOOM = 2.6;
 const PAYMENT_TAG_META: Record<PaymentTag, { label: string; className: string }> = {
   paid: {
@@ -195,13 +214,15 @@ const ReportNode = ({
       onMouseEnter={onMouseEnter}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
-      className="relative flex items-center justify-center text-center rounded-2xl border border-white/10 text-white shadow-lg backdrop-blur-sm transition-transform duration-200 overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-inherit"
+      className="relative flex items-center justify-center text-center rounded-2xl border border-white/10 text-white shadow-lg transition-transform duration-200 overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 cursor-inherit"
       style={{
         width,
         height,
         background,
         borderColor: hexToRgba(data.color, selected ? 0.7 : 0.45),
-        boxShadow: `0 16px 40px ${highlight}, 0 0 0 1px rgba(255,255,255,0.06)`
+        boxShadow: `0 16px 40px ${highlight}, 0 0 0 1px rgba(255,255,255,0.06)`,
+        WebkitFontSmoothing: 'antialiased',
+        textRendering: 'optimizeLegibility'
       }}
     >
       <div
@@ -405,6 +426,35 @@ const formatDateLabel = (dateValue?: string | null) => {
   return parsed.toLocaleDateString('pt-BR');
 };
 
+const isExpenseDetailItem = (item: unknown): item is Expense =>
+  typeof item === 'object' &&
+  item !== null &&
+  'id' in item &&
+  'description' in item &&
+  'amount' in item &&
+  'type' in item &&
+  'dueDate' in item;
+
+const isIncomeDetailItem = (item: unknown): item is Income =>
+  typeof item === 'object' &&
+  item !== null &&
+  'id' in item &&
+  'description' in item &&
+  'amount' in item &&
+  'accountId' in item &&
+  'status' in item &&
+  !('dueDate' in item);
+
+const isYieldDetailItem = (item: unknown): item is YieldRecord =>
+  typeof item === 'object' &&
+  item !== null &&
+  'id' in item &&
+  'amount' in item &&
+  'accountId' in item &&
+  'date' in item &&
+  !('status' in item) &&
+  !('dueDate' in item);
+
 const sortDetailEntries = (entries: DetailEntry[]) =>
   entries.sort((a, b) => {
     if (b.total !== a.total) return b.total - a.total;
@@ -440,8 +490,8 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [supportsNativeFullscreen, setSupportsNativeFullscreen] = useState(false);
   const [isTouchInteractionEnabled, setIsTouchInteractionEnabled] = useState(false);
-  const [showDesktopOnlyNotice, setShowDesktopOnlyNotice] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
+  const [isFooterExpanded, setIsFooterExpanded] = useState(false);
   const [hoverInfo, setHoverInfo] = useState<
     | {
         node: ReportNodeData;
@@ -467,6 +517,17 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     startCenter?: { x: number; y: number };
   } | null>(null);
   const { navigateToResult } = useGlobalActions();
+  const renderViewport = useMemo(() => {
+    const dpr =
+      typeof window !== 'undefined' && Number.isFinite(window.devicePixelRatio)
+        ? Math.max(window.devicePixelRatio, 1)
+        : 1;
+    return {
+      x: snapToDevicePixel(viewport.x, dpr),
+      y: snapToDevicePixel(viewport.y, dpr),
+      scale: normalizeViewportScale(viewport.scale)
+    };
+  }, [viewport.scale, viewport.x, viewport.y]);
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -1029,118 +1090,395 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
 
     const centerRadius = isMobile ? 196 : 252;
     const centerDimensions = getNodeDimensions(centerRadius, 'center', isMobile);
+    const levelGapMain = isMobile ? 36 : 52;
+    const levelGapSub = isMobile ? 24 : 34;
+    const levelGapDetail = isMobile ? 18 : 26;
+    const levelGaps = [0, levelGapMain, levelGapSub, levelGapDetail];
+    const siblingGap = isMobile ? 18 : 24;
 
-    const nextNodes: MapNode[] = [];
-    const nextEdges: MapEdge[] = [];
+    type LayoutTreeNode = {
+      id: string;
+      data: ReportNodeData;
+      width: number;
+      height: number;
+      children: LayoutTreeNode[];
+      localX: number;
+      absoluteX: number;
+      absoluteY: number;
+      depth: number;
+      contourLeft: number[];
+      contourRight: number[];
+    };
 
-    const mainMetrics = mainNodes.map(node => {
-      const size = baseSize;
-      const color = groupColor[node.group];
-      const totalBase =
-        node.group === 'rendimentos'
-          ? summary.totalReceitas
-          : node.group === 'income'
-            ? totalIncomeSources
-            : summary.totalDespesas;
-      const percent = totalBase > 0 ? (node.value / totalBase) * 100 : 0;
-      const dimensions = getNodeDimensions(size, 'main', isMobile);
-      return { node, size, color, percent, dimensions };
+    const createLayoutNode = (
+      id: string,
+      data: ReportNodeData,
+      dimensions: { width: number; height: number }
+    ): LayoutTreeNode => ({
+      id,
+      data,
+      width: dimensions.width,
+      height: dimensions.height,
+      children: [],
+      localX: 0,
+      absoluteX: 0,
+      absoluteY: 0,
+      depth: 0,
+      contourLeft: [],
+      contourRight: []
     });
 
-    const maxMainWidth = Math.max(...mainMetrics.map(item => item.dimensions.width), 0);
-    const gapX = isMobile ? 24 : 32;
-    const gapY = isMobile ? 20 : 28;
-    const subGapX = isMobile ? 22 : 28;
-    const subGapY = isMobile ? 14 : 18;
-    const mainOffset = centerDimensions.width / 2 + maxMainWidth / 2 + gapX;
-    const centerX = 0;
-    const leftMainX = centerX - mainOffset;
-    const rightMainX = centerX + mainOffset;
+    const layoutSubtree = (node: LayoutTreeNode) => {
+      if (node.children.length === 0) {
+        node.localX = 0;
+        node.contourLeft = [-node.width / 2];
+        node.contourRight = [node.width / 2];
+        return;
+      }
 
-    const detailGapX = isMobile ? 18 : 24;
-    const detailGapY = isMobile ? 10 : 12;
+      node.children.forEach(child => layoutSubtree(child));
 
-    const mainLayout = mainMetrics.map(metric => {
-      const categories = expandedGroups.has(metric.node.group)
-        ? groupData[metric.node.group].categories
-        : [];
-      const totalGroup = Math.max(groupData[metric.node.group].total, 1);
-      const subItems = categories.map(item => ({
-        item,
-        size: isMobile ? 84 : 96,
-        isMore: false
-      }));
-      const subMetrics = subItems.map(item => {
-        const referenceId =
-          !item.isMore && 'id' in item.item && typeof item.item.id === 'string'
-            ? item.item.id
-            : item.item.label;
-        const subKey = buildSubExpansionKey(metric.node.group, referenceId);
-        const subPaymentTag = paymentTagBySubKey.get(subKey);
-        const detailItems = expandedSubNodes.has(subKey)
-          ? detailDataBySubKey.get(subKey) || []
-          : [];
-        const detailMetrics = detailItems.map(detailItem => {
-          const detailSize = isMobile ? 74 : 82;
-          return {
-            item: detailItem,
-            size: detailSize,
-            dimensions: getNodeDimensions(detailSize, 'detail', isMobile)
-          };
+      const placedChildren: Array<{ node: LayoutTreeNode; offset: number }> = [];
+      let combinedLeft: number[] = [];
+      let combinedRight: number[] = [];
+
+      node.children.forEach(child => {
+        let offset = 0;
+        if (placedChildren.length > 0) {
+          let requiredShift = 0;
+          const overlapDepth = Math.min(combinedRight.length, child.contourLeft.length);
+          for (let depth = 0; depth < overlapDepth; depth += 1) {
+            const overlap = combinedRight[depth] + siblingGap - child.contourLeft[depth];
+            if (overlap > requiredShift) {
+              requiredShift = overlap;
+            }
+          }
+          offset = requiredShift;
+        }
+
+        placedChildren.push({ node: child, offset });
+
+        child.contourLeft.forEach((value, depth) => {
+          const shifted = value + offset;
+          if (combinedLeft[depth] === undefined) {
+            combinedLeft[depth] = shifted;
+          } else {
+            combinedLeft[depth] = Math.min(combinedLeft[depth], shifted);
+          }
         });
-        const detailColumnHeight =
-          detailMetrics.reduce((sum, detailItem) => sum + detailItem.dimensions.height, 0) +
-          detailGapY * Math.max(detailMetrics.length - 1, 0);
-        const detailMaxWidth = Math.max(
-          ...detailMetrics.map(detailItem => detailItem.dimensions.width),
-          0
-        );
-        const subDimensions = getNodeDimensions(item.size, 'sub', isMobile);
-        const rowHeight = Math.max(subDimensions.height, detailColumnHeight);
-        return {
-          ...item,
-          referenceId,
-          subKey,
-          dimensions: subDimensions,
-          detailMetrics,
-          detailColumnHeight,
-          detailMaxWidth,
-          rowHeight,
-          paymentTag: subPaymentTag
-        };
+
+        child.contourRight.forEach((value, depth) => {
+          const shifted = value + offset;
+          if (combinedRight[depth] === undefined) {
+            combinedRight[depth] = shifted;
+          } else {
+            combinedRight[depth] = Math.max(combinedRight[depth], shifted);
+          }
+        });
       });
-      const subColumnHeight =
-        subMetrics.reduce((sum, metricItem) => sum + metricItem.rowHeight, 0) +
-        subGapY * Math.max(subMetrics.length - 1, 0);
-      const maxSubWidth = Math.max(...subMetrics.map(item => item.dimensions.width), 0);
-      const baseBlockHeight = Math.max(metric.dimensions.height, subColumnHeight);
-      const blockHeight = baseBlockHeight;
-      const maxDetailWidth = Math.max(...subMetrics.map(item => item.detailMaxWidth), 0);
 
-      return {
-        ...metric,
-        categories,
-        totalGroup,
-        subMetrics,
-        subColumnHeight,
-        maxSubWidth,
-        maxDetailWidth,
-        baseBlockHeight,
-        blockHeight
+      const firstOffset = placedChildren[0]?.offset ?? 0;
+      const lastOffset = placedChildren[placedChildren.length - 1]?.offset ?? 0;
+      const branchCenter = (firstOffset + lastOffset) / 2;
+      placedChildren.forEach(({ node: child, offset }) => {
+        child.localX = offset - branchCenter;
+      });
+
+      combinedLeft = [];
+      combinedRight = [];
+      placedChildren.forEach(({ node: child }) => {
+        child.contourLeft.forEach((value, depth) => {
+          const shifted = value + child.localX;
+          if (combinedLeft[depth] === undefined) {
+            combinedLeft[depth] = shifted;
+          } else {
+            combinedLeft[depth] = Math.min(combinedLeft[depth], shifted);
+          }
+        });
+        child.contourRight.forEach((value, depth) => {
+          const shifted = value + child.localX;
+          if (combinedRight[depth] === undefined) {
+            combinedRight[depth] = shifted;
+          } else {
+            combinedRight[depth] = Math.max(combinedRight[depth], shifted);
+          }
+        });
+      });
+
+      node.localX = 0;
+      node.contourLeft = [-node.width / 2];
+      node.contourRight = [node.width / 2];
+
+      combinedLeft.forEach((value, depth) => {
+        const targetDepth = depth + 1;
+        if (node.contourLeft[targetDepth] === undefined) {
+          node.contourLeft[targetDepth] = value;
+        } else {
+          node.contourLeft[targetDepth] = Math.min(node.contourLeft[targetDepth], value);
+        }
+      });
+
+      combinedRight.forEach((value, depth) => {
+        const targetDepth = depth + 1;
+        if (node.contourRight[targetDepth] === undefined) {
+          node.contourRight[targetDepth] = value;
+        } else {
+          node.contourRight[targetDepth] = Math.max(node.contourRight[targetDepth], value);
+        }
+      });
+    };
+
+    const assignAbsoluteX = (node: LayoutTreeNode, parentX: number, depth: number) => {
+      node.depth = depth;
+      node.absoluteX = parentX + node.localX;
+      node.children.forEach(child => assignAbsoluteX(child, node.absoluteX, depth + 1));
+    };
+
+    const collectDepthHeights = (node: LayoutTreeNode, heights: number[]) => {
+      heights[node.depth] = Math.max(heights[node.depth] ?? 0, node.height);
+      node.children.forEach(child => collectDepthHeights(child, heights));
+    };
+
+    const assignAbsoluteY = (node: LayoutTreeNode, depthCenters: number[]) => {
+      node.absoluteY = depthCenters[node.depth] ?? 0;
+      node.children.forEach(child => assignAbsoluteY(child, depthCenters));
+    };
+
+    const shiftSubtreeX = (node: LayoutTreeNode, deltaX: number) => {
+      if (Math.abs(deltaX) < 0.001) return;
+      node.absoluteX += deltaX;
+      node.children.forEach(child => shiftSubtreeX(child, deltaX));
+    };
+
+    const getSubtreeBounds = (node: LayoutTreeNode): { minX: number; maxX: number } => {
+      let minX = node.absoluteX - node.width / 2;
+      let maxX = node.absoluteX + node.width / 2;
+      node.children.forEach(child => {
+        const bounds = getSubtreeBounds(child);
+        minX = Math.min(minX, bounds.minX);
+        maxX = Math.max(maxX, bounds.maxX);
+      });
+      return { minX, maxX };
+    };
+
+    const resolveMainSubtreeCollisions = (root: LayoutTreeNode) => {
+      const mainNodesOnly = root.children
+        .filter(child => child.data.kind === 'main')
+        .sort((a, b) => a.absoluteX - b.absoluteX);
+      if (mainNodesOnly.length <= 1) return;
+
+      const centerX = root.absoluteX;
+      const minimumGap = isMobile ? 36 : 64;
+      const sideClearance = isMobile ? 120 : 170;
+
+      const leftNodes = mainNodesOnly
+        .filter(node => node.absoluteX < centerX)
+        .sort((a, b) => b.absoluteX - a.absoluteX);
+      const rightNodes = mainNodesOnly
+        .filter(node => node.absoluteX > centerX)
+        .sort((a, b) => a.absoluteX - b.absoluteX);
+
+      leftNodes.forEach(node => {
+        const bounds = getSubtreeBounds(node);
+        const overflow = bounds.maxX - (centerX - sideClearance);
+        if (overflow > 0) {
+          shiftSubtreeX(node, -overflow);
+        }
+      });
+
+      rightNodes.forEach(node => {
+        const bounds = getSubtreeBounds(node);
+        const overflow = centerX + sideClearance - bounds.minX;
+        if (overflow > 0) {
+          shiftSubtreeX(node, overflow);
+        }
+      });
+
+      if (leftNodes.length > 1) {
+        let previousBounds = getSubtreeBounds(leftNodes[0]);
+        for (let index = 1; index < leftNodes.length; index += 1) {
+          const current = leftNodes[index];
+          const currentBounds = getSubtreeBounds(current);
+          const maxAllowed = previousBounds.minX - minimumGap;
+          if (currentBounds.maxX > maxAllowed) {
+            const delta = currentBounds.maxX - maxAllowed;
+            shiftSubtreeX(current, -delta);
+            previousBounds = getSubtreeBounds(current);
+          } else {
+            previousBounds = currentBounds;
+          }
+        }
+      }
+
+      if (rightNodes.length > 1) {
+        let previousBounds = getSubtreeBounds(rightNodes[0]);
+        for (let index = 1; index < rightNodes.length; index += 1) {
+          const current = rightNodes[index];
+          const currentBounds = getSubtreeBounds(current);
+          const minAllowed = previousBounds.maxX + minimumGap;
+          if (currentBounds.minX < minAllowed) {
+            const delta = minAllowed - currentBounds.minX;
+            shiftSubtreeX(current, delta);
+            previousBounds = getSubtreeBounds(current);
+          } else {
+            previousBounds = currentBounds;
+          }
+        }
+      }
+    };
+
+    const applyMainRowSpacing = (root: LayoutTreeNode) => {
+      const mainNodesOnly = root.children.filter(child => child.data.kind === 'main');
+      if (mainNodesOnly.length === 0) return;
+
+      const centerX = root.absoluteX;
+      const startOffset = isMobile ? 220 : 300;
+      const laneSpacing = isMobile ? 270 : 360;
+      const incomeOrder: NodeGroup[] = ['income', 'rendimentos'];
+      const expenseOrder: NodeGroup[] = ['fixed', 'variable', 'personal', 'taxes'];
+
+      const mainByGroup = new Map<NodeGroup, LayoutTreeNode>();
+      mainNodesOnly.forEach(node => {
+        if (node.data.group) {
+          mainByGroup.set(node.data.group, node);
+        }
+      });
+
+      incomeOrder.forEach((group, index) => {
+        const node = mainByGroup.get(group);
+        if (!node) return;
+        node.absoluteX = centerX - (startOffset + laneSpacing * index);
+      });
+
+      expenseOrder.forEach((group, index) => {
+        const node = mainByGroup.get(group);
+        if (!node) return;
+        node.absoluteX = centerX + (startOffset + laneSpacing * index);
+      });
+
+      const assigned = new Set<LayoutTreeNode>([
+        ...incomeOrder.map(group => mainByGroup.get(group)).filter(Boolean) as LayoutTreeNode[],
+        ...expenseOrder.map(group => mainByGroup.get(group)).filter(Boolean) as LayoutTreeNode[]
+      ]);
+      const remaining = mainNodesOnly.filter(node => !assigned.has(node));
+      remaining.forEach((node, index) => {
+        node.absoluteX =
+          centerX + (startOffset + laneSpacing * (expenseOrder.length + index));
+      });
+    };
+
+    const applyMainBranchTrunkLayouts = (root: LayoutTreeNode) => {
+      const firstTopGap = isMobile ? 108 : 148;
+      const branchGapY = isMobile ? 34 : 48;
+      const sideOffsetBase = isMobile ? 42 : 56;
+      const mainTrunkClear = isMobile ? 18 : 24;
+      const detailTrunkOffsetBase = isMobile ? 30 : 40;
+      const subTrunkClear = isMobile ? 16 : 22;
+      const detailStartGap = isMobile ? 68 : 92;
+      const detailGapY = isMobile ? 34 : 46;
+      const detailSideOffsetBase = isMobile ? 18 : 26;
+      const detailTrunkClear = isMobile ? 14 : 20;
+      const detailTemplate = getNodeDimensions(isMobile ? 74 : 82, 'detail', isMobile);
+      const detailSlotHeight = detailTemplate.height;
+      const getReservedBranchHeight = (subNode: LayoutTreeNode) => {
+        const reservedDetailCount = Math.max(
+          subNode.data.reservedDetailCount ?? subNode.children.length,
+          subNode.children.length
+        );
+        const reservedDetailsHeight =
+          reservedDetailCount > 0
+            ? detailStartGap +
+              reservedDetailCount * detailSlotHeight +
+              Math.max(reservedDetailCount - 1, 0) * detailGapY
+            : 0;
+        return Math.max(
+          subNode.height,
+          subNode.height + reservedDetailsHeight
+        );
       };
-    });
 
-    const receivableGroups = new Set<NodeGroup>(['income', 'rendimentos']);
-    const leftLayout = mainLayout.filter(metric => receivableGroups.has(metric.node.group));
-    const rightLayout = mainLayout.filter(metric => !receivableGroups.has(metric.node.group));
-    const computeColumnHeight = (columnLayout: typeof mainLayout) =>
-      columnLayout.reduce((sum, metric) => sum + metric.blockHeight, 0) +
-      gapY * Math.max(columnLayout.length - 1, 0);
+      root.children.forEach(mainNode => {
+        if (mainNode.data.kind !== 'main' || mainNode.children.length === 0) return;
+        const trunkX = mainNode.absoluteX;
+        let nextTopLeft = mainNode.absoluteY + mainNode.height / 2 + firstTopGap;
+        let nextTopRight = nextTopLeft;
 
-    nextNodes.push({
-      id: 'center',
-      position: { x: centerX, y: 0 },
-      data: {
+        mainNode.children.forEach((subNode, index) => {
+          const reserveHeight = getReservedBranchHeight(subNode);
+          const imbalance = Math.abs(nextTopLeft - nextTopRight);
+          const shouldAlternate = imbalance <= branchGapY * 0.7;
+          const preferredSide = index % 2 === 0 ? -1 : 1;
+          const side =
+            shouldAlternate
+              ? preferredSide
+              : nextTopLeft <= nextTopRight
+                ? -1
+                : 1;
+
+          const laneTop = side < 0 ? nextTopLeft : nextTopRight;
+          const subCenterOffset = Math.max(sideOffsetBase, subNode.width / 2 + mainTrunkClear);
+          const subCenterY = laneTop + subNode.height / 2;
+
+          subNode.absoluteX = trunkX + side * subCenterOffset;
+          subNode.absoluteY = subCenterY;
+
+          if (side < 0) {
+            nextTopLeft = laneTop + reserveHeight + branchGapY;
+          } else {
+            nextTopRight = laneTop + reserveHeight + branchGapY;
+          }
+
+          if (subNode.children.length === 0) return;
+
+          const detailTrunkOffset = Math.max(
+            detailTrunkOffsetBase,
+            subNode.width / 2 + subTrunkClear
+          );
+          const detailTrunkX = subNode.absoluteX + side * detailTrunkOffset;
+          const detailTopStart = subNode.absoluteY + subNode.height / 2 + detailStartGap;
+          subNode.children.forEach((detailNode, detailIndex) => {
+            const branchSide = detailIndex % 2 === 0 ? -1 : 1;
+            const detailCenterY =
+              detailTopStart +
+              detailIndex * (detailSlotHeight + detailGapY) +
+              detailNode.height / 2;
+            const detailCenterOffset = Math.max(
+              detailSideOffsetBase,
+              detailNode.width / 2 + detailTrunkClear
+            );
+            detailNode.absoluteX = detailTrunkX + branchSide * detailCenterOffset;
+            detailNode.absoluteY = detailCenterY;
+          });
+        });
+      });
+    };
+
+    const flattenTree = (
+      node: LayoutTreeNode,
+      parentId: string | null,
+      nextNodes: MapNode[],
+      nextEdges: MapEdge[]
+    ) => {
+      nextNodes.push({
+        id: node.id,
+        position: { x: node.absoluteX, y: node.absoluteY },
+        data: node.data
+      });
+
+      if (parentId) {
+        nextEdges.push({
+          id: `edge-${parentId}-${node.id}`,
+          source: parentId,
+          target: node.id
+        });
+      }
+
+      node.children.forEach(child => flattenTree(child, node.id, nextNodes, nextEdges));
+    };
+
+    const centerNode = createLayoutNode(
+      'center',
+      {
         label: 'Comprometimento da base',
         value: summary.totalDespesas,
         percent: commitmentPercent,
@@ -1166,97 +1504,63 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
         size: centerRadius,
         color: commitmentColor,
         background: hexToRgba(commitmentColor, 0.22)
-      }
+      },
+      centerDimensions
+    );
+
+    const mainMetrics = mainNodes.map(node => {
+      const size = baseSize;
+      const color = groupColor[node.group];
+      const totalBase =
+        node.group === 'rendimentos'
+          ? summary.totalReceitas
+          : node.group === 'income'
+            ? totalIncomeSources
+            : summary.totalDespesas;
+      const percent = totalBase > 0 ? (node.value / totalBase) * 100 : 0;
+      const dimensions = getNodeDimensions(size, 'main', isMobile);
+      return { node, size, color, percent, dimensions };
     });
 
-    const renderColumn = (
-      columnLayout: typeof mainLayout,
-      direction: 'left' | 'right',
-      mainX: number
-    ) => {
-      if (!columnLayout.length) return;
-      const columnHeight = computeColumnHeight(columnLayout);
-      let cursorY = -columnHeight / 2;
-
-      columnLayout.forEach((metric, index) => {
-        const {
-          node,
+    mainMetrics.forEach((metric, mainIndex) => {
+      const { node, size, color, percent, dimensions } = metric;
+      const mainNode = createLayoutNode(
+        node.id,
+        {
+          label: node.label,
+          value: node.value,
+          percent,
+          kind: 'main',
+          group: node.group,
+          tagLabel: expenseCardTagByGroup[node.group],
           size,
           color,
-          percent,
-          subMetrics,
-          subColumnHeight,
-          maxSubWidth,
-          maxDetailWidth,
-          baseBlockHeight,
-          blockHeight,
-          totalGroup
-        } = metric;
-        const blockTop = cursorY;
-        const blockCenterY = blockTop + blockHeight / 2;
-        const pos = {
-          x: mainX,
-          y: blockCenterY
-        };
-        cursorY += blockHeight + (index < columnLayout.length - 1 ? gapY : 0);
+          background: hexToRgba(color, 0.2)
+        },
+        dimensions
+      );
 
-        nextNodes.push({
-          id: node.id,
-          position: pos,
-          data: {
-            label: node.label,
-            value: node.value,
-            percent,
-            kind: 'main',
-            group: node.group,
-            tagLabel: expenseCardTagByGroup[node.group],
-            size,
-            color,
-            background: hexToRgba(color, 0.2)
-          }
-        });
+      if (expandedGroups.has(node.group)) {
+        const categories = groupData[node.group].categories;
+        const totalGroup = Math.max(groupData[node.group].total, 1);
 
-        nextEdges.push({
-          id: `edge-center-${node.id}`,
-          source: 'center',
-          target: node.id
-        });
-
-        if (!expandedGroups.has(node.group)) return;
-        if (subMetrics.length === 0) return;
-
-        const offsetToSub = maxMainWidth / 2 + maxSubWidth / 2 + subGapX;
-        const subX = direction === 'right' ? mainX + offsetToSub : mainX - offsetToSub;
-        const offsetToDetail = maxSubWidth / 2 + maxDetailWidth / 2 + detailGapX;
-        const detailX = direction === 'right' ? subX + offsetToDetail : subX - offsetToDetail;
-        const subTop = blockTop + (baseBlockHeight - subColumnHeight) / 2;
-        let subCursor = subTop;
-
-        subMetrics.forEach((metricItem, idx) => {
-          const {
-            item,
-            size: subSize,
-            isMore,
-            rowHeight,
-            paymentTag: subPaymentTag,
-            subKey,
-            referenceId,
-            detailMetrics,
-            detailColumnHeight
-          } = metricItem;
-          const subPos = {
-            x: subX,
-            y: subCursor + rowHeight / 2
-          };
-          subCursor += rowHeight + (idx < subMetrics.length - 1 ? subGapY : 0);
-
+        categories.forEach((item, subIndex) => {
+          const isMore = false;
+          const subSize = isMobile ? 84 : 96;
+          const referenceId =
+            !isMore && 'id' in item && typeof item.id === 'string' ? item.id : item.label;
+          const subKey = buildSubExpansionKey(node.group, referenceId);
+          const subPaymentTag = paymentTagBySubKey.get(subKey);
+          const availableDetailItems = detailDataBySubKey.get(subKey) || [];
+          const expandedSub = expandedSubNodes.has(subKey);
+          const detailItems = expandedSub ? availableDetailItems : [];
           const percentOfGroup = isMore ? 0 : (item.total / totalGroup) * 100;
-          const subId = `${node.id}-sub-${idx}`;
+          const subId = `${node.id}-sub-${mainIndex}-${subIndex}`;
+          const subDimensions = getNodeDimensions(subSize, 'sub', isMobile);
 
-          nextNodes.push({
-            id: subId,
-            position: subPos,
-            data: {
+          const subNode = createLayoutNode(
+            subId,
+            {
               label: 'label' in item ? item.label : 'Categoria',
               value: item.total,
               percent: percentOfGroup,
@@ -1265,8 +1569,9 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
               category: !isMore && 'label' in item ? item.label : undefined,
               referenceId,
               isMore,
-              hasChildren: detailMetrics.length > 0,
-              expanded: detailMetrics.length > 0 && expandedSubNodes.has(subKey),
+              hasChildren: availableDetailItems.length > 0,
+              expanded: expandedSub && availableDetailItems.length > 0,
+              reservedDetailCount: detailItems.length,
               paymentTag: subPaymentTag,
               tagLabel:
                 !isMore && node.group === 'income'
@@ -1275,61 +1580,67 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
               size: subSize,
               color,
               background: hexToRgba(color, isMore ? 0.08 : 0.12)
-            }
-          });
+            },
+            subDimensions
+          );
 
-          nextEdges.push({
-            id: `edge-${node.id}-${subId}`,
-            source: node.id,
-            target: subId
-          });
+          detailItems.forEach((detailItem, detailIndex) => {
+            const detailSize = isMobile ? 74 : 82;
+            const detailDimensions = getNodeDimensions(detailSize, 'detail', isMobile);
+            const detailPercent = item.total > 0 ? (detailItem.total / item.total) * 100 : 0;
+            const detailId = `${subId}-detail-${detailIndex}`;
 
-          if (!detailMetrics.length) return;
-
-          let detailCursor = subPos.y - detailColumnHeight / 2;
-          detailMetrics.forEach((detailMetric, detailIdx) => {
-            const detailPos = {
-              x: detailX,
-              y: detailCursor + detailMetric.dimensions.height / 2
-            };
-            detailCursor +=
-              detailMetric.dimensions.height + (detailIdx < detailMetrics.length - 1 ? detailGapY : 0);
-
-            const detailPercent = item.total > 0 ? (detailMetric.item.total / item.total) * 100 : 0;
-            const detailId = `${subId}-detail-${detailIdx}`;
-
-            nextNodes.push({
-              id: detailId,
-              position: detailPos,
-              data: {
-                label: detailMetric.item.label,
-                value: detailMetric.item.total,
+            const detailNode = createLayoutNode(
+              detailId,
+              {
+                label: detailItem.label,
+                value: detailItem.total,
                 percent: detailPercent,
                 kind: 'detail',
                 group: node.group,
-                category: detailMetric.item.label,
-                referenceId: detailMetric.item.id,
+                category: detailItem.label,
+                referenceId: detailItem.id,
                 parentReferenceId: referenceId,
-                tagLabel: detailMetric.item.tagLabel,
-                paymentTag: detailMetric.item.paymentTag,
-                size: detailMetric.size,
+                tagLabel: detailItem.tagLabel,
+                paymentTag: detailItem.paymentTag,
+                size: detailSize,
                 color,
                 background: hexToRgba(color, 0.08)
-              }
-            });
+              },
+              detailDimensions
+            );
 
-            nextEdges.push({
-              id: `edge-${subId}-${detailId}`,
-              source: subId,
-              target: detailId
-            });
+            subNode.children.push(detailNode);
           });
-        });
-      });
-    };
 
-    renderColumn(leftLayout, 'left', leftMainX);
-    renderColumn(rightLayout, 'right', rightMainX);
+          mainNode.children.push(subNode);
+        });
+      }
+
+      centerNode.children.push(mainNode);
+    });
+
+    layoutSubtree(centerNode);
+    assignAbsoluteX(centerNode, 0, 0);
+
+    const depthHeights: number[] = [];
+    collectDepthHeights(centerNode, depthHeights);
+    const depthCenters: number[] = [0];
+    for (let depth = 1; depth < depthHeights.length; depth += 1) {
+      const gap = levelGaps[Math.min(depth, levelGaps.length - 1)] ?? levelGapDetail;
+      const previousHeight = depthHeights[depth - 1] ?? 0;
+      const currentHeight = depthHeights[depth] ?? 0;
+      depthCenters[depth] =
+        (depthCenters[depth - 1] ?? 0) + previousHeight / 2 + gap + currentHeight / 2;
+    }
+    assignAbsoluteY(centerNode, depthCenters);
+    applyMainRowSpacing(centerNode);
+    applyMainBranchTrunkLayouts(centerNode);
+    resolveMainSubtreeCollisions(centerNode);
+
+    const nextNodes: MapNode[] = [];
+    const nextEdges: MapEdge[] = [];
+    flattenTree(centerNode, null, nextNodes, nextEdges);
 
     return { nodes: nextNodes, edges: nextEdges };
   }, [
@@ -1571,44 +1882,33 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   };
 
   const handleFullscreenClick = () => {
-    if (isMobile) {
-      setShowDesktopOnlyNotice(true);
-      window.setTimeout(() => setShowDesktopOnlyNotice(false), 2000);
-      return;
-    }
+    if (isMobile) return;
     void toggleFullscreen();
   };
 
   const mapControls = (
     <>
-      <button
-        type="button"
-        onClick={handleFullscreenClick}
-        className={`h-9 w-9 rounded-full border border-white/10 text-white transition ${
-          isMobile ? 'bg-white/5 text-white/60' : 'bg-white/10 hover:bg-white/20'
-        }`}
-        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
-        title={
-          isFullscreen
-            ? 'Sair da tela cheia e voltar ao layout normal.'
-            : 'Abrir em tela cheia para visualizar o mapa melhor.'
-        }
-      >
-        {isFullscreen ? (
-          <Minimize2 size={16} className="mx-auto" />
-        ) : (
-          <Maximize2 size={16} className="mx-auto" />
-        )}
-      </button>
-      {isMobile && (
-        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-white/70">
-          Tela cheia só no computador
-        </div>
-      )}
-      {isMobile && showDesktopOnlyNotice && (
-        <div className="rounded-xl border border-white/10 bg-slate-900/95 px-3 py-2 text-[11px] text-white shadow-lg">
-          Tela cheia disponível apenas no computador.
-        </div>
+      {!isMobile && (
+        <>
+          <button
+            type="button"
+            onClick={() => handleZoom('out')}
+            className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+            aria-label="Diminuir zoom"
+            title="Reduz o zoom para ver mais do mapa."
+          >
+            <Minus size={16} className="mx-auto" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleZoom('in')}
+            className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+            aria-label="Aumentar zoom"
+            title="Aumenta o zoom para ver detalhes dos nodes."
+          >
+            <Plus size={16} className="mx-auto" />
+          </button>
+        </>
       )}
       {isMobile && (
         <button
@@ -1635,7 +1935,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
 
   const layout = useMemo(() => {
     if (!mapSize.width || !mapSize.height) return null;
-    const padding = isMobile ? 80 : 110;
+    const padding = isMobile ? 64 : 32;
     let minX = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY;
     let minY = Number.POSITIVE_INFINITY;
@@ -1687,16 +1987,237 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
       });
     });
 
+    const childrenBySource = new Map<string, Array<{ x: number; y: number }>>();
+    edges.forEach(edge => {
+      const target = nodeMap.get(edge.target);
+      if (!target) return;
+      const bucket = childrenBySource.get(edge.source) || [];
+      bucket.push({ x: target.x, y: target.y });
+      childrenBySource.set(edge.source, bucket);
+    });
+
+    const branchYBySource = new Map<string, number>();
+    childrenBySource.forEach((children, sourceId) => {
+      const source = nodeMap.get(sourceId);
+      if (!source) return;
+      const minChildY = Math.min(...children.map(child => child.y));
+      if (!(minChildY > source.y)) return;
+      const deltaY = minChildY - source.y;
+      const offset = clamp(
+        deltaY * 0.52,
+        isMobile ? 18 : 24,
+        isMobile ? 64 : 88
+      );
+      branchYBySource.set(sourceId, source.y + offset);
+    });
+
+    const detailTargetsBySource = new Map<string, Array<{ x: number; y: number }>>();
+    edges.forEach(edge => {
+      const source = nodeMap.get(edge.source);
+      const target = nodeMap.get(edge.target);
+      if (!source || !target) return;
+      if (
+        source.data.kind !== 'sub' ||
+        target.data.kind !== 'detail' ||
+        source.data.group !== target.data.group
+      ) {
+        return;
+      }
+      const bucket = detailTargetsBySource.get(edge.source) || [];
+      bucket.push({ x: target.x, y: target.y });
+      detailTargetsBySource.set(edge.source, bucket);
+    });
+    const detailTrunkXBySource = new Map<string, number>();
+    detailTargetsBySource.forEach((targets, sourceId) => {
+      const source = nodeMap.get(sourceId);
+      if (!source || targets.length === 0) return;
+      const averageX = targets.reduce((sum, point) => sum + point.x, 0) / targets.length;
+      const outwardSide = averageX < source.x ? -1 : 1;
+      const minimumOffset = source.width / 2 + (isMobile ? 12 : 16);
+      const minimumTrunkX = source.x + outwardSide * minimumOffset;
+      const trunkX =
+        outwardSide < 0
+          ? Math.min(averageX, minimumTrunkX)
+          : Math.max(averageX, minimumTrunkX);
+      detailTrunkXBySource.set(sourceId, trunkX);
+    });
+
+    type Side = 'left' | 'right';
+    const centerMainLaneYByTarget = new Map<string, number>();
+    const centerMainLaneYByTargetX = new Map<string, number>();
+    const centerNodeForMainLanes = nodeMap.get('center');
+    if (centerNodeForMainLanes) {
+      const mainLayouts = Array.from(nodeMap.values()).filter(item => item.data.kind === 'main');
+
+      const assignSideLanes = (
+        sideLayouts: Array<{ id: string; x: number }>,
+        side: Side
+      ) => {
+        if (sideLayouts.length === 0) return;
+        // Near main nodes stay lower; far main nodes go higher to avoid crossing.
+        const ordered = [...sideLayouts].sort((a, b) =>
+          side === 'left' ? b.x - a.x : a.x - b.x
+        );
+        const preferredLaneGap = isMobile ? 34 : 46;
+        const sideBandShift = isMobile ? 12 : 18;
+        const boundaryInset = isMobile ? 10 : 14;
+        const safeTop =
+          centerNodeForMainLanes.y - centerNodeForMainLanes.height / 2 + boundaryInset;
+        const safeBottom =
+          centerNodeForMainLanes.y + centerNodeForMainLanes.height / 2 - boundaryInset;
+        const sideCenterYRaw =
+          centerNodeForMainLanes.y + (side === 'left' ? -sideBandShift : sideBandShift);
+        const sideCenterY = clamp(sideCenterYRaw, safeTop, safeBottom);
+        const maxBandHalf = Math.max(0, Math.min(sideCenterY - safeTop, safeBottom - sideCenterY));
+        const requestedSpan = ((ordered.length - 1) * preferredLaneGap) / 2;
+        const laneSpan = Math.min(requestedSpan, maxBandHalf);
+        const laneStep = ordered.length > 1 ? (laneSpan * 2) / (ordered.length - 1) : 0;
+        const lowestLaneY = sideCenterY + laneSpan;
+
+        ordered.forEach((layoutNode, index) => {
+          const laneY =
+            ordered.length === 1
+              ? sideCenterY
+              : lowestLaneY - laneStep * index;
+          centerMainLaneYByTarget.set(layoutNode.id, laneY);
+          centerMainLaneYByTargetX.set(
+            `${side}:${Math.round(layoutNode.x * 1000)}`,
+            laneY
+          );
+        });
+      };
+
+      assignSideLanes(
+        mainLayouts.filter(item => item.x < centerNodeForMainLanes.x),
+        'left'
+      );
+      assignSideLanes(
+        mainLayouts.filter(item => item.x > centerNodeForMainLanes.x),
+        'right'
+      );
+    }
+
+    type PathPoint = { x: number; y: number };
+    const EPSILON = 0.5;
+    const pointsToPath = (points: PathPoint[]) =>
+      points
+        .map((point, index) =>
+          index === 0 ? `M ${point.x} ${point.y}` : `L ${point.x} ${point.y}`
+        )
+        .join(' ');
+
+    const getSourceBoundaryPoint = (
+      node: { x: number; y: number; width: number; height: number },
+      towards: PathPoint
+    ): PathPoint => {
+      const dx = towards.x - node.x;
+      const dy = towards.y - node.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        const y = clamp(
+          towards.y,
+          node.y - node.height / 2 + 1,
+          node.y + node.height / 2 - 1
+        );
+        return {
+          x: node.x + (dx >= 0 ? 1 : -1) * node.width / 2,
+          y
+        };
+      }
+      if (Math.abs(dy) > EPSILON) {
+        const x = clamp(
+          towards.x,
+          node.x - node.width / 2 + 1,
+          node.x + node.width / 2 - 1
+        );
+        return {
+          x,
+          y: node.y + (dy >= 0 ? 1 : -1) * node.height / 2
+        };
+      }
+      return { x: node.x, y: node.y };
+    };
+
+    const getTargetBoundaryPoint = (
+      node: { x: number; y: number; width: number; height: number },
+      from: PathPoint
+    ): PathPoint => {
+      const dx = node.x - from.x;
+      const dy = node.y - from.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        const y = clamp(
+          from.y,
+          node.y - node.height / 2 + 1,
+          node.y + node.height / 2 - 1
+        );
+        return {
+          x: node.x - (dx >= 0 ? 1 : -1) * node.width / 2,
+          y
+        };
+      }
+      if (Math.abs(dy) > EPSILON) {
+        const x = clamp(
+          from.x,
+          node.x - node.width / 2 + 1,
+          node.x + node.width / 2 - 1
+        );
+        return {
+          x,
+          y: node.y - (dy >= 0 ? 1 : -1) * node.height / 2
+        };
+      }
+      return { x: node.x, y: node.y };
+    };
+
+    const trimPolylineToNodeBorders = (
+      points: PathPoint[],
+      source: { x: number; y: number; width: number; height: number },
+      target: { x: number; y: number; width: number; height: number }
+    ): PathPoint[] => {
+      if (points.length < 2) return points;
+      const trimmed = [...points];
+      trimmed[0] = getSourceBoundaryPoint(source, trimmed[1]);
+      trimmed[trimmed.length - 1] = getTargetBoundaryPoint(target, trimmed[trimmed.length - 2]);
+
+      const compact: PathPoint[] = [];
+      trimmed.forEach(point => {
+        const previous = compact[compact.length - 1];
+        if (!previous) {
+          compact.push(point);
+          return;
+        }
+        if (Math.abs(previous.x - point.x) <= EPSILON && Math.abs(previous.y - point.y) <= EPSILON) {
+          return;
+        }
+        compact.push(point);
+      });
+
+      const simplified: PathPoint[] = [];
+      compact.forEach(point => {
+        const size = simplified.length;
+        if (size < 2) {
+          simplified.push(point);
+          return;
+        }
+        const a = simplified[size - 2];
+        const b = simplified[size - 1];
+        const sameX = Math.abs(a.x - b.x) <= EPSILON && Math.abs(b.x - point.x) <= EPSILON;
+        const sameY = Math.abs(a.y - b.y) <= EPSILON && Math.abs(b.y - point.y) <= EPSILON;
+        if (sameX || sameY) {
+          simplified[size - 1] = point;
+          return;
+        }
+        simplified.push(point);
+      });
+
+      return simplified;
+    };
+
     const edgePaths = edges
       .map(edge => {
         const source = nodeMap.get(edge.source);
         const target = nodeMap.get(edge.target);
         if (!source || !target) return null;
-        const dx = target.x - source.x;
-        const dy = target.y - source.y;
-        const curve = 0.18;
-        const cx = source.x + dx / 2 - dy * curve;
-        const cy = source.y + dy / 2 + dx * curve;
+
         const color =
           edge.source === 'center'
             ? target.data.color
@@ -1704,16 +2225,92 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
         const isActive =
           hoveredNodeId && (edge.source === hoveredNodeId || edge.target === hoveredNodeId);
 
+        const isCenterToMain =
+          edge.source === 'center' &&
+          target.data.kind === 'main';
+        const isMainToSubTrunk =
+          source.data.kind === 'main' &&
+          target.data.kind === 'sub' &&
+          source.data.group === target.data.group;
+        const isSubToDetailBranch =
+          source.data.kind === 'sub' &&
+          target.data.kind === 'detail' &&
+          source.data.group === target.data.group;
+
+        let rawPoints: PathPoint[] = [
+          { x: source.x, y: source.y },
+          { x: target.x, y: target.y }
+        ];
+        if (isCenterToMain) {
+          const side: Side = target.x < source.x ? 'left' : 'right';
+          const laneKey = `${side}:${Math.round(target.x * 1000)}`;
+          const laneY =
+            centerMainLaneYByTarget.get(edge.target) ??
+            centerMainLaneYByTargetX.get(laneKey) ??
+            source.y;
+          rawPoints = [
+            { x: source.x, y: laneY },
+            { x: target.x, y: laneY },
+            { x: target.x, y: target.y }
+          ];
+        } else if (isMainToSubTrunk) {
+          rawPoints = [
+            { x: source.x, y: source.y },
+            { x: source.x, y: target.y },
+            { x: target.x, y: target.y }
+          ];
+        } else if (isSubToDetailBranch) {
+          const detailTrunkX = detailTrunkXBySource.get(edge.source) ?? (source.x + target.x) / 2;
+          rawPoints = [
+            { x: source.x, y: source.y },
+            { x: detailTrunkX, y: source.y },
+            { x: detailTrunkX, y: target.y },
+            { x: target.x, y: target.y }
+          ];
+        } else {
+          const branchY = branchYBySource.get(edge.source);
+          if (typeof branchY === 'number' && Math.abs(target.y - source.y) > 2) {
+            rawPoints = [
+              { x: source.x, y: source.y },
+              { x: source.x, y: branchY },
+              { x: target.x, y: branchY },
+              { x: target.x, y: target.y }
+            ];
+          }
+        }
+        const path = pointsToPath(trimPolylineToNodeBorders(rawPoints, source, target));
+
+        const strokeWidth =
+          isCenterToMain
+            ? isActive
+              ? 8.8
+              : 7.4
+            : isMainToSubTrunk
+              ? isActive
+                ? 5.8
+                : 4.8
+              : isActive
+                ? 3.2
+                : 2.4;
+
         return {
           id: edge.id,
-          path: `M ${source.x} ${source.y} Q ${cx} ${cy} ${target.x} ${target.y}`,
+          path,
           color,
-          isActive
+          isActive,
+          strokeWidth
         };
       })
       .filter(
-        (edge): edge is { id: string; path: string; color: string; isActive: boolean } =>
-          edge !== null
+        (
+          edge
+        ): edge is {
+          id: string;
+          path: string;
+          color: string;
+          isActive: boolean;
+          strokeWidth: number;
+        } => edge !== null
       );
 
     return {
@@ -1735,15 +2332,17 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     if (!layout || !autoCenter) return;
     const contentWidth = Math.max(layout.content.width, 1);
     const contentHeight = Math.max(layout.content.height, 1);
-    const fitWidth = (mapSize.width - (isMobile ? 72 : 120)) / contentWidth;
-    const fitHeight = (mapSize.height - (isMobile ? 72 : 120)) / contentHeight;
+    const fitWidth = (mapSize.width - (isMobile ? 40 : 40)) / contentWidth;
+    const fitHeight = (mapSize.height - (isMobile ? 40 : 40)) / contentHeight;
     const rawScale = Number.isFinite(fitWidth) && Number.isFinite(fitHeight)
       ? Math.min(fitWidth, fitHeight)
       : 1;
+    const minAutoScale = isMobile ? 0.24 : 0.22;
+    const maxAutoScale = isMobile ? 1.1 : 1.58;
     const targetScale = clamp(
       rawScale,
-      isMobile ? 0.7 : 0.55,
-      isMobile ? 1.05 : 1.38
+      minAutoScale,
+      maxAutoScale
     );
     const next = {
       x: Math.round((mapSize.width - layout.canvas.width) / 2),
@@ -1769,6 +2368,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
         items: transactions.expenses,
         group: 'center' as const,
         editableExpense: null as Expense | null,
+        editableIncome: null as Income | null,
         taxReasons: [] as string[],
         centerBreakdown: {
           receitaPeriodo: summary.totalReceitas,
@@ -1811,6 +2411,16 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
         'dueDate' in item
     );
     const editableExpense = expenseItems.length === 1 ? expenseItems[0] : null;
+    const incomeItems = items.filter(
+      (item): item is Income =>
+        typeof item === 'object' &&
+        item !== null &&
+        'accountId' in item &&
+        'status' in item &&
+        'date' in item &&
+        !('dueDate' in item)
+    );
+    const editableIncome = incomeItems.length === 1 ? incomeItems[0] : null;
     const taxReasons =
       activeNode.group === 'taxes'
         ? expenseItems.slice(0, 4).map(item => {
@@ -1826,6 +2436,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
       items,
       group: activeNode.group,
       editableExpense,
+      editableIncome,
       taxReasons,
       centerBreakdown: null as null
     };
@@ -1842,13 +2453,105 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
     transactions.expenses
   ]);
 
-  const handleOpenExpenseFromNode = () => {
-    if (!details?.editableExpense) return;
+  const handleOpenLaunchFromNode = () => {
+    if (details?.editableExpense) {
+      navigateToResult({
+        entity: 'expense',
+        id: details.editableExpense.id,
+        subtype: details.editableExpense.type
+      });
+      return;
+    }
+    if (details?.editableIncome) {
+      navigateToResult({
+        entity: 'income',
+        id: details.editableIncome.id
+      });
+    }
+  };
+
+  const handleOpenDetailItem = (action: NonNullable<NodeDetailLaunchItem['openAction']>) => {
+    if (action.entity === 'expense') {
+      navigateToResult({
+        entity: 'expense',
+        id: action.id,
+        subtype: action.subtype
+      });
+      return;
+    }
     navigateToResult({
-      entity: 'expense',
-      id: details.editableExpense.id,
-      subtype: details.editableExpense.type
+      entity: 'income',
+      id: action.id
     });
+  };
+
+  const detailLaunchItems = useMemo<NodeDetailLaunchItem[]>(() => {
+    if (!details || details.group === 'center') return [];
+    return details.items.map((item, index) => {
+      if (isExpenseDetailItem(item)) {
+        const accountTag = item.cardId
+          ? `Cartão ${cardNameById.get(item.cardId) || 'não identificado'}`
+          : item.accountId
+            ? `Conta ${accountNameById.get(item.accountId) || 'não identificada'}`
+            : 'Sem conta';
+        const statusTag = item.status === 'paid' ? 'Pago' : 'Pendente';
+        return {
+          key: `expense:${item.id}`,
+          title: normalizeLabel(item.description, item.category || 'Despesa'),
+          amount: item.amount,
+          dateLabel: formatDateLabel(item.dueDate || item.date),
+          meta: `${normalizeLabel(item.category, 'Sem categoria')} · ${statusTag} · ${accountTag}`,
+          openAction: {
+            entity: 'expense',
+            id: item.id,
+            subtype: item.type
+          }
+        };
+      }
+      if (isIncomeDetailItem(item)) {
+        const accountTag = item.accountId
+          ? `Conta ${accountNameById.get(item.accountId) || 'não identificada'}`
+          : 'Sem conta';
+        const statusTag = item.status === 'received' ? 'Recebido' : 'Pendente';
+        return {
+          key: `income:${item.id}`,
+          title: normalizeLabel(item.description, item.category || 'Entrada'),
+          amount: item.amount,
+          dateLabel: formatDateLabel(item.competenceDate || item.date),
+          meta: `${normalizeLabel(item.category, 'Sem categoria')} · ${statusTag} · ${accountTag}`,
+          openAction: {
+            entity: 'income',
+            id: item.id
+          }
+        };
+      }
+      if (isYieldDetailItem(item)) {
+        const accountTag = item.accountId
+          ? `Conta ${accountNameById.get(item.accountId) || 'não identificada'}`
+          : 'Sem conta';
+        return {
+          key: `yield:${item.id}`,
+          title: normalizeLabel(item.notes, 'Rendimento'),
+          amount: item.amount,
+          dateLabel: formatDateLabel(item.date),
+          meta: `Rendimentos · ${accountTag}`
+        };
+      }
+      return {
+        key: `item:${index}`,
+        title: `Lançamento ${index + 1}`,
+        amount: 0,
+        dateLabel: 'Sem data',
+        meta: 'Sem detalhes'
+      };
+    });
+  }, [accountNameById, cardNameById, details]);
+
+  const handleCloseFooter = () => {
+    setIsFooterExpanded(false);
+    setActiveNode(null);
+    setHoveredNodeId(null);
+    setHoverInfo(null);
   };
 
   const renderInfoItem = (label: string, value: string, hint: string, accent?: string) => (
@@ -1946,10 +2649,49 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
         )}
         {renderInfoItem('Itens', String(details.items.length), 'Quantidade de lançamentos.')}
       </div>
-      {details.editableExpense && (
+      {detailLaunchItems.length > 0 && (
+        <div className="w-full max-w-[960px] rounded-xl border border-white/15 bg-black/20 px-3 py-3 text-left">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-200">
+            Lançamentos deste node
+          </p>
+          <div className="mt-2 max-h-[230px] space-y-1.5 overflow-y-auto pr-1">
+            {detailLaunchItems.slice(0, 24).map(item => (
+              <div
+                key={item.key}
+                className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/35 px-2.5 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[11px] font-semibold text-white">{item.title}</p>
+                  <p className="truncate text-[10px] text-slate-300">
+                    {item.meta} · {item.dateLabel}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-[11px] font-semibold text-white">{formatCurrency(item.amount)}</span>
+                  {item.openAction && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDetailItem(item.openAction)}
+                      className="rounded-full border border-indigo-300/35 bg-indigo-500/20 px-2.5 py-1 text-[10px] font-semibold text-indigo-100 hover:bg-indigo-500/30 transition"
+                    >
+                      Abrir
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {detailLaunchItems.length > 24 && (
+            <p className="mt-2 text-[10px] text-slate-400">
+              Mostrando 24 de {detailLaunchItems.length} lançamentos.
+            </p>
+          )}
+        </div>
+      )}
+      {(details.editableExpense || details.editableIncome) && (
         <button
           type="button"
-          onClick={handleOpenExpenseFromNode}
+          onClick={handleOpenLaunchFromNode}
           className="rounded-full border border-indigo-300/35 bg-indigo-500/20 px-4 py-1.5 text-[11px] font-semibold text-indigo-100 hover:bg-indigo-500/30 transition"
         >
           Abrir lançamento para corrigir
@@ -1959,44 +2701,18 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   ) : (
     <div className="text-sm text-slate-400 text-center">Clique em um node para ver detalhes.</div>
   );
+  const hasFooterDetails = Boolean(details);
 
-  const footerControls = !isMobile ? (
-    <div className="pointer-events-auto absolute right-6 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
+  const footerControls = !isMobile && activeNode ? (
+    <div className="pointer-events-auto absolute right-4 bottom-3 flex items-center rounded-full border border-white/15 bg-slate-950/70 px-2 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur">
       <button
         type="button"
-        onClick={handleFullscreenClick}
+        onClick={handleCloseFooter}
         className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
-        title={
-          isFullscreen
-            ? 'Sair da tela cheia e voltar ao layout normal.'
-            : 'Abrir em tela cheia para visualizar o mapa melhor.'
-        }
+        aria-label="Fechar detalhes do rodapé"
+        title="Fecha o painel de detalhes do rodapé."
       >
-        {isFullscreen ? (
-          <Minimize2 size={16} className="mx-auto" />
-        ) : (
-          <Maximize2 size={16} className="mx-auto" />
-        )}
-      </button>
-      <div className="h-px w-8 bg-white/10" />
-      <button
-        type="button"
-        onClick={() => handleZoom('out')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Diminuir zoom"
-        title="Reduz o zoom para ver mais do mapa."
-      >
-        <Minus size={16} className="mx-auto" />
-      </button>
-      <button
-        type="button"
-        onClick={() => handleZoom('in')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Aumentar zoom"
-        title="Aumenta o zoom para ver detalhes dos nodes."
-      >
-        <Plus size={16} className="mx-auto" />
+        <X size={16} className="mx-auto" />
       </button>
     </div>
   ) : null;
@@ -2004,19 +2720,48 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
   const mapFooter = !isMobile && (isFullscreen || Boolean(activeNode)) ? (
     <div className="absolute bottom-0 left-0 right-0 z-20">
       <div
-        className={`relative flex items-center justify-center border-t border-white/20 bg-white/5 shadow-[0_-10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl ${
-          isFullscreen ? 'rounded-t-[26px] px-10 py-6 min-h-[150px]' : 'rounded-t-2xl px-6 py-4 min-h-[112px]'
+        className={`relative border-t border-white/20 bg-white/5 shadow-[0_-10px_24px_rgba(0,0,0,0.25)] backdrop-blur-2xl ${
+          isFullscreen
+            ? isFooterExpanded && hasFooterDetails
+              ? 'rounded-t-[26px] px-10 py-6 min-h-[150px]'
+              : 'rounded-t-[26px] px-10 py-3 min-h-[78px]'
+            : isFooterExpanded && hasFooterDetails
+              ? 'rounded-t-2xl px-6 py-4 min-h-[112px]'
+              : 'rounded-t-2xl px-6 py-3 min-h-[72px]'
         }`}
         onPointerDown={event => event.stopPropagation()}
       >
-        <div className={`mx-auto w-full ${isFullscreen ? 'max-w-[1200px]' : 'max-w-[980px]'}`}>{footerContent}</div>
+        <div className={`mx-auto w-full ${isFullscreen ? 'max-w-[1200px]' : 'max-w-[980px]'}`}>
+          <div className="mx-auto w-full max-w-[860px]">
+            <div className="flex justify-center">
+              {hasFooterDetails ? (
+                <button
+                  type="button"
+                  onClick={() => setIsFooterExpanded(prev => !prev)}
+                  className="inline-flex items-center gap-3 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-200 transition hover:bg-white/15"
+                  aria-expanded={isFooterExpanded}
+                  aria-label={isFooterExpanded ? 'Recolher detalhes do node' : 'Expandir detalhes do node'}
+                >
+                  <span>Detalhes do node</span>
+                  <span className="text-slate-300/80">{isFooterExpanded ? 'Recolher' : 'Expandir'}</span>
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-white/10 text-sm leading-none">
+                    {isFooterExpanded ? '−' : '+'}
+                  </span>
+                </button>
+              ) : (
+                <div className="text-sm text-slate-400 text-center">Clique em um node para ver detalhes.</div>
+              )}
+            </div>
+            {isFooterExpanded && hasFooterDetails && <div className="mt-4">{footerContent}</div>}
+          </div>
+        </div>
         {footerControls}
       </div>
     </div>
   ) : null;
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col gap-2">
+    <div className="flex flex-1 min-h-0 flex-col gap-0">
       <div
         className={`relative ${isOverlayFullscreen ? 'fixed inset-0 z-[90] h-[100dvh] w-[100dvw]' : 'flex-1 min-h-0 flex flex-col'}`}
         style={{
@@ -2037,7 +2782,7 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
             className={`mm-map-surface relative border border-white/10 overflow-hidden flex-1 select-none ${
               isFullscreen
                 ? 'rounded-none h-full w-full box-border'
-                : 'rounded-3xl w-full flex-1 mb-[22px] min-h-[var(--mm-map-surface-min-height,320px)]'
+                : 'rounded-3xl w-full flex-1 min-h-[var(--mm-map-surface-min-height,320px)]'
             } ${isMobile ? '' : isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
             style={{
               background:
@@ -2060,9 +2805,9 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
             <div
               className="absolute inset-0"
               style={{
-                transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`,
+                transform: `translate(${renderViewport.x}px, ${renderViewport.y}px) scale(${renderViewport.scale})`,
                 transformOrigin: 'center center',
-                willChange: 'transform'
+                backfaceVisibility: 'hidden'
               }}
             >
               {layout && (
@@ -2076,15 +2821,16 @@ const FinancialMap: React.FC<FinancialMapProps> = ({
                     height={layout.canvas.height}
                     viewBox={`0 0 ${layout.canvas.width} ${layout.canvas.height}`}
                     fill="none"
-                    style={{ pointerEvents: 'none' }}
+                    style={{ pointerEvents: 'none', shapeRendering: 'geometricPrecision' }}
                   >
                     {layout.edgePaths.map(edge => (
                       <path
                         key={edge.id}
                         d={edge.path}
                         stroke={hexToRgba(edge.color, edge.isActive ? 0.9 : 0.6)}
-                        strokeWidth={edge.isActive ? 2.6 : 2}
+                        strokeWidth={edge.strokeWidth}
                         strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
                     ))}
                   </svg>

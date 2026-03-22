@@ -28,9 +28,29 @@ export const normalizeText = (value: unknown) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ');
 
-export const isTaxExpense = (expense: Expense) => {
+const TAX_RULES: Array<{ label: string; pattern: RegExp }> = [
+  { label: 'imposto', pattern: /\bimpostos?\b/ },
+  { label: 'mei', pattern: /\bmei\b/ },
+  { label: 'das mei', pattern: /\bdas(?:\s*-\s*mei|\s+mei)\b|\bguia\s+das\b/ },
+  { label: 'simples nacional', pattern: /\bsimples\s+nacional\b|\bsimei\b/ },
+  { label: 'iss', pattern: /\biss\b/ },
+  { label: 'icms', pattern: /\bicms\b/ },
+  { label: 'inss', pattern: /\binss\b/ },
+  { label: 'imposto de renda', pattern: /\bimposto de renda\b|\birrf\b|\birpj\b|\birpf\b/ },
+  { label: 'pis', pattern: /\bpis\b/ },
+  { label: 'cofins', pattern: /\bcofins\b/ },
+  { label: 'csll', pattern: /\bcsll\b/ },
+  { label: 'iptu', pattern: /\biptu\b/ },
+  { label: 'ipva', pattern: /\bipva\b/ },
+  { label: 'taxa fiscal', pattern: /\btaxa(?:s)?\s+(fiscal|tributaria|tributario|municipal|estadual|federal)\b/ }
+];
+
+export const getTaxMatchTokens = (expense: Expense) => {
   const haystack = `${expense.category || ''} ${expense.description || ''}`;
   const key = normalizeText(haystack);
-  const tokens = ['imposto', 'taxa', 'mei', 'das', 'simples', 'iss', 'icms'];
-  return tokens.some(token => key.includes(token));
+  return TAX_RULES.filter(rule => rule.pattern.test(key)).map(rule => rule.label);
+};
+
+export const isTaxExpense = (expense: Expense) => {
+  return getTaxMatchTokens(expense).length > 0;
 };

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ShoppingCart, Trash2, X, AlertTriangle, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown, Pencil, SlidersHorizontal } from 'lucide-react';
+import { ShoppingCart, Trash2, X, AlertTriangle, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, ChevronDown, Pencil, SlidersHorizontal } from 'lucide-react';
 import { withAlpha } from '../services/cardColorUtils';
 import { Expense, Account, CreditCard, ExpenseType, ExpenseTypeOption } from '../types';
 import NewExpenseModal from './NewExpenseModal';
@@ -171,7 +171,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   }, [isMobile]);
 
   useEffect(() => {
-      if (!isMobile || typeof window === 'undefined') return;
+      if (typeof window === 'undefined') return;
       const handleDockClick = () => {
           setDrawerExpense(null);
           setExpenseToDelete(null);
@@ -181,9 +181,13 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           setEditingExpense(null);
           setMobileScreen('list');
       };
+      window.addEventListener('mm:dock-click', handleDockClick);
       window.addEventListener('mm:mobile-dock-click', handleDockClick);
-      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
-  }, [isMobile]);
+      return () => {
+          window.removeEventListener('mm:dock-click', handleDockClick);
+          window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+      };
+  }, []);
 
   useEffect(() => {
       if (!expenseTypeOptions || expenseTypeOptions.length === 0) return;
@@ -374,6 +378,8 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
       (desktopStatusFilter !== 'all' ? 1 : 0) +
       (desktopSourceFilter !== 'all' ? 1 : 0) +
       (desktopCategoryFilter !== 'all' ? 1 : 0);
+  const desktopListColumns =
+      '18px minmax(180px,2fr) 8px minmax(132px,0.95fr) 8px minmax(170px,1.4fr) 8px minmax(130px,1fr) 8px minmax(150px,1.2fr) 8px minmax(100px,0.8fr) 8px 70px 8px 74px 8px minmax(120px,0.9fr)';
   const toggleDesktopSort = (key: ExpenseSortKey) => {
       setDesktopSort(prev => {
           if (!prev || prev.key !== key) return { key, direction: 'desc' };
@@ -391,7 +397,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
               className={`inline-flex w-full items-center gap-1 transition-colors hover:text-zinc-700 dark:hover:text-zinc-200 ${align === 'right' ? 'justify-end' : 'justify-start'}`}
               title={`Ordenar por ${label}`}
           >
-              <span>{label}</span>
+              <span className="whitespace-nowrap">{label}</span>
               <span className={`text-[9px] ${isActive ? 'text-rose-600 dark:text-rose-300' : 'text-zinc-500/70'}`}>
                   {indicator}
               </span>
@@ -1020,39 +1026,39 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
               {isListView && (
                   <>
                       <div className="grid grid-cols-3 gap-2">
-                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
-                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
+                          <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+                              <p className="mm-subheader-metric-label">Registros</p>
+                              <p className="mm-subheader-metric-value">{headerCount}</p>
                           </div>
-                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total</p>
-                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+                          <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+                              <p className="mm-subheader-metric-label">Total</p>
+                              <p className="mm-subheader-metric-value">
                                   R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
-                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Pago</p>
-                              <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+                              <p className="mm-subheader-metric-label">Pago</p>
+                              <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">
                                   R$ {headerPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
                       </div>
 
                       <div className={`grid ${onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
-                          {onOpenAudit && (
-                              <button
-                                  onClick={onOpenAudit}
-                                  className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-300 hover:border-rose-200 dark:hover:border-rose-700 transition"
-                                  title="Auditoria do dia"
-                              >
-                                  <History size={14} />
+                              {onOpenAudit && (
+                                  <button
+                                      onClick={onOpenAudit}
+                                      className="mm-btn-base mm-btn-secondary mm-mobile-primary-cta"
+                                      style={{ borderColor: withAlpha(expenseAccentColor, 0.55), color: expenseAccentColor }}
+                                      title="Auditoria do dia"
+                                  >
                                   Auditoria
                               </button>
                           )}
                           <button
                               onClick={handleNew}
                               data-tour-anchor={tourNewExpenseButtonAnchor}
-                              className="w-full rounded-xl mm-mobile-primary-cta text-white font-semibold py-2.5 text-sm shadow-lg hover:brightness-110 transition"
+                              className="mm-btn-base mm-btn-primary w-full mm-mobile-primary-cta"
                               style={{ backgroundColor: expenseAccentColor, boxShadow: `0 12px 24px ${withAlpha(expenseAccentColor, 0.25)}` }}
                           >
                               Nova Despesa
@@ -1448,50 +1454,49 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           </div>
 
                       <div className="grid grid-cols-3 gap-2">
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
-                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
+                          <div className="mm-subheader-metric-card">
+                              <p className="mm-subheader-metric-label">Registros</p>
+                              <p className="mm-subheader-metric-value">{headerCount}</p>
                           </div>
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total</p>
-                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+                          <div className="mm-subheader-metric-card">
+                              <p className="mm-subheader-metric-label">Total</p>
+                              <p className="mm-subheader-metric-value">
                                   R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Pago</p>
-                              <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          <div className="mm-subheader-metric-card">
+                              <p className="mm-subheader-metric-label">Pago</p>
+                              <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">
                                   R$ {headerPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-center gap-2">
+                      <div className="mm-header-actions">
               {onOpenAudit && (
                   <button
                       onClick={onOpenAudit}
-                      className="mm-btn-base mm-btn-secondary min-w-[168px] px-6"
+                      className="mm-btn-base mm-btn-secondary"
+                      style={{ borderColor: withAlpha(expenseAccentColor, 0.55), color: expenseAccentColor }}
                       title="Auditoria do dia"
                   >
-                      <History size={14} />
                       Auditoria
                   </button>
               )}
               {onUpdateExpenseTypes && (
                   <button
                       onClick={() => setIsTypeManagerOpen(true)}
-                      className="mm-btn-base mm-btn-secondary min-w-[120px] px-5"
+                      className="mm-btn-base mm-btn-secondary"
                       style={{ borderColor: expenseAccentColor, color: expenseAccentColor }}
                       title="Editar tipo de despesa"
                   >
-                      <ChevronDown size={14} />
                       Editar
                   </button>
               )}
                   <button
                       onClick={handleNew}
                       data-tour-anchor={tourNewExpenseButtonAnchor}
-                      className="mm-btn-base mm-btn-primary min-w-[220px] px-8"
+                      className="mm-btn-base mm-btn-primary"
                       style={{ backgroundColor: expenseAccentColor, boxShadow: `0 12px 24px ${withAlpha(expenseAccentColor, 0.25)}` }}
                   >
                       Nova {getSingularTitle()}
@@ -1502,11 +1507,15 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   const summarySection = (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
-          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+          <div className="mm-subheader mm-subheader-panel">
               {desktopHeader}
           </div>
       </div>
   );
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockMaxHeight =
+      'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
 
   const typeManagerModal = isTypeManagerOpen ? (
       <div className="fixed inset-0 z-[1300]">
@@ -1659,6 +1668,29 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                           minDate={minDate}
                       />
                   )}
+                  {!isMobile && editingExpense && !inlineNewOpen && (
+                      <NewExpenseModal
+                          isOpen
+                          variant="dock"
+                          onClose={closeExpenseModal}
+                          onSave={handleSaveExpense}
+                          initialData={editingExpense}
+                          accounts={accounts}
+                          creditCards={creditCards}
+                          categories={categories}
+                          userId={userId}
+                          categoryType="expenses"
+                          onAddCategory={onAddCategory}
+                          onRemoveCategory={onRemoveCategory}
+                          onResetCategories={onResetCategories}
+                          expenseType={expenseType}
+                          expenseTypeOptions={expenseTypeOptions}
+                          onUpdateExpenseTypes={onUpdateExpenseTypes}
+                          themeColor={themeColor}
+                          defaultDate={viewDate}
+                          minDate={minDate}
+                      />
+                  )}
 
                   {filteredExpenses.length > 0 ? (
                       <>
@@ -1729,7 +1761,10 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               </div>
 
                               {!isMobile && (
-                                  <div className="grid items-center gap-2 px-2 text-[10px] uppercase tracking-[0.08em] text-zinc-500 dark:text-zinc-400 [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                  <div
+                                      className="grid items-center gap-2 px-2 text-[10px] tracking-[0.08em] text-zinc-500 dark:text-zinc-400"
+                                      style={{ gridTemplateColumns: desktopListColumns }}
+                                  >
                                       <span className="text-center">#</span>
                                       {renderSortButton('description', 'Título')}
                                       <span className="text-zinc-500/70">|</span>
@@ -1760,7 +1795,6 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               const lockedLabel = lockedReason === 'epoch_mismatch' ? 'Arquivado' : 'Protegida';
                               const { statusLabel, statusClassName } = getExpenseStatusMeta(expense);
                               const source = getSourceInfo(expense);
-                              const isInlineEditing = inlineEditExpenseId === expense.id;
                               const typeColor = typeMetaById.get(expense.type)?.color || '#ef4444';
                               const rowBg = index % 2 === 0 ? withAlpha(typeColor, 0.14) : 'transparent';
                               const dateLabel = new Date(expense.date + 'T12:00:00').toLocaleDateString('pt-BR');
@@ -1778,7 +1812,10 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                           className={`py-2 rounded-md ${isHighlighted ? 'ring-1 ring-rose-300/70' : ''}`}
                                           style={{ backgroundColor: rowBg }}
                                       >
-                                          <div className="grid items-center gap-2 px-2 text-[11px] md:text-xs [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                          <div
+                                              className="grid items-center gap-2 px-2 text-[11px] md:text-xs"
+                                              style={{ gridTemplateColumns: desktopListColumns }}
+                                          >
                                               <input
                                                   type="checkbox"
                                                   checked={isSelected}
@@ -1814,7 +1851,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                                   {methodLabel}
                                               </span>
                                               <span className="text-zinc-500/70">|</span>
-                                              <span className={`truncate text-center ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={natureLabel}>
+                                              <span className={`truncate ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={natureLabel}>
                                                   {natureLabel}
                                               </span>
                                               <span className="text-zinc-500/70">|</span>
@@ -1845,29 +1882,6 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                                           </div>
                                       </div>
 
-                                      {!isLocked && isInlineEditing && (
-                                          <NewExpenseModal
-                                              isOpen
-                                              variant="inline"
-                                              onClose={closeExpenseModal}
-                                              onSave={handleSaveExpense}
-                                              initialData={editingExpense ?? expense}
-                                              accounts={accounts}
-                                              creditCards={creditCards}
-                                              categories={categories}
-                                              userId={userId}
-                                              categoryType="expenses"
-                                              onAddCategory={onAddCategory}
-                                              onRemoveCategory={onRemoveCategory}
-                                              onResetCategories={onResetCategories}
-                                              expenseType={expenseType}
-                                              expenseTypeOptions={expenseTypeOptions}
-                                              onUpdateExpenseTypes={onUpdateExpenseTypes}
-                                              themeColor={themeColor}
-                                              defaultDate={viewDate}
-                                              minDate={minDate}
-                                          />
-                                      )}
                                   </div>
                               );
                           })}
@@ -1893,17 +1907,19 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           </main>
 
           {!isMobile && desktopFilterOpen && (
-              <div className="fixed inset-0 z-[85]">
+              <div className="fixed inset-0 z-[1200]" data-modal-root="true">
                   <button
                       type="button"
-                      className="absolute inset-0 bg-black/25"
+                      className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+                      style={{ top: dockTopOffset, bottom: dockBottomOffset }}
                       onClick={() => setDesktopFilterOpen(false)}
                       aria-label="Fechar filtros de despesas"
                   />
                   <div
-                      className="absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]"
+                      className="absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl animate-in fade-in slide-in-from-bottom-8 duration-200"
                       style={{
-                          bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)'
+                          bottom: dockBottomOffset,
+                          maxHeight: `max(320px, ${dockMaxHeight})`
                       }}
                   >
                       <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
@@ -1919,72 +1935,74 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
                               className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
                               aria-label="Fechar filtros"
                           >
-                              <X size={16} />
+                              <ChevronDown size={16} />
                           </button>
                       </div>
 
-                      <div className="pt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
-                          <div className="md:col-span-2 space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Pesquisar na lista
-                              </label>
-                              <input
-                                  type="text"
-                                  value={desktopSearchTerm}
-                                  onChange={(event) => setDesktopSearchTerm(event.target.value)}
-                                  placeholder="Descrição, categoria, origem, forma..."
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
-                              />
-                          </div>
-                          <div className="space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Status
-                              </label>
-                              <select
-                                  value={desktopStatusFilter}
-                                  onChange={(event) =>
-                                      setDesktopStatusFilter(event.target.value as 'all' | 'paid' | 'pending')
-                                  }
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
-                              >
-                                  <option value="all">Todos</option>
-                                  <option value="paid">Pagos</option>
-                                  <option value="pending">Pendentes</option>
-                              </select>
-                          </div>
-                          <div className="space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Origem
-                              </label>
-                              <select
-                                  value={desktopSourceFilter}
-                                  onChange={(event) => setDesktopSourceFilter(event.target.value)}
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
-                              >
-                                  <option value="all">Todas</option>
-                                  {desktopSourceOptions.map(source => (
-                                      <option key={source} value={source}>
-                                          {source}
-                                      </option>
-                                  ))}
-                              </select>
-                          </div>
-                          <div className="md:col-span-2 space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Categoria
-                              </label>
-                              <select
-                                  value={desktopCategoryFilter}
-                                  onChange={(event) => setDesktopCategoryFilter(event.target.value)}
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
-                              >
-                                  <option value="all">Todas</option>
-                                  {desktopCategoryOptions.map(category => (
-                                      <option key={category} value={category}>
-                                          {category}
-                                      </option>
-                                  ))}
-                              </select>
+                      <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                              <div className="md:col-span-2 space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Pesquisar na lista
+                                  </label>
+                                  <input
+                                      type="text"
+                                      value={desktopSearchTerm}
+                                      onChange={(event) => setDesktopSearchTerm(event.target.value)}
+                                      placeholder="Descrição, categoria, origem, forma..."
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                                  />
+                              </div>
+                              <div className="space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Status
+                                  </label>
+                                  <select
+                                      value={desktopStatusFilter}
+                                      onChange={(event) =>
+                                          setDesktopStatusFilter(event.target.value as 'all' | 'paid' | 'pending')
+                                      }
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                                  >
+                                      <option value="all">Todos</option>
+                                      <option value="paid">Pagos</option>
+                                      <option value="pending">Pendentes</option>
+                                  </select>
+                              </div>
+                              <div className="space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Origem
+                                  </label>
+                                  <select
+                                      value={desktopSourceFilter}
+                                      onChange={(event) => setDesktopSourceFilter(event.target.value)}
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                                  >
+                                      <option value="all">Todas</option>
+                                      {desktopSourceOptions.map(source => (
+                                          <option key={source} value={source}>
+                                              {source}
+                                          </option>
+                                      ))}
+                                  </select>
+                              </div>
+                              <div className="md:col-span-2 space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Categoria
+                                  </label>
+                                  <select
+                                      value={desktopCategoryFilter}
+                                      onChange={(event) => setDesktopCategoryFilter(event.target.value)}
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500/35"
+                                  >
+                                      <option value="all">Todas</option>
+                                      {desktopCategoryOptions.map(category => (
+                                          <option key={category} value={category}>
+                                              {category}
+                                          </option>
+                                      ))}
+                                  </select>
+                              </div>
                           </div>
                       </div>
 

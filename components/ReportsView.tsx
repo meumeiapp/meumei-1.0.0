@@ -879,7 +879,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   ) : null;
 
   const desktopViewSwitchControls = !isMobile && tab !== 'export' ? (
-    <div className="mb-3 w-full overflow-x-auto scrollbar-hide -mx-1">
+    <div className="mb-3 w-full overflow-x-auto scrollbar-hide px-3 md:px-4">
       <div className="grid w-full min-w-[1120px] grid-cols-[1fr_auto_1fr] items-center gap-2 pr-1">
         <div className="flex items-center justify-start gap-2">
           <button
@@ -951,20 +951,34 @@ const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         </div>
         <div className="flex items-center justify-end gap-2">
-          {tab === 'map' && (
+          {(tab === 'map' || tab === 'summary') && (
             <button
               type="button"
-              onClick={() => setMapFullscreenRequestId(prev => prev + 1)}
-              title={
-                isMapFullscreenActive
-                  ? 'Sair da tela cheia do mapa.'
-                  : 'Abrir mapa em tela cheia.'
+              onClick={() =>
+                tab === 'map'
+                  ? setMapFullscreenRequestId(prev => prev + 1)
+                  : handleSummaryFullscreenToggle()
               }
-              aria-pressed={isMapFullscreenActive}
-              className={getDesktopViewSwitchClass(isMapFullscreenActive)}
+              title={
+                tab === 'map'
+                  ? isMapFullscreenActive
+                    ? 'Sair da tela cheia do mapa.'
+                    : 'Abrir mapa em tela cheia.'
+                  : isSummaryFullscreen
+                    ? 'Sair da tela cheia do resumo.'
+                    : 'Abrir resumo em tela cheia.'
+              }
+              aria-pressed={tab === 'map' ? isMapFullscreenActive : isSummaryFullscreen}
+              className={getDesktopViewSwitchClass(
+                tab === 'map' ? isMapFullscreenActive : isSummaryFullscreen
+              )}
             >
               <span className="inline-flex items-center gap-2">
-                {isMapFullscreenActive ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                {(tab === 'map' ? isMapFullscreenActive : isSummaryFullscreen) ? (
+                  <Minimize2 size={14} />
+                ) : (
+                  <Maximize2 size={14} />
+                )}
                 Tela cheia
               </span>
             </button>
@@ -974,8 +988,10 @@ const ReportsView: React.FC<ReportsViewProps> = ({
     </div>
   ) : null;
 
+  const isWideCanvasMode = !isMobile && (tab === 'map' || tab === 'summary');
+
   const reportContent = (
-    <div className={`${isMobile ? 'rounded-none border-0 bg-transparent p-0' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-[32px] px-5 pb-2 pt-2 md:px-6 md:pb-2 md:pt-2 flex flex-1 flex-col h-full min-h-0'}`}>
+    <div className={`${isMobile ? 'rounded-none border-0 bg-transparent p-0' : isWideCanvasMode ? 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-[32px] px-0 pb-0 pt-2 md:px-0 md:pb-0 md:pt-2 flex flex-1 flex-col h-full min-h-0' : 'bg-white border border-zinc-200 dark:bg-white/5 dark:border-white/10 rounded-[32px] px-5 pb-2 pt-2 md:px-6 md:pb-2 md:pt-2 flex flex-1 flex-col h-full min-h-0'}`}>
       <div
         className={
           isMobile
@@ -989,13 +1005,13 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       >
         {!isMobile && desktopViewSwitchControls}
         {tab === 'map' && (
-          <div className={`space-y-4 ${isMobile ? '' : 'flex-1 min-h-0 flex flex-col -mx-1'}`}>
+          <div className={`space-y-0 ${isMobile ? '' : 'flex-1 min-h-0 flex flex-col'}`}>
             {isMobile ? (
               <div className="rounded-none border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 p-5 text-center text-sm text-zinc-600 dark:text-slate-200">
                 Os mapas estão disponíveis apenas no computador.
               </div>
             ) : (
-              <div className="min-h-[var(--mm-map-surface-min-height,320px)] flex-1 flex flex-col pb-[22px]" data-tour-anchor="reports-map">
+              <div className="min-h-[var(--mm-map-surface-min-height,320px)] flex-1 flex flex-col" data-tour-anchor="reports-map">
                 {mapMode === 'financial' ? (
                   <FinancialMap
                     summary={summary}
@@ -1137,19 +1153,6 @@ const ReportsView: React.FC<ReportsViewProps> = ({
                     </div>
                   )}
                 </div>
-                {!isSummaryFullscreen && (
-                  <div className="flex flex-col items-center gap-2 self-stretch rounded-2xl border border-white/10 bg-slate-950/40 px-2 py-3 min-w-[52px]">
-                    <button
-                      type="button"
-                      onClick={handleSummaryFullscreenToggle}
-                      className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-                      aria-label="Abrir em tela cheia"
-                      title="Abrir resumo em tela cheia."
-                    >
-                      <Maximize2 size={16} className="mx-auto" />
-                    </button>
-                  </div>
-                )}
                 </div>
               </div>
             </div>

@@ -97,6 +97,7 @@ const PayInvoiceModal: React.FC<PayInvoiceModalProps> = ({
             setPaymentDate(value);
             setError('');
           }}
+          desktopMode={!isMobile ? 'modal' : 'native'}
           buttonClassName={inputBaseClass}
           ariaLabel="Selecionar data do pagamento"
         />

@@ -10,6 +10,11 @@ import SelectDropdown from './common/SelectDropdown';
 import WheelDatePicker from './common/WheelDatePicker';
 import { modalInputClass, modalLabelClass, modalTextareaClass } from './ui/PremiumModal';
 import { TOUR_SIMULATED_ACCOUNT_PREFIX } from '../services/tourSimulationService';
+import {
+  INCOME_FISCAL_NATURE_OPTIONS,
+  type IncomeFiscalNature,
+  resolveIncomeFiscalNature
+} from '../utils/incomeFiscalNature';
 
 interface NewIncomeModalProps {
   isOpen: boolean;
@@ -80,8 +85,14 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const [paymentMethod, setPaymentMethod] = useState('');
   const [notes, setNotes] = useState('');
   const [taxStatus, setTaxStatus] = useState<'PJ' | 'PF' | ''>('');
+  const [naturezaFiscal, setNaturezaFiscal] = useState<IncomeFiscalNature>('RECEITA_OPERACIONAL');
+  const [naturezaFiscalTouched, setNaturezaFiscalTouched] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(true);
   const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
+  const [isNaturezaFiscalPickerOpen, setIsNaturezaFiscalPickerOpen] = useState(false);
+  const [isPaymentMethodPickerOpen, setIsPaymentMethodPickerOpen] = useState(false);
+  const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
+  const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
   const [isTourSimulationSession, setIsTourSimulationSession] = useState(false);
   const tourAutoFillTimersRef = useRef<number[]>([]);
   const hasTourAutoFilledRef = useRef(false);
@@ -100,6 +111,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const isInline = variant === 'inline';
   const isDock = variant === 'dock';
   const isDockDesktop = isDock && !isMobile;
+  const selectListClassName = isDockDesktop ? '' : 'max-h-56';
   const isMobileInline = isMobile && isInline;
   const contentPadding = isMobileInline
     ? 'px-3 py-2.5'
@@ -157,7 +169,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   // Category Management State
   const [isManagingCategories, setIsManagingCategories] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
   const [categoryError, setCategoryError] = useState('');
 
   // Installment (Boleto Parcelado) State
@@ -181,18 +194,6 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
       []
   );
 
-  const categoryOptions = useMemo(() => {
-      const options = [] as { value: string; label: string; disabled?: boolean }[];
-      if (category && !categories.includes(category)) {
-          options.push({ value: category, label: category });
-      }
-      if (categories.length === 0) {
-          options.push({ value: '', label: 'Sem categorias, crie uma', disabled: true });
-      }
-      categories.forEach((cat) => options.push({ value: cat, label: cat }));
-      return options;
-  }, [category, categories]);
-
   const paymentMethodOptions = useMemo(
       () => [
           { value: 'Pix', label: 'Pix' },
@@ -204,6 +205,14 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
       ],
       []
   );
+  const selectedNaturezaFiscalLabel = useMemo(
+      () => INCOME_FISCAL_NATURE_OPTIONS.find(option => option.value === naturezaFiscal)?.label || '',
+      [naturezaFiscal]
+  );
+  const selectedPaymentMethodLabel = useMemo(
+      () => paymentMethodOptions.find(option => option.value === paymentMethod)?.label || '',
+      [paymentMethodOptions, paymentMethod]
+  );
 
   const accountOptions = useMemo(
       () => {
@@ -214,6 +223,18 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
       },
       [availableAccounts]
   );
+  const selectableAccountOptions = useMemo(
+      () => accountOptions.filter(option => !option.disabled),
+      [accountOptions]
+  );
+  const selectedAccountLabel = useMemo(
+      () => selectableAccountOptions.find(option => option.value === selectedAccountId)?.label || '',
+      [selectableAccountOptions, selectedAccountId]
+  );
+  const accountPlaceholder =
+      accountOptions.length === 1 && accountOptions[0].disabled
+          ? accountOptions[0].label
+          : 'Selecione';
 
   const clampToMinDate = (value: string) => {
       if (!value) return minDate;
@@ -227,6 +248,10 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         hasTourEditAutoFilledRef.current = false;
         hasInitializedRef.current = false;
         lastInitialIdRef.current = initialData?.id ?? null;
+        setIsNaturezaFiscalPickerOpen(false);
+        setIsPaymentMethodPickerOpen(false);
+        setIsAccountPickerOpen(false);
+        setIsCategoryPickerOpen(false);
         setIsManagingCategories(false);
         setNewCategoryName('');
         setIsTourSimulationSession(false);
@@ -253,6 +278,13 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         setPaymentMethod(initialData.paymentMethod || '');
         setNotes(initialData.notes || '');
         setTaxStatus(initialData.taxStatus || '');
+        const normalizedNaturezaFiscal = resolveIncomeFiscalNature({
+            naturezaFiscal: initialData.naturezaFiscal,
+            description: initialData.description,
+            category: initialData.category
+        });
+        setNaturezaFiscal(normalizedNaturezaFiscal);
+        setNaturezaFiscalTouched(Boolean(initialData.naturezaFiscal));
         setIsNotesOpen(false);
         setIsInstallment(false);
         setApplyScope('single');
@@ -285,12 +317,26 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     setPaymentMethod('');
     setNotes('');
     setTaxStatus('');
+    setNaturezaFiscal('RECEITA_OPERACIONAL');
+    setNaturezaFiscalTouched(false);
     setIsNotesOpen(false);
     setIsInstallment(false);
     setInstallmentCount(2);
     setInstallmentValueType('total');
     setApplyScope('single');
   }, [isOpen, initialData, defaultDate, minDate]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (naturezaFiscalTouched) return;
+    setNaturezaFiscal(
+      resolveIncomeFiscalNature({
+        naturezaFiscal: undefined,
+        description,
+        category
+      })
+    );
+  }, [isOpen, naturezaFiscalTouched, description, category]);
 
   useEffect(() => {
     if (!isOpen || !isTourSimulationSession) return;
@@ -326,6 +372,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   // --- LÓGICA DE STATUS AUTOMÁTICO ---
   const handlePaymentMethodSelect = (newMethod: string) => {
       setPaymentMethod(newMethod);
+      setIsPaymentMethodPickerOpen(false);
 
       if (newMethod === 'Crédito' || newMethod === 'Boleto') {
           setStatus('pending');
@@ -333,8 +380,6 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
           setStatus('received');
       }
   };
-  const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) =>
-      handlePaymentMethodSelect(e.target.value);
 
   const handleAddCategory = async () => {
     const rawName = newCategoryName;
@@ -390,8 +435,8 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         setNewCategoryName('');
         return;
     }
-    if (categories.length >= 20) {
-        setCategoryError('Limite de categorias atingido.');
+    if (categories.length >= 40) {
+        setCategoryError('Limite de 40 categorias atingido.');
         setNewCategoryName('');
         return;
     }
@@ -441,31 +486,73 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         return;
     }
     try {
-        await onRemoveCategory(catToDelete);
-        if (category === catToDelete) {
-            setCategory(categories.filter(c => c !== catToDelete)[0] || '');
-        }
+      await onRemoveCategory(catToDelete);
+      if (editingCategory === catToDelete) {
+        setEditingCategory(null);
+        setEditingCategoryName('');
+      }
+      if (category === catToDelete) {
+        setCategory(categories.filter(c => c !== catToDelete)[0] || '');
+      }
+      setCategoryError('');
     } catch (error: any) {
-        alert(error?.message || 'Falha ao remover categoria.');
+      setCategoryError(error?.message || 'Falha ao remover categoria.');
     }
   };
 
-  const toggleCategorySelection = (cat: string) => {
-    setSelectedCategories((prev) =>
-      prev.includes(cat) ? prev.filter((item) => item !== cat) : [...prev, cat]
-    );
+  const handleStartCategoryEditing = (cat: string) => {
+    setEditingCategory(cat);
+    setEditingCategoryName(cat);
+    setCategoryError('');
   };
 
-  const handleBulkDeleteCategories = async () => {
-    if (selectedCategories.length === 0) return;
+  const handleCancelCategoryEditing = () => {
+    setEditingCategory(null);
+    setEditingCategoryName('');
+    setCategoryError('');
+  };
+
+  const handleSaveCategoryEdit = async (originalCategory: string) => {
+    const normalizedOriginal = categoryService.normalizeCategoryName(originalCategory);
+    const normalizedName = categoryService.normalizeCategoryName(editingCategoryName);
+    if (!normalizedName) {
+      setCategoryError('Informe um nome para a categoria.');
+      return;
+    }
+    if (normalizedName.toLowerCase() === normalizedOriginal.toLowerCase()) {
+      handleCancelCategoryEditing();
+      return;
+    }
+    const alreadyExists = categories.some((cat) => {
+      const normalizedCategory = categoryService.normalizeCategoryName(cat).toLowerCase();
+      return (
+        normalizedCategory !== normalizedOriginal.toLowerCase() &&
+        normalizedCategory === normalizedName.toLowerCase()
+      );
+    });
+    if (alreadyExists) {
+      setCategoryError('Categoria já existe.');
+      return;
+    }
+    let removedOriginal = false;
     try {
-      await Promise.all(selectedCategories.map((cat) => onRemoveCategory(cat)));
-      if (selectedCategories.includes(category)) {
-        setCategory('');
+      await Promise.resolve(onRemoveCategory(originalCategory));
+      removedOriginal = true;
+      await Promise.resolve(onAddCategory(normalizedName));
+      if (categoryService.normalizeCategoryName(category).toLowerCase() === normalizedOriginal.toLowerCase()) {
+        setCategory(normalizedName);
       }
-      setSelectedCategories([]);
+      handleCancelCategoryEditing();
+      setCategoryError('');
     } catch (error: any) {
-      alert(error?.message || 'Falha ao remover categorias selecionadas.');
+      if (removedOriginal) {
+        try {
+          await Promise.resolve(onAddCategory(normalizedOriginal));
+        } catch {
+          // Ignore rollback failure; original error will be shown.
+        }
+      }
+      setCategoryError(error?.message || 'Falha ao editar categoria.');
     }
   };
 
@@ -487,10 +574,27 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
   useEffect(() => {
     if (!isManagingCategories) {
-      setSelectedCategories([]);
       setCategoryError('');
+      setNewCategoryName('');
+      setEditingCategory(null);
+      setEditingCategoryName('');
     }
   }, [isManagingCategories]);
+
+  useEffect(() => {
+    if (isCategoryPickerOpen || isManagingCategories) return;
+    setCategoryError('');
+    setNewCategoryName('');
+    setEditingCategory(null);
+    setEditingCategoryName('');
+  }, [isCategoryPickerOpen, isManagingCategories]);
+
+  useEffect(() => {
+    if (editingCategory && !categories.includes(editingCategory)) {
+      setEditingCategory(null);
+      setEditingCategoryName('');
+    }
+  }, [categories, editingCategory]);
 
 
   const numericAmount = parseFloat(amount.replace(',', '.')) || 0;
@@ -527,20 +631,25 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
         return;
     }
 
-    const descriptionUpper = normalizedDescription.toUpperCase();
-    const categoryUpper = normalizedCategory.toUpperCase();
-    const notesUpper = normalizedNotes ? normalizedNotes.toUpperCase() : '';
+    const descriptionText = normalizedDescription;
+    const categoryText = normalizedCategory;
+    const notesText = normalizedNotes;
     const baseIncome = {
         id: initialData?.id,
-        description: descriptionUpper,
-        category: categoryUpper,
+        description: descriptionText,
+        category: categoryText,
         date, 
         competenceDate: competenceDate || date,
         accountId: effectiveAccountId,
         status, 
         paymentMethod,
-        notes: notesUpper,
-        taxStatus // Salvar natureza fiscal
+        notes: notesText,
+        taxStatus,
+        naturezaFiscal: resolveIncomeFiscalNature({
+            naturezaFiscal,
+            description: descriptionText,
+            category: categoryText
+        })
     };
 
     console.info('[form-save]', { entityName, isEditing, primaryLabel });
@@ -548,14 +657,14 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     if (shouldSimulateOnly) {
         const numericAmount = parseFloat(amount.replace(',', '.')) || 0;
         let simulatedAmount = numericAmount;
-        let simulatedDescription = descriptionUpper;
+        let simulatedDescription = descriptionText;
         let simulatedInstallmentPayload: Partial<Income> = {};
 
         if (isInstallment && !initialData) {
             simulatedAmount = installmentValueType === 'total'
                 ? (numericAmount / installmentCount)
                 : numericAmount;
-            simulatedDescription = `${descriptionUpper} (1/${installmentCount})`;
+            simulatedDescription = `${descriptionText} (1/${installmentCount})`;
             simulatedInstallmentPayload = {
                 installments: true,
                 installmentNumber: 1,
@@ -599,7 +708,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 installmentNumber: i + 1,
                 totalInstallments: installmentCount,
                 installmentGroupId: groupId,
-                description: `${descriptionUpper} (${i+1}/${installmentCount})`,
+                description: `${descriptionText} (${i + 1}/${installmentCount})`,
                 status: 'pending'
             });
         }
@@ -677,7 +786,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
     typeIn('description', demoDescription, setDescription, 154, 1500);
     typeIn('amount', demoAmount, setAmount, 168, 1550);
     clickStep('tax-status', () => {}, 980, 780);
-    clickStep('tax-status', () => setTaxStatus('PJ'), 1120, 1320);
+    clickStep('tax-status', () => setNaturezaFiscal('RECEITA_OPERACIONAL'), 1120, 1320);
 
     clickStep('category-manager', () => {
       setIsManagingCategories(true);
@@ -783,7 +892,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   }, [handleSave, onPrimaryActionRef]);
 
   const dockFieldClass =
-    'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-2 py-1 text-[12px] text-zinc-900 dark:text-white outline-none focus:ring-2';
+    'w-full min-h-[38px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] leading-5 text-zinc-900 dark:text-white outline-none focus:ring-2';
   const mobileInlineInputClass =
     'w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500';
   const mobileModalInputClass = isMobile
@@ -796,12 +905,69 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
   const selectBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 text-left`
     : `${mobileModalInputClass} pr-8 text-left`;
+  const desktopStatusChipClass =
+    'inline-flex items-center justify-center gap-2 h-9 min-w-[140px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-4 text-[13px] leading-none text-zinc-300 outline-none focus:ring-2 focus:ring-emerald-500/40';
   const textareaBaseClass = isDockDesktop
     ? `${dockFieldClass} focus:ring-emerald-500/40 placeholder:uppercase placeholder:font-light min-h-[64px] resize-none`
     : `${mobileModalTextareaClass} min-h-[84px]`;
   const compactLabelClass = 'text-[10px] uppercase tracking-[0.12em] font-semibold text-white/65';
   const labelClass = isDockDesktop ? modalLabelClass : compactLabelClass;
   const saveButtonLabel = 'Salvar';
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockMaxHeight =
+    'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
+  const closeDockPickers = () => {
+    setIsNaturezaFiscalPickerOpen(false);
+    setIsPaymentMethodPickerOpen(false);
+    setIsAccountPickerOpen(false);
+    setIsCategoryPickerOpen(false);
+  };
+  const renderDockPickerModal = (
+    open: boolean,
+    onClose: () => void,
+    title: string,
+    subtitle: string,
+    content: React.ReactNode
+  ) => {
+    if (!isDockDesktop || !open) return null;
+    return (
+      <div className="fixed inset-0 z-[1300]">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+          style={{ top: dockTopOffset, bottom: dockBottomOffset }}
+          aria-label={`Fechar ${title}`}
+        />
+        <div
+          className="absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl"
+          style={{
+            bottom: dockBottomOffset,
+            maxHeight: `max(320px, ${dockMaxHeight})`
+          }}
+        >
+          <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold truncate">{title}</p>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">{subtitle}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+              aria-label={`Fechar ${title}`}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            {content}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const formContent = (
     <>
@@ -827,9 +993,9 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
       )}
 
       <div className={`${contentPadding} ${contentSpacing}`}>
-        
+        <div className={isDockDesktop ? 'grid grid-cols-12 gap-3' : 'space-y-2'}>
         <div
-          className="space-y-0.5"
+          className={isDockDesktop ? 'space-y-0.5 col-span-8' : 'space-y-0.5'}
           data-tour-anchor={isTourSimulationSession ? 'incomes-field-description' : undefined}
         >
           <label htmlFor={fieldId('description')} className={labelClass}>
@@ -847,7 +1013,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-0.5 sm:gap-3 items-end">
+        <div className={isDockDesktop ? 'grid grid-cols-1 gap-3 items-end col-span-4' : 'grid grid-cols-1 gap-0.5 sm:gap-3 items-end'}>
             <div
                 className="space-y-0.5"
                 data-tour-anchor={isTourSimulationSession ? 'incomes-field-amount' : undefined}
@@ -866,168 +1032,258 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 />
             </div>
             
-            {/* NATUREZA FISCAL - Posicionado logo após Categoria/Valor conforme solicitado */}
+            {/* NATUREZA FISCAL DA ENTRADA */}
             <div
                 className="space-y-0.5"
                 data-tour-anchor={isTourSimulationSession ? 'incomes-field-tax-status' : undefined}
             >
-                <label htmlFor={fieldId('taxStatus')} className={labelClass}>
+                <label htmlFor={fieldId('naturezaFiscal')} className={labelClass}>
                     Natureza Fiscal
                 </label>
-                <SelectDropdown
-                    value={taxStatus}
-                    onChange={(value) => setTaxStatus(value as 'PJ' | 'PF')}
-                    options={[
-                        { value: 'PJ', label: 'PJ (Empresarial/MEI)' },
-                        { value: 'PF', label: 'PF (Pessoal)' }
-                    ]}
-                    placeholder="Selecione"
-                    buttonClassName={selectBaseClass}
-                    listClassName="max-h-56"
-                />
+                {isDockDesktop ? (
+                  <button
+                    id={fieldId('naturezaFiscal')}
+                    type="button"
+                    onClick={() => {
+                      closeDockPickers();
+                      setIsNaturezaFiscalPickerOpen(true);
+                    }}
+                    className={`${selectBaseClass} flex items-center justify-between w-full`}
+                  >
+                    <span className={selectedNaturezaFiscalLabel ? '' : 'text-[11px] font-normal text-zinc-400'}>
+                      {selectedNaturezaFiscalLabel || 'Selecione'}
+                    </span>
+                    <ChevronDown size={14} className="text-zinc-400" />
+                  </button>
+                ) : (
+                  <SelectDropdown
+                      value={naturezaFiscal}
+                      onChange={(value) => {
+                          setNaturezaFiscal(value as IncomeFiscalNature);
+                          setNaturezaFiscalTouched(true);
+                      }}
+                      options={INCOME_FISCAL_NATURE_OPTIONS}
+                      placeholder="Selecione"
+                      buttonClassName={selectBaseClass}
+                      listClassName={selectListClassName}
+                  />
+                )}
             </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-0.5 sm:gap-3 items-end">
+        <div className={isDockDesktop ? 'grid grid-cols-1 gap-3 items-end col-span-8' : 'grid grid-cols-1 gap-0.5 sm:gap-3 items-end'}>
             {/* Dynamic Category Section */}
             <div
                 className="space-y-0.5 relative"
                 data-tour-anchor={isTourSimulationSession ? 'incomes-field-category' : undefined}
             >
-                <div className="flex justify-between items-center min-h-[10px] mb-0.5">
+                <div className={isDockDesktop ? 'flex items-center min-h-[18px] mb-0.5' : 'flex items-center'}>
                     <label htmlFor={fieldId('category')} className={`${labelClass} leading-none`}>
                       Categoria
                     </label>
-                    <button 
-                        type="button"
-                        onClick={() => setIsManagingCategories(true)}
-                        data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-manage' : undefined}
-                        className="text-[10px] font-semibold flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
-                    >
-                        <Edit2 size={10} /> Editar
-                    </button>
                 </div>
                 
                 {isManagingCategories ? (
-                        <div className="fixed inset-0 z-[1300]">
+                  <div className="fixed inset-0 z-[1300]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsManagingCategories(false);
+                        setIsCategoryPickerOpen(false);
+                      }}
+                      className={isDockDesktop ? 'absolute left-0 right-0 bg-black/70 backdrop-blur-sm' : 'absolute inset-0 bg-black/40'}
+                      style={isDockDesktop ? { top: dockTopOffset, bottom: dockBottomOffset } : undefined}
+                      aria-label="Fechar categorias"
+                    />
+                    <div
+                      className={
+                        isMobile
+                          ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
+                          : isDockDesktop
+                            ? 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl'
+                            : 'absolute left-1/2 -translate-x-1/2 w-[min(760px,calc(100%-24px))] bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 max-h-[75dvh] flex flex-col'
+                      }
+                      style={
+                        isMobile
+                          ? undefined
+                          : isDockDesktop
+                            ? {
+                                bottom: dockBottomOffset,
+                                maxHeight: `max(320px, ${dockMaxHeight})`
+                              }
+                            : { bottom: dockBottomOffset }
+                      }
+                    >
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold truncate">Categorias</p>
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
+                        </div>
                         <button
-                            type="button"
-                            onClick={() => setIsManagingCategories(false)}
-                            className="absolute inset-0 bg-black/40"
-                            aria-label="Fechar categorias"
-                        />
-                        <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col">
-                        <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold truncate">Categorias</p>
-                            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Gerencie e crie novas.</p>
-                          </div>
+                          type="button"
+                          onClick={() => {
+                            setIsManagingCategories(false);
+                            setIsCategoryPickerOpen(false);
+                          }}
+                          className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                          aria-label="Fechar categorias"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <div className={`pt-3 ${isDockDesktop ? 'flex-1 min-h-0 overflow-y-auto overscroll-contain' : 'flex-1 overflow-hidden'} px-0.5`}>
+                        <div className="flex gap-2 mb-3">
+                          <input
+                            id={fieldId('category-new')}
+                            name="categoryNew"
+                            autoFocus
+                            type="text"
+                            placeholder={categoryError || 'Nova categoria...'}
+                            value={newCategoryName}
+                            onChange={(e) => {
+                              setNewCategoryName(e.target.value);
+                              setCategoryError('');
+                            }}
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                            data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-new' : undefined}
+                            className={`${inputBaseClass} flex-1 w-auto ${categoryError ? 'border-red-500 focus:border-red-500 focus:ring-red-500 placeholder:text-red-500' : ''}`}
+                            aria-label="Nova categoria"
+                          />
                           <button
                             type="button"
-                            onClick={() => setIsManagingCategories(false)}
-                            className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
-                            aria-label="Fechar categorias"
+                            onClick={handleAddCategory}
+                            data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-add' : undefined}
+                            aria-label="Adicionar categoria"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-md"
                           >
-                            <X size={16} />
+                            <Plus size={16} />
                           </button>
                         </div>
-                        <div className="pt-3 flex-1 overflow-hidden px-0.5">
-                        <div className="flex gap-2 mb-3">
-                            <input 
-                                    id={fieldId('category-new')}
-                                    name="categoryNew"
-                                    autoFocus
-                                    type="text" 
-                                    placeholder={categoryError || 'Nova categoria...'}
-                                    value={newCategoryName}
-                                    onChange={(e) => {
-                                      setNewCategoryName(e.target.value);
-                                      setCategoryError('');
-                                }}
-                                onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
-                                data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-new' : undefined}
-                                className={`${inputBaseClass} flex-1 w-auto ${categoryError ? 'border-red-500 focus:border-red-500 focus:ring-red-500 placeholder:text-red-500' : ''}`}
-                                aria-label="Nova categoria"
-                            />
-                            <button
-                                type="button"
-                                onClick={handleAddCategory}
-                                data-tour-anchor={isTourSimulationSession ? 'incomes-field-category-add' : undefined}
-                                aria-label="Adicionar categoria"
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-md"
-                            >
-                                <Plus size={16} />
-                            </button>
-                        </div>
                         <div className="custom-scrollbar space-y-0.5">
-                            {categories.length === 0 ? (
-                                <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
-                                    Sem categorias, crie uma
-                                </div>
-                            ) : (
-                                categories.map(cat => (
-                                    <div
-                                      key={cat}
-                                      className="flex justify-between items-center px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
-                                    >
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            checked={selectedCategories.includes(cat)}
-                                            onChange={() => toggleCategorySelection(cat)}
-                                            className="h-3.5 w-3.5 accent-emerald-500"
-                                            aria-label={`Selecionar categoria ${cat}`}
-                                          />
-                                          <span className="text-sm text-zinc-700 dark:text-zinc-300">{cat}</span>
-                                        </label>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDeleteCategory(cat)}
-                                          aria-label={`Remover categoria ${cat}`}
-                                          className="text-red-500 p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                        >
-                                            <Trash2 size={12} />
-                                        </button>
+                          {categories.length === 0 ? (
+                            <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
+                              Sem categorias, crie uma
+                            </div>
+                          ) : (
+                            categories.map(cat => (
+                              <div
+                                key={cat}
+                                className={`rounded-lg border px-2 py-1.5 ${
+                                  categoryService.normalizeCategoryName(category).toLowerCase() ===
+                                  categoryService.normalizeCategoryName(cat).toLowerCase()
+                                    ? 'border-emerald-400/60 bg-emerald-500/10'
+                                    : 'border-zinc-200/70 dark:border-zinc-800 bg-transparent'
+                                }`}
+                              >
+                                {editingCategory === cat ? (
+                                  <div className="space-y-1.5">
+                                    <input
+                                      type="text"
+                                      value={editingCategoryName}
+                                      onChange={(e) => {
+                                        setEditingCategoryName(e.target.value);
+                                        setCategoryError('');
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSaveCategoryEdit(cat);
+                                        if (e.key === 'Escape') handleCancelCategoryEditing();
+                                      }}
+                                      className={`${inputBaseClass} h-8 text-[11px]`}
+                                      aria-label={`Editar categoria ${cat}`}
+                                    />
+                                    <div className="grid grid-cols-2 gap-1.5 h-8">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveCategoryEdit(cat)}
+                                        className="rounded-md border border-emerald-500/40 text-[11px] font-semibold text-emerald-600 dark:text-emerald-300 hover:bg-emerald-500/10"
+                                      >
+                                        Salvar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleCancelCategoryEditing}
+                                        className="rounded-md border border-zinc-300 dark:border-zinc-700 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/50"
+                                      >
+                                        Cancelar
+                                      </button>
                                     </div>
-                                ))
-                            )}
-                        </div>
-                        <div className={`mt-2 ${selectedCategories.length > 0 ? 'grid grid-cols-2 gap-2' : ''}`}>
-                          {selectedCategories.length > 0 && (
-                              <button
-                                  type="button"
-                                  onClick={handleBulkDeleteCategories}
-                                  className="w-full rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
-                              >
-                                  Excluir selecionadas ({selectedCategories.length})
-                              </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCategory(cat)}
+                                      className="min-w-0 flex-1 text-left text-sm text-zinc-700 dark:text-zinc-300 truncate"
+                                      aria-label={`Selecionar categoria ${cat}`}
+                                    >
+                                      {cat}
+                                    </button>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStartCategoryEditing(cat)}
+                                        className="h-7 w-7 rounded-md border border-zinc-300/80 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 flex items-center justify-center"
+                                        aria-label={`Editar categoria ${cat}`}
+                                      >
+                                        <Edit2 size={12} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteCategory(cat)}
+                                        aria-label={`Remover categoria ${cat}`}
+                                        className="h-7 w-7 rounded-md border border-red-400/40 text-red-500 hover:bg-red-500/10 flex items-center justify-center"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))
                           )}
+                        </div>
+                        <div className="mt-2">
                           {onResetCategories && (
-                              <button
-                                  type="button"
-                                  onClick={handleResetCategories}
-                                  className={`${selectedCategories.length > 0 ? '' : 'w-full'} rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20`}
-                              >
-                                  Zerar categorias
-                              </button>
+                            <button
+                              type="button"
+                              onClick={handleResetCategories}
+                              className="w-full rounded-md border border-red-200 text-red-600 text-xs font-semibold py-2 hover:bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20"
+                            >
+                              Zerar categorias
+                            </button>
                           )}
                         </div>
-                        </div>
-                        </div>
-                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : isDockDesktop ? (
+                  <button
+                    id={fieldId('category')}
+                    type="button"
+                    onClick={() => {
+                      closeDockPickers();
+                      setIsCategoryPickerOpen(true);
+                    }}
+                    className={`${selectBaseClass} flex items-center justify-between w-full`}
+                  >
+                    <span className={category ? '' : 'text-[11px] font-normal text-zinc-400'}>
+                      {category || (categories.length === 0 ? 'Sem categorias, crie uma' : 'Selecione')}
+                    </span>
+                    <ChevronDown size={14} className="text-zinc-400" />
+                  </button>
                 ) : (
-                    <SelectDropdown
-                        value={category}
+                  <SelectDropdown
+                    value={category}
                     onChange={setCategory}
                     options={[
-                        ...(category && !categories.includes(category) ? [{ value: category, label: category }] : []),
-                        ...categories.map(cat => ({ value: cat, label: cat }))
+                      ...(category && !categories.includes(category) ? [{ value: category, label: category }] : []),
+                      ...categories.map(cat => ({ value: cat, label: cat }))
                     ]}
                     placeholder={categories.length === 0 ? 'Sem categorias, crie uma' : 'Selecione'}
                     disabled={categories.length === 0}
                     buttonClassName={selectBaseClass}
-                    listClassName="max-h-56"
-                />
+                    listClassName={selectListClassName}
+                  />
                 )}
             </div>
 
@@ -1044,14 +1300,15 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     onChange={setCompetenceDate}
                     minDate={minDate}
                     defaultDate={defaultDate}
+                    desktopMode={isDockDesktop ? 'modal' : 'native'}
                     buttonClassName={inputBaseClass}
                     ariaLabel="Selecionar data da venda ou serviço"
                 />
             </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5 sm:gap-3">
-             {/* NOVO CAMPO: Forma de Pagamento */}
+        <div className={isDockDesktop ? 'grid grid-cols-1 gap-3 col-span-4' : 'grid grid-cols-1 sm:grid-cols-2 gap-0.5 sm:gap-3'}>
+             {/* Forma de Pagamento */}
             <div
                 className="space-y-0.5"
                 data-tour-anchor={isTourSimulationSession ? 'incomes-field-payment-method' : undefined}
@@ -1059,18 +1316,48 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 <label htmlFor={fieldId('payment-method')} className={labelClass}>
                   Forma de Pagamento
                 </label>
+                {isDockDesktop ? (
+                  <button
+                    id={fieldId('payment-method')}
+                    type="button"
+                    onClick={() => {
+                      closeDockPickers();
+                      setIsPaymentMethodPickerOpen(true);
+                    }}
+                    className={`${selectBaseClass} flex items-center justify-between w-full`}
+                  >
+                    <span className={selectedPaymentMethodLabel ? '' : 'text-[11px] font-normal text-zinc-400'}>
+                      {selectedPaymentMethodLabel || 'Selecione'}
+                    </span>
+                    <ChevronDown size={14} className="text-zinc-400" />
+                  </button>
+                ) : (
+                  <SelectDropdown
+                      value={paymentMethod}
+                      onChange={handlePaymentMethodSelect}
+                      options={paymentMethodOptions}
+                      placeholder="Selecione"
+                      buttonClassName={selectBaseClass}
+                      listClassName={selectListClassName}
+                  />
+                )}
+            </div>
+            <div className="space-y-0.5">
+                <label htmlFor={fieldId('taxStatus')} className={labelClass}>
+                  Regime (PJ/PF)
+                </label>
                 <SelectDropdown
-                    value={paymentMethod}
-                    onChange={handlePaymentMethodSelect}
-                    options={paymentMethodOptions}
+                    value={taxStatus}
+                    onChange={(value) => setTaxStatus(value as 'PJ' | 'PF')}
+                    options={taxStatusOptions}
                     placeholder="Selecione"
                     buttonClassName={selectBaseClass}
-                    listClassName="max-h-56"
+                    listClassName={selectListClassName}
                 />
             </div>
         </div>
 
-        <div className="space-y-0.5">
+        <div className={isDockDesktop ? 'grid grid-cols-2 gap-3 col-span-12 items-start' : 'space-y-0.5'}>
             <div
                 className="space-y-0.5"
                 data-tour-anchor={isTourSimulationSession ? 'incomes-field-account' : undefined}
@@ -1078,15 +1365,36 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 <label htmlFor={fieldId('account')} className={labelClass}>
                   Conta de Destino
                 </label>
-                <SelectDropdown
-                    value={selectedAccountId}
-                    onChange={setSelectedAccountId}
-                    options={accountOptions}
-                    placeholder={availableAccounts.length === 0 ? 'Nenhuma conta disponível' : 'Selecione'}
-                    disabled={availableAccounts.length === 0}
-                    buttonClassName={selectBaseClass}
-                    listClassName="max-h-56"
-                />
+                {isDockDesktop ? (
+                  <button
+                    id={fieldId('account')}
+                    type="button"
+                    onClick={() => {
+                      if (selectableAccountOptions.length === 0) return;
+                      closeDockPickers();
+                      setIsAccountPickerOpen(true);
+                    }}
+                    disabled={selectableAccountOptions.length === 0}
+                    className={`${selectBaseClass} flex items-center justify-between w-full ${
+                      selectableAccountOptions.length === 0 ? 'opacity-60 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    <span className={selectedAccountLabel ? '' : 'text-[11px] font-normal text-zinc-400'}>
+                      {selectedAccountLabel || accountPlaceholder}
+                    </span>
+                    <ChevronDown size={14} className="text-zinc-400" />
+                  </button>
+                ) : (
+                  <SelectDropdown
+                      value={selectedAccountId}
+                      onChange={setSelectedAccountId}
+                      options={accountOptions}
+                      placeholder={availableAccounts.length === 0 ? 'Nenhuma conta disponível' : 'Selecione'}
+                      disabled={availableAccounts.length === 0}
+                      buttonClassName={selectBaseClass}
+                      listClassName={selectListClassName}
+                  />
+                )}
             </div>
             <div
                 className="space-y-0.5"
@@ -1100,19 +1408,20 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     onChange={setDate}
                     minDate={minDate}
                     defaultDate={defaultDate}
+                    desktopMode={isDockDesktop ? 'modal' : 'native'}
                     buttonClassName={inputBaseClass}
                     ariaLabel="Selecionar data de recebimento"
                 />
             </div>
 
             {/* Status (Automático mas editável) */}
-            <div className="space-y-0.5 col-span-2">
+            <div className={isDockDesktop ? 'space-y-0.5 col-span-2' : 'space-y-0.5'}>
                 <label className={labelClass}>Status</label>
-                <div className="grid grid-cols-2 gap-1.5 w-full justify-items-stretch">
+                <div className={isDockDesktop ? 'flex items-center gap-2' : 'grid grid-cols-2 gap-1.5 w-full justify-items-stretch'}>
                     <button
                         type="button"
                         onClick={() => setStatus('received')}
-                        className={`${selectBaseClass} flex items-center justify-center gap-2 w-full`}
+                        className={isDockDesktop ? desktopStatusChipClass : `${selectBaseClass} flex items-center justify-center gap-2 w-full`}
                         aria-pressed={status === 'received'}
                     >
                         <span className={`h-2.5 w-2.5 rounded-full border ${status === 'received' ? 'bg-emerald-500 border-emerald-500' : 'border-zinc-400'}`} />
@@ -1121,7 +1430,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                     <button
                         type="button"
                         onClick={() => setStatus('pending')}
-                        className={`${selectBaseClass} flex items-center justify-center gap-2 w-full`}
+                        className={isDockDesktop ? desktopStatusChipClass : `${selectBaseClass} flex items-center justify-center gap-2 w-full`}
                         aria-pressed={status === 'pending'}
                     >
                         <span className={`h-2.5 w-2.5 rounded-full border ${status === 'pending' ? 'bg-amber-500 border-amber-500' : 'border-zinc-400'}`} />
@@ -1141,6 +1450,239 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 )}
             </div>
         </div>
+        </div>
+
+        {renderDockPickerModal(
+          isNaturezaFiscalPickerOpen,
+          () => setIsNaturezaFiscalPickerOpen(false),
+          'Selecionar Natureza Fiscal',
+          'Toque para selecionar e voltar.',
+          <div className="grid grid-cols-6 gap-2">
+            {INCOME_FISCAL_NATURE_OPTIONS.map((option) => {
+              const isActive = option.value === naturezaFiscal;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    setNaturezaFiscal(option.value);
+                    setNaturezaFiscalTouched(true);
+                    setIsNaturezaFiscalPickerOpen(false);
+                  }}
+                  className={`h-16 rounded-lg border px-3 py-2 text-[12px] font-semibold leading-tight text-left break-words transition ${
+                    isActive
+                      ? 'border-emerald-400/60 bg-emerald-500/10 text-zinc-900 dark:text-white'
+                      : 'border-zinc-200/70 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900/50'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {renderDockPickerModal(
+          isCategoryPickerOpen && !isManagingCategories,
+          () => {
+            setIsCategoryPickerOpen(false);
+            setCategoryError('');
+            setNewCategoryName('');
+            setEditingCategory(null);
+            setEditingCategoryName('');
+          },
+          'Categorias',
+          'Selecione, adicione, edite ou exclua.',
+          <div className="pt-0 flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="flex-1 overflow-y-auto overscroll-contain pr-0.5">
+              {categories.length === 0 ? (
+                <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
+                  Sem categorias, crie uma.
+                </div>
+              ) : (
+                <div className="grid grid-cols-8 gap-2">
+                  {categories.map((cat) => {
+                    const isEditingCard = editingCategory === cat;
+                    const isActive =
+                      categoryService.normalizeCategoryName(category).toLowerCase() ===
+                      categoryService.normalizeCategoryName(cat).toLowerCase();
+                    return (
+                      <div
+                        key={cat}
+                        className={`h-20 rounded-lg border p-2 transition ${
+                          isActive
+                            ? 'border-emerald-400/60 bg-emerald-500/10'
+                            : 'border-zinc-200/70 dark:border-zinc-800 bg-transparent'
+                        }`}
+                      >
+                        {isEditingCard ? (
+                          <div className="h-full flex flex-col gap-1.5">
+                            <input
+                              type="text"
+                              value={editingCategoryName}
+                              onChange={(e) => {
+                                setEditingCategoryName(e.target.value);
+                                setCategoryError('');
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveCategoryEdit(cat);
+                                if (e.key === 'Escape') handleCancelCategoryEditing();
+                              }}
+                              className={`${inputBaseClass} h-8 text-[11px]`}
+                              aria-label={`Editar categoria ${cat}`}
+                            />
+                            <div className="grid grid-cols-2 gap-1.5 h-8">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveCategoryEdit(cat)}
+                                className="rounded-md border border-emerald-500/40 text-[11px] font-semibold text-emerald-600 dark:text-emerald-300 hover:bg-emerald-500/10"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancelCategoryEditing}
+                                className="rounded-md border border-zinc-300 dark:border-zinc-700 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/50"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="h-full relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCategory(cat);
+                                setIsCategoryPickerOpen(false);
+                              }}
+                              className="absolute inset-0 rounded-md text-left px-1 py-1.5 pr-16 text-[12px] font-semibold leading-tight break-words line-clamp-2 hover:text-zinc-900 dark:hover:text-white"
+                            >
+                              {cat}
+                            </button>
+                            <div className="absolute right-0 bottom-0 flex items-center justify-end gap-1.5 z-10">
+                              <button
+                                type="button"
+                                onClick={() => handleStartCategoryEditing(cat)}
+                                className="h-7 w-7 rounded-md border border-zinc-300/80 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 flex items-center justify-center"
+                                aria-label={`Editar categoria ${cat}`}
+                              >
+                                <Edit2 size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategory(cat)}
+                                className="h-7 w-7 rounded-md border border-red-400/40 text-red-500 hover:bg-red-500/10 flex items-center justify-center"
+                                aria-label={`Excluir categoria ${cat}`}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="shrink-0 mt-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60">
+              {categoryError && (
+                <p className="text-[11px] text-red-500 px-0.5 mb-1.5">{categoryError}</p>
+              )}
+              <div className="grid grid-cols-12 gap-2 items-center">
+                <input
+                  id={fieldId('category-new')}
+                  name="categoryNew"
+                  autoFocus
+                  type="text"
+                  placeholder={categories.length >= 40 ? 'Limite de 40 categorias atingido.' : 'Nova categoria...'}
+                  value={newCategoryName}
+                  onChange={(e) => {
+                    setNewCategoryName(e.target.value);
+                    setCategoryError('');
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                  className={`${inputBaseClass} col-span-9 ${
+                    categoryError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''
+                  }`}
+                  aria-label="Nova categoria"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCategory}
+                  aria-label="Adicionar categoria"
+                  className="col-span-3 text-white px-3 py-2 rounded-md text-xs font-semibold h-full flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-700"
+                >
+                  <Plus size={14} />
+                  Adicionar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {renderDockPickerModal(
+          isPaymentMethodPickerOpen,
+          () => setIsPaymentMethodPickerOpen(false),
+          'Selecionar Forma de Pagamento',
+          'Toque para selecionar e voltar.',
+          <div className="grid grid-cols-6 gap-2">
+            {paymentMethodOptions.map((option) => {
+              const isActive = option.value === paymentMethod;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handlePaymentMethodSelect(option.value)}
+                  className={`h-16 rounded-lg border px-3 py-2 text-[12px] font-semibold leading-tight text-left break-words transition ${
+                    isActive
+                      ? 'border-emerald-400/60 bg-emerald-500/10 text-zinc-900 dark:text-white'
+                      : 'border-zinc-200/70 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900/50'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {renderDockPickerModal(
+          isAccountPickerOpen,
+          () => setIsAccountPickerOpen(false),
+          'Selecionar Conta de Destino',
+          'Toque para selecionar e voltar.',
+          selectableAccountOptions.length === 0 ? (
+            <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
+              Nenhuma conta disponível.
+            </div>
+          ) : (
+            <div className="grid grid-cols-8 gap-2">
+              {selectableAccountOptions.map((option) => {
+                const isActive = option.value === selectedAccountId;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      setSelectedAccountId(option.value);
+                      setIsAccountPickerOpen(false);
+                    }}
+                    className={`h-16 rounded-lg border px-3 py-2 text-[12px] font-semibold leading-tight text-left break-words transition ${
+                      isActive
+                        ? 'border-emerald-400/60 bg-emerald-500/10 text-zinc-900 dark:text-white'
+                        : 'border-zinc-200/70 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900/50'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          )
+        )}
 
         {/* Installment / Boleto Section */}
         {!initialData && isInstallment && isInstallmentModalOpen === false && (
@@ -1258,11 +1800,26 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
             <button
               type="button"
               onClick={() => setIsInstallmentModalOpen(false)}
-              className="absolute inset-0 bg-black/40"
+              className={isMobile ? 'absolute inset-0 bg-black/40' : 'absolute left-0 right-0 bg-black/70 backdrop-blur-sm'}
+              style={isMobile ? undefined : { top: dockTopOffset, bottom: dockBottomOffset }}
               aria-label="Fechar parcelamento"
             />
-            <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-3 max-h-[60dvh] overflow-y-auto">
-              <div className="flex items-start justify-between gap-3">
+            <div
+              className={
+                isMobile
+                  ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-3 max-h-[60dvh] overflow-y-auto'
+                  : 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl'
+              }
+              style={
+                isMobile
+                  ? undefined
+                  : {
+                      bottom: dockBottomOffset,
+                      maxHeight: `max(320px, ${dockMaxHeight})`
+                    }
+              }
+            >
+              <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold truncate">Entrada Parcelada</p>
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Defina as parcelas da entrada.</p>
@@ -1276,7 +1833,7 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                   <X size={16} />
                 </button>
               </div>
-              <div className="mt-3 space-y-3">
+              <div className={`mt-3 ${isMobile ? 'space-y-3' : 'space-y-3 flex-1 overflow-y-auto overscroll-contain'}`}>
                   <label htmlFor={fieldId('installment-count')} className={labelClass}>
                   Quantidade de parcelas
                 </label>
@@ -1368,7 +1925,14 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
               className="absolute inset-0 bg-black/40"
               aria-label="Fechar observações"
             />
-            <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4">
+            <div
+              className={
+                isMobile
+                  ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4'
+                  : 'absolute left-1/2 -translate-x-1/2 w-[min(680px,calc(100%-24px))] bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5'
+              }
+              style={isMobile ? undefined : { bottom: dockBottomOffset }}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold truncate">Observações</p>
@@ -1454,26 +2018,27 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
 
   if (isDock) {
     if (!isOpen) return null;
-    return (
-      <div
-        className="fixed inset-0 z-[1200]"
-        data-modal-root="true"
-        data-tour-anchor={isOpen ? 'incomes-new-income-modal' : undefined}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute inset-0 bg-black/60"
-          aria-label="Fechar entrada"
-        />
+    if (!isMobile) {
+      return (
         <div
-          className={
-            isMobile
-              ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
-              : 'absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
-          }
+          className="fixed inset-0 z-[1200]"
+          data-modal-root="true"
+          data-tour-anchor={isOpen ? 'incomes-new-income-modal' : undefined}
         >
-          {isDockDesktop && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+            style={{ top: dockTopOffset, bottom: dockBottomOffset }}
+            aria-label="Fechar entrada"
+          />
+          <div
+            className="absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl animate-in fade-in slide-in-from-bottom-8 duration-200"
+            style={{
+              bottom: dockBottomOffset,
+              maxHeight: `max(320px, ${dockMaxHeight})`
+            }}
+          >
             <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
               <div className="min-w-0">
                 <p className="text-sm font-semibold truncate">{initialData ? 'Editar Entrada' : 'Nova Entrada'}</p>
@@ -1488,8 +2053,26 @@ const NewIncomeModal: React.FC<NewIncomeModalProps> = ({
                 <ChevronDown size={16} />
               </button>
             </div>
-          )}
-          <div className={isDockDesktop ? 'pt-3 flex-1 overflow-auto' : ''}>{formContent}</div>
+            <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">{formContent}</div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className="fixed inset-0 z-[1200]"
+        data-modal-root="true"
+        data-tour-anchor={isOpen ? 'incomes-new-income-modal' : undefined}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute inset-0 bg-black/60"
+          aria-label="Fechar entrada"
+        />
+        <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col">
+          <div>{formContent}</div>
         </div>
       </div>
     );

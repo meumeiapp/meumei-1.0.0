@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
+import { Minus, Plus } from 'lucide-react';
 import type { Account, CreditCard, Expense, Income } from '../../types';
 import { formatCompactCurrency, formatCurrency, formatShortDate } from './reportUtils';
 import { getAccountColor, getCardColor, withAlpha } from '../../services/cardColorUtils';
@@ -50,10 +50,15 @@ interface EventMapProps {
   accounts: Account[];
   creditCards: CreditCard[];
   isMobile: boolean;
+  hideDesktopRail?: boolean;
+  fullscreenRequestId?: number;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
+
+const normalizeZoom = (value: number) => Number(value.toFixed(4));
 
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 1.8;
@@ -153,7 +158,10 @@ const EventMap: React.FC<EventMapProps> = ({
   transactions,
   accounts,
   creditCards,
-  isMobile
+  isMobile,
+  hideDesktopRail = false,
+  fullscreenRequestId,
+  onFullscreenChange
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -164,11 +172,12 @@ const EventMap: React.FC<EventMapProps> = ({
   const prevFullscreenRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [supportsNativeFullscreen, setSupportsNativeFullscreen] = useState(false);
-  const [showDesktopOnlyNotice, setShowDesktopOnlyNotice] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const renderZoom = useMemo(() => normalizeZoom(zoom), [zoom]);
   const [mapViewport, setMapViewport] = useState({ width: 0, height: 0 });
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
+  const fullscreenRequestRef = useRef(fullscreenRequestId ?? 0);
   const autoFitKeyRef = useRef('');
   const accountNameById = useMemo(
     () => new Map(accounts.map(account => [account.id, account.name])),
@@ -293,8 +302,6 @@ const EventMap: React.FC<EventMapProps> = ({
     transactions.incomes
   ]);
 
-  const totalEvents = lanes.reduce((sum, lane) => sum + lane.events.length, 0);
-
   const laneLayout = useMemo(() => {
     const cardWidth = isMobile ? 180 : 210;
     const accountWidth = cardWidth;
@@ -302,7 +309,7 @@ const EventMap: React.FC<EventMapProps> = ({
     const gap = 14;
     const laneGap = 20;
     const laneSpacing = 24;
-    const padding = 24;
+    const padding = isMobile ? 18 : 14;
     const laneWidths = lanes.map(lane => {
       const eventCount = lane.events.length + 1;
       return accountWidth + laneGap + eventCount * cardWidth + Math.max(eventCount - 1, 0) * gap;
@@ -358,8 +365,8 @@ const EventMap: React.FC<EventMapProps> = ({
     if (!mapViewport.width || !mapViewport.height) return;
     if (!laneLayout.baseWidth || !laneLayout.baseHeight) return;
 
-    const fitWidth = (mapViewport.width - 20) / laneLayout.baseWidth;
-    const fitHeight = (mapViewport.height - 20) / laneLayout.baseHeight;
+    const fitWidth = (mapViewport.width - 8) / laneLayout.baseWidth;
+    const fitHeight = (mapViewport.height - 8) / laneLayout.baseHeight;
     const nextZoom = clamp(Math.min(1, fitWidth, fitHeight), MIN_ZOOM, 1);
     const key = [
       mapViewport.width,
@@ -371,7 +378,7 @@ const EventMap: React.FC<EventMapProps> = ({
     if (autoFitKeyRef.current === key) return;
     autoFitKeyRef.current = key;
 
-    setZoom(nextZoom);
+    setZoom(normalizeZoom(nextZoom));
     requestAnimationFrame(() => {
       if (!scrollRef.current) return;
       scrollRef.current.scrollLeft = 0;
@@ -417,7 +424,7 @@ const EventMap: React.FC<EventMapProps> = ({
       };
       const target = fullscreenViewRef.current;
       if (!target) return;
-      setZoom(target.zoom);
+      setZoom(normalizeZoom(target.zoom));
       requestAnimationFrame(() => {
         if (!scrollRef.current) return;
         scrollRef.current.scrollLeft = target.left;
@@ -433,7 +440,7 @@ const EventMap: React.FC<EventMapProps> = ({
     };
     const target = normalViewRef.current;
     if (!target) return;
-    setZoom(target.zoom);
+    setZoom(normalizeZoom(target.zoom));
     requestAnimationFrame(() => {
       if (!scrollRef.current) return;
       scrollRef.current.scrollLeft = target.left;
@@ -453,6 +460,17 @@ const EventMap: React.FC<EventMapProps> = ({
       root.classList.remove('allow-landscape');
     };
   }, [isFullscreen, isMobile]);
+
+  useEffect(() => {
+    onFullscreenChange?.(isFullscreen);
+  }, [isFullscreen, onFullscreenChange]);
+
+  useEffect(() => {
+    if (typeof fullscreenRequestId !== 'number') return;
+    if (fullscreenRequestId === fullscreenRequestRef.current) return;
+    fullscreenRequestRef.current = fullscreenRequestId;
+    void toggleFullscreen();
+  }, [fullscreenRequestId]);
 
   const isOverlayFullscreen = isFullscreen && !supportsNativeFullscreen;
 
@@ -487,54 +505,10 @@ const EventMap: React.FC<EventMapProps> = ({
     }
   };
 
-  const handleFullscreenClick = () => {
-    if (isMobile) {
-      setShowDesktopOnlyNotice(true);
-      window.setTimeout(() => setShowDesktopOnlyNotice(false), 2000);
-      return;
-    }
-    void toggleFullscreen();
-  };
-
   const handleZoom = (direction: 'in' | 'out') => {
     const step = direction === 'in' ? 0.12 : -0.12;
-    setZoom(prev => clamp(prev + step, MIN_ZOOM, MAX_ZOOM));
+      setZoom(prev => normalizeZoom(clamp(prev + step, MIN_ZOOM, MAX_ZOOM)));
   };
-
-  const mapControls = (
-    <>
-      <button
-        type="button"
-        onClick={handleFullscreenClick}
-        className={`h-9 w-9 rounded-full border border-white/10 text-white transition ${
-          isMobile ? 'bg-white/5 text-white/60' : 'bg-white/10 hover:bg-white/20'
-        }`}
-        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
-        title={
-          isFullscreen
-            ? 'Sair da tela cheia e voltar ao layout normal.'
-            : 'Abrir em tela cheia para visualizar o mapa melhor.'
-        }
-      >
-        {isFullscreen ? (
-          <Minimize2 size={16} className="mx-auto" />
-        ) : (
-          <Maximize2 size={16} className="mx-auto" />
-        )}
-      </button>
-      {isMobile && (
-        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-white/70">
-          Tela cheia só no computador
-        </div>
-      )}
-      {isMobile && showDesktopOnlyNotice && (
-        <div className="rounded-xl border border-white/10 bg-slate-900/95 px-3 py-2 text-[11px] text-white shadow-lg">
-          Tela cheia disponível apenas no computador.
-        </div>
-      )}
-      {null}
-    </>
-  );
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (isMobile) return;
@@ -569,11 +543,16 @@ const EventMap: React.FC<EventMapProps> = ({
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!isFullscreen) return;
-    const container = scrollRef.current;
-    if (!container) return;
-    container.scrollLeft += event.deltaX;
-    container.scrollTop += event.deltaY;
+    if (isMobile) return;
+    const multiplier =
+      event.deltaMode === 1
+        ? 0.045
+        : event.deltaMode === 2
+          ? 0.12
+          : 0.0015;
+    const scaleDelta = event.deltaY * -multiplier;
+    if (Math.abs(scaleDelta) < 0.0001) return;
+    setZoom(prev => normalizeZoom(clamp(prev + scaleDelta, MIN_ZOOM, MAX_ZOOM)));
     event.preventDefault();
   };
 
@@ -759,47 +738,6 @@ const EventMap: React.FC<EventMapProps> = ({
     );
   })();
 
-  const footerControls = !isMobile ? (
-    <div className="pointer-events-auto absolute right-6 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
-      <button
-        type="button"
-        onClick={handleFullscreenClick}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir em tela cheia'}
-        title={
-          isFullscreen
-            ? 'Sair da tela cheia e voltar ao layout normal.'
-            : 'Abrir em tela cheia para visualizar o mapa melhor.'
-        }
-      >
-        {isFullscreen ? (
-          <Minimize2 size={16} className="mx-auto" />
-        ) : (
-          <Maximize2 size={16} className="mx-auto" />
-        )}
-      </button>
-      <div className="h-px w-8 bg-white/10" />
-      <button
-        type="button"
-        onClick={() => handleZoom('out')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Diminuir zoom"
-        title="Reduz o zoom para ver mais do mapa."
-      >
-        <Minus size={16} className="mx-auto" />
-      </button>
-      <button
-        type="button"
-        onClick={() => handleZoom('in')}
-        className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="Aumentar zoom"
-        title="Aumenta o zoom para ver detalhes dos nodes."
-      >
-        <Plus size={16} className="mx-auto" />
-      </button>
-    </div>
-  ) : null;
-
   const mapFooter = !isMobile && isFullscreen ? (
     <div className="absolute bottom-0 left-0 right-0 z-20">
       <div
@@ -807,20 +745,12 @@ const EventMap: React.FC<EventMapProps> = ({
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="mx-auto w-full max-w-[1200px]">{footerContent}</div>
-        {footerControls}
       </div>
     </div>
   ) : null;
 
   return (
-      <div className="flex flex-1 min-h-0 flex-col gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className={`${isMobile ? 'text-sm' : 'text-base'} font-semibold text-white`}>Mapa de Eventos</h2>
-          <p className={`${isMobile ? 'text-[10px]' : 'text-xs'} text-slate-400 whitespace-nowrap`}>
-            Eventos: <span className="text-white font-semibold">{totalEvents}</span>
-          </p>
-        </div>
-
+      <div className="flex flex-1 min-h-0 flex-col gap-0">
       {lanes.length === 0 ? (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-300">
           Nenhum evento registrado neste período.
@@ -836,17 +766,13 @@ const EventMap: React.FC<EventMapProps> = ({
           <div className="flex gap-4 items-stretch flex-1 min-h-0">
             <div
               ref={containerRef}
+              data-mm-measure-target="mapa-eventos"
               className={`mm-map-surface relative border border-white/10 overflow-hidden flex-1 select-none ${
                 isFullscreen
                   ? 'rounded-none h-full w-full box-border'
-                  : 'rounded-3xl w-full flex-1 min-h-[420px]'
+                  : 'rounded-3xl w-full flex-1 min-h-[var(--mm-map-surface-min-height,320px)]'
               }`}
             >
-              {isMobile && !isFullscreen && (
-                <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
-                  {mapControls}
-                </div>
-              )}
               {!isMobile && isFullscreen && (
                 <div className="pointer-events-none absolute left-5 top-5 z-20 rounded-full border border-white/10 bg-slate-900/60 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-white/80 backdrop-blur">
                   Movimento horizontal: arraste para esquerda/direita
@@ -867,7 +793,7 @@ const EventMap: React.FC<EventMapProps> = ({
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerUp}
                 onPointerLeave={handlePointerUp}
-                onWheel={isFullscreen ? handleWheel : undefined}
+                onWheel={!isMobile ? handleWheel : undefined}
                 onClick={() => {
                   setSelectedNode(null);
                 }}
@@ -876,8 +802,8 @@ const EventMap: React.FC<EventMapProps> = ({
                 }`}
               >
             {(() => {
-              const scaledWidth = laneLayout.baseWidth * zoom;
-              const scaledHeight = laneLayout.baseHeight * zoom;
+              const scaledWidth = laneLayout.baseWidth * renderZoom;
+              const scaledHeight = laneLayout.baseHeight * renderZoom;
 
               return (
                 <div
@@ -894,8 +820,11 @@ const EventMap: React.FC<EventMapProps> = ({
                     style={{
                       width: laneLayout.baseWidth,
                       height: laneLayout.baseHeight,
-                      transform: `scale(${zoom})`,
-                      transformOrigin: 'top left'
+                      transform: `scale(${renderZoom})`,
+                      transformOrigin: 'top left',
+                      backfaceVisibility: 'hidden',
+                      WebkitFontSmoothing: 'antialiased',
+                      textRendering: 'optimizeLegibility'
                     }}
                   >
                     <div className="space-y-6 p-6">
@@ -914,7 +843,7 @@ const EventMap: React.FC<EventMapProps> = ({
                           <div key={lane.id} className="flex items-start" style={{ gap: laneGap }}>
                             <div
                               data-map-node="true"
-                              className="shrink-0 rounded-2xl border bg-white/5 px-4 py-3 cursor-pointer"
+                              className="shrink-0 rounded-2xl border bg-white/5 px-4 py-3 cursor-inherit"
                               style={{
                                 width: accountWidth,
                                 height: cardHeight,
@@ -957,7 +886,7 @@ const EventMap: React.FC<EventMapProps> = ({
                                     <div
                                       key={event.id}
                                       data-map-node="true"
-                                      className="relative shrink-0 cursor-pointer"
+                                      className="relative shrink-0 cursor-inherit"
                                       style={{ width: cardWidth }}
                                       onClick={mouseEvent => {
                                         mouseEvent.stopPropagation();
@@ -1040,7 +969,7 @@ const EventMap: React.FC<EventMapProps> = ({
                                     }}
                                   />
                                   <div
-                                    className="rounded-xl border bg-slate-900/75 px-3 py-2 cursor-pointer"
+                                    className="rounded-xl border bg-slate-900/75 px-3 py-2 cursor-inherit"
                                     style={{
                                       height: cardHeight,
                                       borderColor: withAlpha(laneAccent, 0.6),
@@ -1075,9 +1004,26 @@ const EventMap: React.FC<EventMapProps> = ({
             })()}
               </div>
             </div>
-            {!isMobile && !isFullscreen && (
+            {!isMobile && !isFullscreen && !hideDesktopRail && (
               <div className="flex flex-col items-center gap-2 self-stretch rounded-2xl border border-white/10 bg-slate-950/40 px-2 py-3 min-w-[52px]">
-                {mapControls}
+                <button
+                  type="button"
+                  onClick={() => handleZoom('out')}
+                  className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+                  aria-label="Diminuir zoom"
+                  title="Reduz o zoom para ver mais do mapa."
+                >
+                  <Minus size={16} className="mx-auto" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleZoom('in')}
+                  className="h-9 w-9 rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/20"
+                  aria-label="Aumentar zoom"
+                  title="Aumenta o zoom para ver detalhes dos nodes."
+                >
+                  <Plus size={16} className="mx-auto" />
+                </button>
               </div>
             )}
           </div>

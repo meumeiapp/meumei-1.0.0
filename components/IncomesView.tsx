@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowUpCircle, Trash2, AlertTriangle, X, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, History, ChevronDown, Pencil, SlidersHorizontal } from 'lucide-react';
+import { ArrowUpCircle, Trash2, AlertTriangle, X, CheckSquare, Square, CheckCircle2, Circle, Lock, Home, ChevronDown, Pencil, SlidersHorizontal } from 'lucide-react';
 import { Income, Account } from '../types';
 import NewIncomeModal from './NewIncomeModal';
 import { useGlobalActions } from '../contexts/GlobalActionsContext';
@@ -18,6 +18,11 @@ import {
   readTourSimulatedAccounts,
   upsertTourSimulatedAccount
 } from '../services/tourSimulationService';
+import {
+  getIncomeFiscalNatureLabel,
+  resolveIncomeFiscalNature,
+  type IncomeFiscalNature
+} from '../utils/incomeFiscalNature';
 
 const TOUR_SIMULATED_INCOME_PREFIX = '__tour_sim_income__';
 const isTourSimulatedIncomeId = (id: string) => id.startsWith(TOUR_SIMULATED_INCOME_PREFIX);
@@ -44,7 +49,7 @@ interface IncomesViewProps {
   minDate: string;
 }
 
-type IncomeSortKey = 'description' | 'status' | 'date' | 'category' | 'account' | 'paymentMethod' | 'taxStatus' | 'amount';
+type IncomeSortKey = 'description' | 'status' | 'date' | 'category' | 'account' | 'paymentMethod' | 'naturezaFiscal' | 'taxStatus' | 'amount';
 type SortDirection = 'asc' | 'desc';
 
 const IncomesView: React.FC<IncomesViewProps> = ({ 
@@ -148,6 +153,11 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               paymentMethod: incomeData.paymentMethod || '',
               notes: incomeData.notes || '',
               taxStatus: incomeData.taxStatus || '',
+              naturezaFiscal: resolveIncomeFiscalNature({
+                  naturezaFiscal: (incomeData as any).naturezaFiscal,
+                  description: normalizedDescription,
+                  category: normalizedCategory
+              }),
               createdBy: incomeData.createdBy || ''
           };
 
@@ -245,7 +255,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
   }, [isMobile]);
 
   useEffect(() => {
-      if (!isMobile || typeof window === 'undefined') return;
+      if (typeof window === 'undefined') return;
       const handleDockClick = () => {
           setDrawerIncome(null);
           setIncomeToDelete(null);
@@ -255,9 +265,13 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           setEditingIncome(null);
           setMobileScreen('list');
       };
+      window.addEventListener('mm:dock-click', handleDockClick);
       window.addEventListener('mm:mobile-dock-click', handleDockClick);
-      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
-  }, [isMobile]);
+      return () => {
+          window.removeEventListener('mm:dock-click', handleDockClick);
+          window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+      };
+  }, []);
 
   useEffect(() => {
       if (!isMobile) return;
@@ -341,6 +355,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                 income.description,
                 income.category,
                 income.paymentMethod,
+                getIncomeFiscalNatureLabel(income.naturezaFiscal),
                 income.taxStatus,
                 income.notes || '',
                 accountName
@@ -389,8 +404,17 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               case 'paymentMethod':
                   result = compareText(a.paymentMethod || '', b.paymentMethod || '');
                   break;
+              case 'naturezaFiscal':
+                  result = compareText(
+                      getIncomeFiscalNatureLabel(a.naturezaFiscal),
+                      getIncomeFiscalNatureLabel(b.naturezaFiscal)
+                  );
+                  break;
               case 'taxStatus':
-                  result = compareText(a.taxStatus || '', b.taxStatus || '');
+                  result = compareText(
+                      a.taxStatus || '',
+                      b.taxStatus || ''
+                  );
                   break;
               case 'amount':
                   result = (a.amount || 0) - (b.amount || 0);
@@ -419,6 +443,8 @@ const IncomesView: React.FC<IncomesViewProps> = ({
       (desktopStatusFilter !== 'all' ? 1 : 0) +
       (desktopAccountFilter !== 'all' ? 1 : 0) +
       (desktopCategoryFilter !== 'all' ? 1 : 0);
+  const desktopListColumns =
+      '18px minmax(180px,2fr) 8px minmax(132px,0.95fr) 8px minmax(170px,1.4fr) 8px minmax(130px,1fr) 8px minmax(150px,1.2fr) 8px minmax(78px,0.52fr) 8px minmax(86px,0.6fr) 8px minmax(230px,1.65fr) 8px 72px 8px minmax(120px,0.9fr)';
   const toggleDesktopSort = (key: IncomeSortKey) => {
       setDesktopSort(prev => {
           if (!prev || prev.key !== key) return { key, direction: 'desc' };
@@ -433,10 +459,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           <button
               type="button"
               onClick={() => toggleDesktopSort(key)}
-              className={`inline-flex w-full items-center gap-1 transition-colors hover:text-zinc-700 dark:hover:text-zinc-200 ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+              className={`inline-flex w-full min-w-0 items-center gap-1 transition-colors hover:text-zinc-700 dark:hover:text-zinc-200 ${align === 'right' ? 'justify-end' : 'justify-start'}`}
               title={`Ordenar por ${label}`}
           >
-              <span>{label}</span>
+              <span className="whitespace-nowrap">{label}</span>
               <span className={`text-[9px] ${isActive ? 'text-emerald-600 dark:text-emerald-300' : 'text-zinc-500/70'}`}>
                   {indicator}
               </span>
@@ -616,6 +642,7 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               paymentMethod: updatedIncome.paymentMethod,
                               notes: updatedIncome.notes,
                               taxStatus: updatedIncome.taxStatus,
+                              naturezaFiscal: updatedIncome.naturezaFiscal as IncomeFiscalNature | undefined,
                               installmentGroupId: groupId || item.installmentGroupId
                           };
                           return item.id === updatedIncome.id ? { ...baseUpdate, ...updatedIncome } : baseUpdate;
@@ -859,6 +886,9 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400';
       return { normalizedStatus, statusLabel, statusClassName };
   };
+  const getIncomeNatureLabel = (income: Income) =>
+      income.taxStatus === 'PF' || income.taxStatus === 'PJ' ? income.taxStatus : '-';
+  const getIncomeRegimeLabel = (income: Income) => getIncomeFiscalNatureLabel(income.naturezaFiscal);
 
   const buildIncomeDetails = (income: Income | null) => {
       if (!income) return [] as { label: string; value: React.ReactNode }[];
@@ -891,7 +921,14 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               value: getAccountById(income.accountId)?.name || 'Conta Deletada'
           },
           income.paymentMethod ? { label: 'Forma', value: income.paymentMethod } : null,
-          income.taxStatus ? { label: 'Natureza', value: income.taxStatus } : null,
+          {
+              label: 'Natureza',
+              value: getIncomeNatureLabel(income)
+          },
+          {
+              label: 'Regime',
+              value: getIncomeRegimeLabel(income)
+          },
           income.installments
               ? {
                     label: 'Parcela',
@@ -1061,7 +1098,14 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                 drawerIncome.paymentMethod
                     ? { label: 'Forma', value: drawerIncome.paymentMethod }
                     : null,
-                drawerIncome.taxStatus ? { label: 'Natureza', value: drawerIncome.taxStatus } : null,
+                {
+                    label: 'Natureza',
+                    value: getIncomeNatureLabel(drawerIncome)
+                },
+                {
+                    label: 'Regime',
+                    value: getIncomeRegimeLabel(drawerIncome)
+                },
                 drawerIncome.installments
                     ? {
                           label: 'Parcela',
@@ -1101,38 +1145,37 @@ const IncomesView: React.FC<IncomesViewProps> = ({
               {isListView && (
                   <>
                       <div className="grid grid-cols-3 gap-2">
-                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
-                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
+                          <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+                              <p className="mm-subheader-metric-label">Registros</p>
+                              <p className="mm-subheader-metric-value">{headerCount}</p>
                           </div>
-                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Previsto</p>
-                              <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+                          <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+                              <p className="mm-subheader-metric-label">Previsto</p>
+                              <p className="mm-subheader-metric-value">
                                   R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
-                          <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Recebido</p>
-                              <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+                              <p className="mm-subheader-metric-label">Recebido</p>
+                              <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">
                                   R$ {headerReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </p>
                           </div>
                       </div>
                       <div className={`grid ${onOpenAudit ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
-                          {onOpenAudit && (
-                              <button
-                                  onClick={onOpenAudit}
-                                  className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-emerald-600 dark:hover:text-emerald-300 hover:border-emerald-200 dark:hover:border-emerald-700 transition"
-                                  title="Auditoria do dia"
-                              >
-                                  <History size={14} />
+                              {onOpenAudit && (
+                                  <button
+                                      onClick={onOpenAudit}
+                                      className="mm-btn-base mm-btn-secondary mm-btn-secondary-emerald mm-mobile-primary-cta"
+                                      title="Auditoria do dia"
+                                  >
                                   Auditoria
                               </button>
                           )}
                           <button
                               onClick={handleNew}
                               data-tour-anchor="incomes-new"
-                              className="w-full rounded-xl mm-mobile-primary-cta bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-emerald-900/20"
+                              className="mm-btn-base mm-btn-primary mm-btn-primary-emerald w-full mm-mobile-primary-cta"
                           >
                               Nova Entrada
                           </button>
@@ -1455,39 +1498,38 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Registros</p>
-                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{headerCount}</p>
+              <div className="mm-subheader-metric-card">
+                  <p className="mm-subheader-metric-label">Registros</p>
+                  <p className="mm-subheader-metric-value">{headerCount}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Previsto</p>
-                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+              <div className="mm-subheader-metric-card">
+                  <p className="mm-subheader-metric-label">Previsto</p>
+                  <p className="mm-subheader-metric-value">
                       R$ {headerTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Recebido</p>
-                  <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">
+              <div className="mm-subheader-metric-card">
+                  <p className="mm-subheader-metric-label">Recebido</p>
+                  <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">
                       R$ {headerReceived.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
               </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2">
+          <div className="mm-header-actions">
               {onOpenAudit && (
                   <button
                       onClick={onOpenAudit}
-                      className="mm-btn-base mm-btn-secondary mm-btn-secondary-emerald min-w-[168px] px-6"
+                      className="mm-btn-base mm-btn-secondary mm-btn-secondary-emerald"
                       title="Auditoria do dia"
                   >
-                      <History size={14} />
                       Auditoria
                   </button>
               )}
                   <button
                       onClick={handleNew}
                       data-tour-anchor="incomes-new"
-                      className="mm-btn-base mm-btn-primary mm-btn-primary-emerald min-w-[220px] px-8"
+                      className="mm-btn-base mm-btn-primary mm-btn-primary-emerald"
                   >
                       Nova Entrada
                   </button>
@@ -1497,11 +1539,15 @@ const IncomesView: React.FC<IncomesViewProps> = ({
 
   const summarySection = (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 relative z-10 pt-6">
-          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+          <div className="mm-subheader mm-subheader-panel">
               {desktopHeader}
           </div>
       </div>
   );
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockMaxHeight =
+      'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
 
   return (
       <div className="bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300">
@@ -1516,6 +1562,24 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                           onClose={closeIncomeModal}
                           onSave={handleSaveIncome}
                           initialData={null}
+                          accounts={displayAccounts}
+                          categories={categories}
+                          userId={userId}
+                          categoryType="incomes"
+                          onAddCategory={onAddCategory}
+                          onRemoveCategory={onRemoveCategory}
+                          onResetCategories={onResetCategories}
+                          defaultDate={viewDate}
+                          minDate={minDate}
+                      />
+                  )}
+                  {!isMobile && editingIncome && !inlineNewOpen && (
+                      <NewIncomeModal
+                          isOpen
+                          variant="dock"
+                          onClose={closeIncomeModal}
+                          onSave={handleSaveIncome}
+                          initialData={editingIncome}
                           accounts={displayAccounts}
                           categories={categories}
                           userId={userId}
@@ -1597,7 +1661,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               </div>
 
                               {!isMobile && (
-                                  <div className="grid items-center gap-2 px-2 text-[10px] uppercase tracking-[0.08em] text-zinc-500 dark:text-zinc-400 [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                  <div
+                                      className="grid items-center gap-2 px-2 text-[10px] tracking-[0.08em] text-zinc-500 dark:text-zinc-400"
+                                      style={{ gridTemplateColumns: desktopListColumns }}
+                                  >
                                       <span className="text-center">#</span>
                                       {renderSortButton('description', 'Título')}
                                       <span className="text-zinc-500/70">|</span>
@@ -1612,6 +1679,8 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                       {renderSortButton('paymentMethod', 'Forma')}
                                       <span className="text-zinc-500/70">|</span>
                                       {renderSortButton('taxStatus', 'Natureza')}
+                                      <span className="text-zinc-500/70">|</span>
+                                      {renderSortButton('naturezaFiscal', 'Regime')}
                                       <span className="text-zinc-500/70">|</span>
                                       <span>Ações</span>
                                       <span className="text-zinc-500/70">|</span>
@@ -1631,14 +1700,14 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               const isPrimaryTourIncome = Boolean(primaryTourIncomeId) && income.id === primaryTourIncomeId;
                               const { statusLabel, statusClassName } = getIncomeStatusMeta(income);
                               const accountName = getAccountById(income.accountId)?.name || 'Conta Deletada';
-                              const isInlineEditing = inlineEditIncomeId === income.id;
                               const rowBg = index % 2 === 0 ? 'bg-emerald-500/10' : 'bg-transparent';
                               const dateLabel = new Date(income.date + 'T12:00:00').toLocaleDateString('pt-BR');
                               const competenceLabel = income.competenceDate
                                   ? new Date(income.competenceDate + 'T12:00:00').toLocaleDateString('pt-BR')
                                   : '-';
                               const methodLabel = income.paymentMethod || '-';
-                              const natureLabel = income.taxStatus || '-';
+                              const natureLabel = getIncomeNatureLabel(income);
+                              const regimeLabel = getIncomeRegimeLabel(income);
                               const effectiveStatusLabel = isLocked ? lockedLabel : statusLabel;
                               const effectiveStatusClass = isLocked
                                   ? 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800/70 dark:text-zinc-300'
@@ -1650,7 +1719,10 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                           data-tour-anchor={isPrimaryTourIncome ? 'incomes-created-income-row' : undefined}
                                           className={`py-2 rounded-md ${rowBg} ${isHighlighted ? 'ring-1 ring-emerald-300/70' : ''}`}
                                       >
-                                          <div className="grid items-center gap-2 px-2 text-[11px] md:text-xs [grid-template-columns:18px_minmax(180px,2fr)_8px_minmax(132px,0.95fr)_8px_minmax(170px,1.4fr)_8px_minmax(130px,1fr)_8px_minmax(150px,1.2fr)_8px_minmax(100px,0.8fr)_8px_70px_8px_74px_8px_minmax(120px,0.9fr)]">
+                                          <div
+                                              className="grid items-center gap-2 px-2 text-[11px] md:text-xs"
+                                              style={{ gridTemplateColumns: desktopListColumns }}
+                                          >
                                               <input
                                                   type="checkbox"
                                                   checked={isSelected}
@@ -1686,8 +1758,18 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                                   {methodLabel}
                                               </span>
                                               <span className="text-zinc-500/70">|</span>
-                                              <span className={`truncate text-center ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`} title={natureLabel}>
+                                              <span
+                                                  className={`truncate text-center ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`}
+                                                  title={natureLabel}
+                                              >
                                                   {natureLabel}
+                                              </span>
+                                              <span className="text-zinc-500/70">|</span>
+                                              <span
+                                                  className={`truncate text-[11px] font-semibold text-left ${isLocked ? 'text-zinc-500' : 'text-zinc-800 dark:text-zinc-200'}`}
+                                                  title={`Regime ${regimeLabel}`}
+                                              >
+                                                  {regimeLabel}
                                               </span>
                                               <span className="text-zinc-500/70">|</span>
                                               <div className="flex items-center gap-1">
@@ -1728,24 +1810,6 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                                           </div>
                                       </div>
 
-                                      {!isLocked && isInlineEditing && (
-                                          <NewIncomeModal
-                                              isOpen
-                                              variant="inline"
-                                              onClose={closeIncomeModal}
-                                              onSave={handleSaveIncome}
-                                              initialData={editingIncome ?? income}
-                                              accounts={displayAccounts}
-                                              categories={categories}
-                                              userId={userId}
-                                              categoryType="incomes"
-                                              onAddCategory={onAddCategory}
-                                              onRemoveCategory={onRemoveCategory}
-                                              onResetCategories={onResetCategories}
-                                              defaultDate={viewDate}
-                                              minDate={minDate}
-                                          />
-                                      )}
                                   </div>
                               );
                           })}
@@ -1771,17 +1835,19 @@ const IncomesView: React.FC<IncomesViewProps> = ({
           </main>
 
           {!isMobile && desktopFilterOpen && (
-              <div className="fixed inset-0 z-[85]">
+              <div className="fixed inset-0 z-[1200]" data-modal-root="true">
                   <button
                       type="button"
-                      className="absolute inset-0 bg-black/25"
+                      className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+                      style={{ top: dockTopOffset, bottom: dockBottomOffset }}
                       onClick={() => setDesktopFilterOpen(false)}
                       aria-label="Fechar filtros de entradas"
                   />
                   <div
-                      className="absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]"
+                      className="absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl animate-in fade-in slide-in-from-bottom-8 duration-200"
                       style={{
-                          bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)'
+                          bottom: dockBottomOffset,
+                          maxHeight: `max(320px, ${dockMaxHeight})`
                       }}
                   >
                       <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
@@ -1797,72 +1863,74 @@ const IncomesView: React.FC<IncomesViewProps> = ({
                               className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
                               aria-label="Fechar filtros"
                           >
-                              <X size={16} />
+                              <ChevronDown size={16} />
                           </button>
                       </div>
 
-                      <div className="pt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
-                          <div className="md:col-span-2 space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Pesquisar na lista
-                              </label>
-                              <input
-                                  type="text"
-                                  value={desktopSearchTerm}
-                                  onChange={(event) => setDesktopSearchTerm(event.target.value)}
-                                  placeholder="Descrição, categoria, conta, forma..."
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
-                              />
-                          </div>
-                          <div className="space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Status
-                              </label>
-                              <select
-                                  value={desktopStatusFilter}
-                                  onChange={(event) =>
-                                      setDesktopStatusFilter(event.target.value as 'all' | 'received' | 'pending')
-                                  }
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
-                              >
-                                  <option value="all">Todos</option>
-                                  <option value="received">Recebidos</option>
-                                  <option value="pending">Pendentes</option>
-                              </select>
-                          </div>
-                          <div className="space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Conta
-                              </label>
-                              <select
-                                  value={desktopAccountFilter}
-                                  onChange={(event) => setDesktopAccountFilter(event.target.value)}
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
-                              >
-                                  <option value="all">Todas</option>
-                                  {desktopAccountOptions.map(option => (
-                                      <option key={option.id} value={option.id}>
-                                          {option.name}
-                                      </option>
-                                  ))}
-                              </select>
-                          </div>
-                          <div className="md:col-span-2 space-y-1">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Categoria
-                              </label>
-                              <select
-                                  value={desktopCategoryFilter}
-                                  onChange={(event) => setDesktopCategoryFilter(event.target.value)}
-                                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
-                              >
-                                  <option value="all">Todas</option>
-                                  {desktopCategoryOptions.map(category => (
-                                      <option key={category} value={category}>
-                                          {category}
-                                      </option>
-                                  ))}
-                              </select>
+                      <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                              <div className="md:col-span-2 space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Pesquisar na lista
+                                  </label>
+                                  <input
+                                      type="text"
+                                      value={desktopSearchTerm}
+                                      onChange={(event) => setDesktopSearchTerm(event.target.value)}
+                                      placeholder="Descrição, categoria, conta, forma..."
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                                  />
+                              </div>
+                              <div className="space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Status
+                                  </label>
+                                  <select
+                                      value={desktopStatusFilter}
+                                      onChange={(event) =>
+                                          setDesktopStatusFilter(event.target.value as 'all' | 'received' | 'pending')
+                                      }
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                                  >
+                                      <option value="all">Todos</option>
+                                      <option value="received">Recebidos</option>
+                                      <option value="pending">Pendentes</option>
+                                  </select>
+                              </div>
+                              <div className="space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Conta
+                                  </label>
+                                  <select
+                                      value={desktopAccountFilter}
+                                      onChange={(event) => setDesktopAccountFilter(event.target.value)}
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                                  >
+                                      <option value="all">Todas</option>
+                                      {desktopAccountOptions.map(option => (
+                                          <option key={option.id} value={option.id}>
+                                              {option.name}
+                                          </option>
+                                      ))}
+                                  </select>
+                              </div>
+                              <div className="md:col-span-2 space-y-1">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Categoria
+                                  </label>
+                                  <select
+                                      value={desktopCategoryFilter}
+                                      onChange={(event) => setDesktopCategoryFilter(event.target.value)}
+                                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/35"
+                                  >
+                                      <option value="all">Todas</option>
+                                      {desktopCategoryOptions.map(category => (
+                                          <option key={category} value={category}>
+                                              {category}
+                                          </option>
+                                      ))}
+                                  </select>
+                              </div>
                           </div>
                       </div>
 

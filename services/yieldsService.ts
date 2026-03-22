@@ -45,6 +45,12 @@ const sanitizeDocId = (value: string) => value.replace(/\//g, '_');
 const buildYieldId = (accountId: string, date: string) =>
   `${sanitizeDocId(accountId)}_${date}`;
 
+const createYieldId = (accountId: string, date: string) => {
+  const nowBase36 = Date.now().toString(36);
+  const randomBase36 = Math.random().toString(36).slice(2, 8);
+  return `${buildYieldId(accountId, date)}_${nowBase36}${randomBase36}`;
+};
+
 const buildYieldRef = (licenseId: string, yieldId: string) =>
   doc(db, 'users', licenseId, 'yields', yieldId);
 
@@ -176,40 +182,41 @@ const buildYieldRecord = async (
 
 export const yieldsService = {
   buildYieldId,
+  createYieldId,
   normalizeNotes,
 
   async addYield(
     licenseId: string,
-    payload: { accountId: string; amount: number; date: string; notes?: string },
+    payload: { accountId: string; amount: number; date: string; notes?: string; yieldId?: string },
     cryptoEpoch: number
-  ) {
+  ): Promise<string | null> {
     const { uid, emailNormalized } = getActorInfo();
     if (!licenseId) {
       console.warn('[yields] add_blocked', { reason: 'license_missing', licenseId, uid, emailNormalized });
-      return;
+      return null;
     }
     if (!Number.isFinite(cryptoEpoch)) {
       console.warn('[yields] add_blocked', { reason: 'epoch_missing', licenseId, uid, emailNormalized });
-      return;
+      return null;
     }
     if (!payload?.accountId) {
       console.warn('[yields] add_blocked', { reason: 'account_missing', licenseId, uid, emailNormalized });
-      return;
+      return null;
     }
     if (!payload?.date) {
       console.warn('[yields] add_blocked', { reason: 'date_missing', licenseId, uid, emailNormalized });
-      return;
+      return null;
     }
     if (!Number.isFinite(payload.amount)) {
       console.warn('[yields] add_blocked', { reason: 'amount_invalid', licenseId, uid, emailNormalized });
-      return;
+      return null;
     }
 
     const notes = normalizeNotes(payload.notes);
-    const yieldId = buildYieldId(payload.accountId, payload.date);
+    const yieldId = String(payload.yieldId || '').trim() || createYieldId(payload.accountId, payload.date);
     const ref = buildYieldRef(licenseId, yieldId);
     const path = ref.path;
-    if (!guardUserPath(licenseId, path, 'yields_add')) return;
+    if (!guardUserPath(licenseId, path, 'yields_add')) return null;
     const amountEncryptedResult = await cryptoService.encryptNumber(licenseId, payload.amount, 'yields.amount');
     if (!amountEncryptedResult.ok) {
       console.warn('[crypto][warn] write blocked', {
@@ -224,7 +231,7 @@ export const yieldsService = {
         accountId: payload.accountId,
         date: payload.date
       });
-      return;
+      return null;
     }
     const amountEncrypted = amountEncryptedResult.value;
 
@@ -277,6 +284,7 @@ export const yieldsService = {
         accountId: payload.accountId
       });
       console.info('[sync][write] yield ok', { licenseId, yieldId, accountId: payload.accountId });
+      return yieldId;
     } catch (error: any) {
       console.error('[yields] add_err', {
         licenseId,

@@ -225,6 +225,7 @@ const Settings: React.FC<SettingsProps> = ({
   }>({ tone: 'idle', message: '' });
   const canManageMembersOnScreen = canManageMembers(currentUserRole);
   const canManageCompanyOnScreen = canManageCompany(currentUserRole);
+  const isOwnerUser = currentUserRole === 'owner';
   const [members, setMembers] = useState<MemberRecord[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersSaving, setMembersSaving] = useState(false);
@@ -370,10 +371,10 @@ const Settings: React.FC<SettingsProps> = ({
               subtitle: 'Resetar sistema',
               icon: <AlertTriangle size={18} />,
               accent: 'from-rose-500/20 via-rose-500/5 to-transparent',
-              visible: !isMobile
+              visible: !isMobile && isOwnerUser
           }
       ],
-      [isMobile, canManageMembersOnScreen, canManageCompanyOnScreen, isMasterUser]
+      [isMobile, canManageMembersOnScreen, canManageCompanyOnScreen, isMasterUser, isOwnerUser]
   );
   const availablePanelCards = useMemo(
       () => panelCards.filter((card) => card.visible),
@@ -1075,7 +1076,7 @@ useEffect(() => {
   };
 
   const openResetModal = () => {
-    if (isMobile) return;
+    if (isMobile || !isOwnerUser) return;
     setResetConfirmText('');
     setResetError('');
     setResetKeyTurned(false);
@@ -1255,7 +1256,7 @@ useEffect(() => {
               {availablePanelCards.length > 0 && (
                   <div className="w-full px-4 sm:px-6 pb-2 relative z-10">
                       <div className="max-w-7xl mx-auto">
-                          <div className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+                          <div className="mm-subheader mm-subheader-panel w-full">
                               {renderPanelCardsGrid('desktop')}
                           </div>
                       </div>
@@ -2321,7 +2322,7 @@ useEffect(() => {
                     </SettingsSection>
                     )}
 
-                    {!isMobile && activePanel === 'danger' && (
+                    {!isMobile && isOwnerUser && activePanel === 'danger' && (
                         <SettingsSection
                             label="Zona de Perigo"
                             className="xl:col-span-12 border-red-100 dark:border-red-900/30 flex flex-col"
@@ -2360,7 +2361,7 @@ useEffect(() => {
       </main>
 
       {/* --- SYSTEM RESET SECURITY MODAL --- */}
-      {!isMobile && isResetModalOpen && (
+      {!isMobile && isOwnerUser && isResetModalOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-red-950/80 backdrop-blur-md animate-in fade-in zoom-in-95 duration-300">
              <div className="w-full max-w-md bg-[#1a1a1a] rounded-2xl shadow-2xl border border-red-900/50 p-0 overflow-hidden">
                 {/* ... existing reset content ... */}

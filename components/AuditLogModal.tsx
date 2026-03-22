@@ -126,7 +126,7 @@ const entityTypeChipClass: Record<AuditEntityType, string> = {
 const auditTagSizeClass =
   'inline-flex items-center justify-center rounded-full border px-2 py-0 text-[10px] font-semibold leading-none h-[18px] min-w-[84px] mx-[2px] shrink-0';
 
-const entityFilterOptions: Array<{ id: EntityFilter; label: string }> = [
+const defaultEntityFilterOptions: Array<{ id: EntityFilter; label: string }> = [
   { id: 'all', label: 'Todos os módulos' },
   { id: 'account', label: 'Contas' },
   { id: 'expense', label: 'Saídas' },
@@ -403,8 +403,17 @@ const getStats = (rows: AuditLog[]) => {
   return stats;
 };
 
-const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
+const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId, entityTypes }) => {
   const defaultPeriod: PeriodFilter = '7d';
+  const scopedEntityTypes = useMemo<AuditEntityType[]>(() => {
+    if (!Array.isArray(entityTypes) || entityTypes.length === 0) return [];
+    const valid = entityTypes.filter((type): type is AuditEntityType =>
+      ['account', 'expense', 'income', 'yield', 'system'].includes(type)
+    );
+    return Array.from(new Set(valid));
+  }, [entityTypes]);
+  const isScopedAudit = scopedEntityTypes.length > 0;
+  const scopedEntitySet = useMemo(() => new Set(scopedEntityTypes), [scopedEntityTypes]);
   const [period, setPeriod] = useState<PeriodFilter>(defaultPeriod);
   const [operation, setOperation] = useState<OperationFilter>('all');
   const [entityFilter, setEntityFilter] = useState<EntityFilter>('all');
@@ -412,14 +421,16 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const scopedDefaultEntityFilter: EntityFilter =
+    isScopedAudit && scopedEntityTypes.length === 1 ? scopedEntityTypes[0] : 'all';
 
   useEffect(() => {
     if (!isOpen) return;
     setPeriod(defaultPeriod);
     setOperation('all');
-    setEntityFilter('all');
+    setEntityFilter(scopedDefaultEntityFilter);
     setSearch('');
-  }, [defaultPeriod, isOpen]);
+  }, [defaultPeriod, isOpen, scopedDefaultEntityFilter]);
 
   useEffect(() => {
     if (!isOpen || !licenseId) return;
@@ -440,7 +451,13 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
     load()
       .then((items) => {
         if (!active) return;
-        setLogs(items.filter((item) => item.entityType !== 'system'));
+        setLogs(
+          items.filter((item) => {
+            if (item.entityType === 'system') return false;
+            if (!isScopedAudit) return true;
+            return scopedEntitySet.has(item.entityType);
+          })
+        );
       })
       .catch((err) => {
         if (!active) return;
@@ -454,7 +471,31 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
     return () => {
       active = false;
     };
-  }, [isOpen, licenseId, period]);
+  }, [isOpen, licenseId, period, isScopedAudit, scopedEntitySet]);
+
+  const entityFilterOptions = useMemo<Array<{ id: EntityFilter; label: string }>>(() => {
+    if (!isScopedAudit) return defaultEntityFilterOptions;
+    const scopedOptions = scopedEntityTypes
+      .filter((type): type is Exclude<AuditEntityType, 'system'> => type !== 'system')
+      .map((type) => ({ id: type as EntityFilter, label: entityTypeLabel[type] || type }));
+    if (scopedOptions.length <= 1) return scopedOptions;
+    return [{ id: 'all', label: 'Todos os módulos desta tela' }, ...scopedOptions];
+  }, [isScopedAudit, scopedEntityTypes]);
+
+  const scopeTitle = useMemo(() => {
+    if (!isScopedAudit) return 'Auditoria do Sistema';
+    const labels = scopedEntityTypes
+      .filter((type): type is Exclude<AuditEntityType, 'system'> => type !== 'system')
+      .map((type) => entityTypeLabel[type] || type);
+    if (labels.length === 0) return 'Auditoria da Tela';
+    if (labels.length === 1) return `Auditoria de ${labels[0]}`;
+    return `Auditoria de ${labels.join(', ')}`;
+  }, [isScopedAudit, scopedEntityTypes]);
+
+  const scopeSubtitle = useMemo(() => {
+    if (!isScopedAudit) return 'Resumo de tudo que foi criado, alterado ou excluído.';
+    return 'Resumo do que foi criado, alterado ou excluído neste módulo.';
+  }, [isScopedAudit]);
 
   const filteredLogs = useMemo(() => {
     const searchTerm = search.trim().toLowerCase();
@@ -497,7 +538,8 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
     }));
   }, [groupedLogs]);
 
-  const hasActiveFilters = operation !== 'all' || entityFilter !== 'all' || search.trim() !== '';
+  const hasActiveFilters =
+    operation !== 'all' || entityFilter !== scopedDefaultEntityFilter || search.trim() !== '';
   const newestLog = filteredLogs[0] || null;
 
   if (!isOpen) return null;
@@ -505,31 +547,40 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
   return (
     <div className="bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300">
       <div className="w-full px-4 sm:px-6 pt-6 relative z-10">
-        <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4 space-y-3">
+        <div className="max-w-7xl mx-auto">
+        <div className="mm-subheader mm-subheader-panel">
+              <div className="space-y-2 mm-subheader-stack">
               <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
                 <div className="h-8 w-8" aria-hidden="true" />
                 <div className="min-w-0 text-center">
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Auditoria do Sistema</p>
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{scopeTitle}</p>
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
-                    Resumo de tudo que foi criado, alterado ou excluído.
+                    {scopeSubtitle}
                   </p>
                 </div>
-                <div className="h-8 w-8" aria-hidden="true" />
+                <div className="min-w-[32px]" />
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-                <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Eventos no período</p>
-                <p className="text-lg font-semibold">{periodStats.total}</p>
+                <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Eventos no período</p>
+                <p className="mm-subheader-metric-value">{periodStats.total}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Após filtros</p>
-                <p className="text-lg font-semibold">{filteredStats.total}</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Após filtros</p>
+                <p className="mm-subheader-metric-value">{filteredStats.total}</p>
               </div>
-              {(['insercao', 'edicao', 'exclusao', 'outro'] as const).map((key) => (
-                <div key={key} className={`rounded-xl border px-3 py-2 ${operationMeta[key].cardClass}`}>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-200">{operationMeta[key].label}</p>
-                  <p className="text-lg font-semibold">{filteredStats[key]}</p>
+              {(
+                [
+                  { key: 'insercao', valueClass: 'text-emerald-600 dark:text-emerald-400' },
+                  { key: 'edicao', valueClass: 'text-amber-600 dark:text-amber-400' },
+                  { key: 'exclusao', valueClass: 'text-rose-600 dark:text-rose-400' },
+                  { key: 'outro', valueClass: 'text-slate-600 dark:text-slate-400' }
+                ] as const
+              ).map(({ key, valueClass }) => (
+                <div key={key} className="mm-subheader-metric-card">
+                  <p className="mm-subheader-metric-label">{operationMeta[key].label}</p>
+                  <p className={`mm-subheader-metric-value ${valueClass}`}>{filteredStats[key]}</p>
                 </div>
               ))}
               </div>
@@ -539,6 +590,12 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
                 <Clock size={12} />
                 {periodLabel[period]}
               </span>
+              {isScopedAudit ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-indigo-400/35 bg-indigo-500/10 px-2 py-1 text-indigo-300">
+                  <ShieldCheck size={12} />
+                  Módulo filtrado
+                </span>
+              ) : null}
               <span className="inline-flex items-center gap-1 rounded-full border border-zinc-200 dark:border-zinc-700 px-2 py-1">
                 Dias com movimentações: {groupedLogs.length}
               </span>
@@ -555,13 +612,15 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
                 </span>
               ) : null}
               </div>
+              </div>
+        </div>
         </div>
       </div>
 
       <main className="w-full px-4 sm:px-6 pt-[var(--mm-content-gap,16px)] pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="space-y-4">
           <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#111114] p-3 space-y-2">
-            <div className="grid gap-2 lg:grid-cols-[1fr_auto_auto_auto]">
+            <div className={`grid gap-2 ${isScopedAudit ? 'lg:grid-cols-[1fr_auto_auto]' : 'lg:grid-cols-[1fr_auto_auto_auto]'}`}>
               <div className="flex items-center gap-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-1 py-1">
                 {([
                   { id: 'today' as const, label: 'Hoje' },
@@ -598,26 +657,28 @@ const AuditLogModal: React.FC<AuditLogModalProps> = ({ isOpen, licenseId }) => {
                 </select>
               </div>
 
-              <div className="flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3">
-                <CalendarDays size={14} className="text-zinc-400" />
-                <select
-                  value={entityFilter}
-                  onChange={(event) => setEntityFilter(event.target.value as EntityFilter)}
-                  className="h-10 bg-transparent text-sm outline-none text-zinc-700 dark:text-zinc-200"
-                >
-                  {entityFilterOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!isScopedAudit && (
+                <div className="flex items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3">
+                  <CalendarDays size={14} className="text-zinc-400" />
+                  <select
+                    value={entityFilter}
+                    onChange={(event) => setEntityFilter(event.target.value as EntityFilter)}
+                    className="h-10 bg-transparent text-sm outline-none text-zinc-700 dark:text-zinc-200"
+                  >
+                    {entityFilterOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <button
                 type="button"
                 onClick={() => {
                   setOperation('all');
-                  setEntityFilter('all');
+                  setEntityFilter(scopedDefaultEntityFilter);
                   setSearch('');
                 }}
                 disabled={!hasActiveFilters}

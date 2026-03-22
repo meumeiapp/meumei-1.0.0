@@ -1,6 +1,6 @@
 // ... existing imports ...
 import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
-import { CreditCard as CardIcon, Calendar, CheckSquare, Square, DollarSign, Wallet, AlertTriangle, Pencil, X, Plus, Trash2, Lock, History } from 'lucide-react';
+import { CreditCard as CardIcon, Calendar, CheckSquare, Square, DollarSign, Wallet, AlertTriangle, Pencil, X, Plus, Trash2, Lock } from 'lucide-react';
 import { Expense, CreditCard, Account } from '../types';
 import PayInvoiceModal from './PayInvoiceModal';
 import NewCreditCardModal from './NewCreditCardModal';
@@ -35,6 +35,71 @@ interface InvoicesViewProps {
   onUpdateCategories: (categories: string[]) => void;
   onAddCategory?: (name: string) => Promise<void> | void;
 }
+
+type CardListSortKey = 'title' | 'brand' | 'status' | 'dueDay' | 'nature' | 'limit';
+type SortDirection = 'asc' | 'desc';
+
+interface CardStatusSummary {
+  label: string;
+  className: string;
+  rank: number;
+  title: string;
+}
+
+const normalizeCardBrand = (brand?: string) => (brand || '').trim().toLowerCase();
+
+const CardBrandLogo: React.FC<{ brand?: string }> = ({ brand }) => {
+  const normalizedBrand = normalizeCardBrand(brand);
+
+  if (normalizedBrand.includes('elo')) {
+    return (
+      <span className="inline-flex h-6 w-11 items-center justify-center rounded-md border border-white/15 bg-white/5 px-1">
+        <img src="/elo-icon.svg" alt="Elo" className="h-4 w-auto object-contain" loading="lazy" />
+      </span>
+    );
+  }
+
+  if (normalizedBrand.includes('master')) {
+    return (
+      <span className="inline-flex h-6 w-11 items-center justify-center rounded-md border border-white/15 bg-white/5 px-1">
+        <span className="relative h-3.5 w-6">
+          <span className="absolute left-0 top-0 h-3.5 w-3.5 rounded-full bg-red-500/90" />
+          <span className="absolute right-0 top-0 h-3.5 w-3.5 rounded-full bg-amber-400/90" />
+        </span>
+      </span>
+    );
+  }
+
+  if (normalizedBrand.includes('visa')) {
+    return (
+      <span className="inline-flex h-6 min-w-11 items-center justify-center rounded-md border border-blue-300/40 bg-blue-500/15 px-2 text-[9px] font-bold uppercase tracking-[0.08em] text-blue-200">
+        Visa
+      </span>
+    );
+  }
+
+  if (normalizedBrand.includes('amex')) {
+    return (
+      <span className="inline-flex h-6 min-w-11 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 text-[9px] font-bold uppercase tracking-[0.08em] text-cyan-100">
+        Amex
+      </span>
+    );
+  }
+
+  if (normalizedBrand.includes('hiper')) {
+    return (
+      <span className="inline-flex h-6 min-w-11 items-center justify-center rounded-md border border-rose-300/40 bg-rose-500/15 px-2 text-[9px] font-bold uppercase tracking-[0.08em] text-rose-100">
+        Hiper
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex h-6 min-w-11 items-center justify-center rounded-md border border-white/15 bg-white/5 px-2 text-[9px] font-semibold uppercase tracking-[0.08em] text-zinc-200">
+      {brand || 'Cartão'}
+    </span>
+  );
+};
 
 const InvoicesView: React.FC<InvoicesViewProps> = ({ 
   onBack, 
@@ -75,6 +140,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [subHeaderHeight, setSubHeaderHeight] = useState(0);
   const [headerFill, setHeaderFill] = useState({ top: 0, height: 0 });
   const [topAdjust, setTopAdjust] = useState(0);
+  const [desktopCardSort, setDesktopCardSort] = useState<{ key: CardListSortKey; direction: SortDirection } | null>(null);
 
   useEffect(() => {
       console.info('[cards] view', { route: 'faturas' });
@@ -170,6 +236,27 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   const selectedCard = safeCreditCards.find(c => c.id === selectedCardId);
   const selectedCardColor = selectedCard ? getCardColor(selectedCard) : '#6366f1';
   const editExpenseLabel = getPrimaryActionLabel('Despesa', true);
+  const totalCardLimits = useMemo(
+    () =>
+      safeCreditCards.reduce((sum, card) => {
+        if (typeof card.limit !== 'number' || !Number.isFinite(card.limit)) return sum;
+        return sum + Math.max(0, card.limit);
+      }, 0),
+    [safeCreditCards]
+  );
+  const desktopCardListColumns =
+    'minmax(190px,2fr) minmax(126px,0.95fr) minmax(120px,0.9fr) minmax(104px,0.8fr) minmax(84px,0.65fr) minmax(130px,0.95fr) 72px';
+  const viewMonthBaseDate = viewDate
+      ? new Date(viewDate.getFullYear(), viewDate.getMonth(), 1)
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const viewMonthKey = `${viewMonthBaseDate.getFullYear()}-${String(viewMonthBaseDate.getMonth() + 1).padStart(2, '0')}`;
+  const viewMonthLabel = viewMonthBaseDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const resolveInvoiceMonthKey = (expense: Expense) => {
+      const sourceDate = expense.dueDate || expense.date;
+      const parsed = new Date(`${sourceDate}T12:00:00`);
+      if (Number.isNaN(parsed.getTime())) return '';
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+  };
   const pendingByCardStats = useMemo(() => {
       const stats = new Map<string, { pendingTotal: number; pendingCount: number; openMonths: number }>();
       const monthsByCard = new Map<string, Set<string>>();
@@ -187,9 +274,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           base.pendingCount += 1;
           stats.set(cardId, base);
 
-          const monthKey = typeof exp.dueDate === 'string' && exp.dueDate.length >= 7
-              ? exp.dueDate.slice(0, 7)
-              : new Date(exp.date + 'T12:00:00').toISOString().slice(0, 7);
+          const monthKey = resolveInvoiceMonthKey(exp);
+          if (!monthKey) return;
           const monthSet = monthsByCard.get(cardId) || new Set<string>();
           monthSet.add(monthKey);
           monthsByCard.set(cardId, monthSet);
@@ -203,6 +289,134 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
       return stats;
   }, [expenses, safeCreditCards]);
+  const cardStatusByViewMonth = useMemo(() => {
+      const expensesByCard = new Map<string, Expense[]>();
+      safeCreditCards.forEach((card) => expensesByCard.set(card.id, []));
+
+      expenses.forEach((exp) => {
+          const cardId = resolveExpenseCardId(exp as Expense & { creditCardId?: string });
+          if (!cardId || !isCreditPaymentMethod(exp.paymentMethod)) return;
+          if (resolveInvoiceMonthKey(exp) !== viewMonthKey) return;
+          const list = expensesByCard.get(cardId) || [];
+          list.push(exp);
+          expensesByCard.set(cardId, list);
+      });
+
+      const statusMap = new Map<string, CardStatusSummary>();
+      expensesByCard.forEach((list, cardId) => {
+          if (list.length === 0) {
+              statusMap.set(cardId, {
+                  label: 'Sem fatura',
+                  className: 'text-zinc-300 border-zinc-400/40 bg-zinc-500/10',
+                  rank: 0,
+                  title: `Sem lançamentos em ${viewMonthLabel}`
+              });
+              return;
+          }
+
+          const pendingCount = list.filter((expense) => expense.status === 'pending').length;
+          if (pendingCount === 0) {
+              statusMap.set(cardId, {
+                  label: 'Pago',
+                  className: 'text-emerald-200 border-emerald-300/40 bg-emerald-500/15',
+                  rank: 3,
+                  title: `Fatura paga em ${viewMonthLabel}`
+              });
+              return;
+          }
+
+          if (pendingCount === list.length) {
+              statusMap.set(cardId, {
+                  label: 'Em aberto',
+                  className: 'text-amber-200 border-amber-300/40 bg-amber-500/15',
+                  rank: 1,
+                  title: `${pendingCount} lançamento(s) pendente(s) em ${viewMonthLabel}`
+              });
+              return;
+          }
+
+          statusMap.set(cardId, {
+              label: 'Parcial',
+              className: 'text-amber-100 border-amber-300/40 bg-amber-500/10',
+              rank: 2,
+              title: `${pendingCount} de ${list.length} lançamento(s) pendente(s) em ${viewMonthLabel}`
+          });
+      });
+
+      return statusMap;
+  }, [expenses, safeCreditCards, viewMonthKey, viewMonthLabel]);
+
+  const toggleDesktopCardSort = (key: CardListSortKey) => {
+      setDesktopCardSort((prev) => {
+          if (!prev || prev.key !== key) return { key, direction: 'desc' };
+          if (prev.direction === 'desc') return { key, direction: 'asc' };
+          return null;
+      });
+  };
+
+  const renderCardSortButton = (key: CardListSortKey, label: string, align: 'left' | 'right' = 'left') => {
+      const isActive = desktopCardSort?.key === key;
+      const indicator = isActive ? (desktopCardSort?.direction === 'asc' ? '↑' : '↓') : '↕';
+      return (
+          <button
+              type="button"
+              onClick={() => toggleDesktopCardSort(key)}
+              className={`inline-flex w-full min-w-0 items-center gap-1 transition-colors hover:text-zinc-700 dark:hover:text-zinc-200 ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+              title={`Ordenar por ${label}`}
+          >
+              <span className="whitespace-nowrap">{label}</span>
+              <span className={`text-[9px] ${isActive ? 'text-emerald-600 dark:text-emerald-300' : 'text-zinc-500/70'}`}>
+                  {indicator}
+              </span>
+          </button>
+      );
+  };
+
+  const sortedCreditCards = useMemo(() => {
+      if (!desktopCardSort) return safeCreditCards;
+
+      const compareText = (a: string, b: string) =>
+          a.localeCompare(b, 'pt-BR', { sensitivity: 'base' });
+
+      const sorted = [...safeCreditCards].sort((a, b) => {
+          let result = 0;
+
+          switch (desktopCardSort.key) {
+              case 'title':
+                  result = compareText(a.name || '', b.name || '');
+                  break;
+              case 'brand':
+                  result = compareText(a.brand || '', b.brand || '');
+                  break;
+              case 'status': {
+                  const aRank = cardStatusByViewMonth.get(a.id)?.rank ?? 0;
+                  const bRank = cardStatusByViewMonth.get(b.id)?.rank ?? 0;
+                  result = aRank - bRank;
+                  break;
+              }
+              case 'dueDay':
+                  result = (a.dueDay || 0) - (b.dueDay || 0);
+                  break;
+              case 'nature':
+                  result = compareText(a.nature || '', b.nature || '');
+                  break;
+              case 'limit': {
+                  const aLimit = typeof a.limit === 'number' ? a.limit : -1;
+                  const bLimit = typeof b.limit === 'number' ? b.limit : -1;
+                  result = aLimit - bLimit;
+                  break;
+              }
+          }
+
+          if (result === 0) {
+              result = compareText(a.name || '', b.name || '');
+          }
+
+          return desktopCardSort.direction === 'asc' ? result : -result;
+      });
+
+      return sorted;
+  }, [cardStatusByViewMonth, desktopCardSort, safeCreditCards]);
   const pendingSelectableIdsByCard = useMemo(() => {
       const map = new Map<string, string[]>();
       safeCreditCards.forEach((card) => map.set(card.id, []));
@@ -294,7 +508,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
 
   useEffect(() => {
-      if (!isMobile || typeof window === 'undefined') return;
+      if (typeof window === 'undefined') return;
       const handleDockClick = () => {
           setDrawerCard(null);
           setIsPayModalOpen(false);
@@ -303,9 +517,13 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           setIsInvoiceMonthsSheetOpen(false);
           setExpandedMonthKey(null);
       };
+      window.addEventListener('mm:dock-click', handleDockClick);
       window.addEventListener('mm:mobile-dock-click', handleDockClick);
-      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
-  }, [isMobile]);
+      return () => {
+          window.removeEventListener('mm:dock-click', handleDockClick);
+          window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+      };
+  }, []);
 
   // Handlers
   const toggleSelection = (id: string) => {
@@ -436,7 +654,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const mainWrapperClass = isMobile
     ? 'space-y-6'
-    : 'w-full px-4 sm:px-6 space-y-6 mt-[var(--mm-content-gap)] flex-1 min-h-0';
+    : 'max-w-7xl mx-auto w-full px-4 sm:px-6 space-y-6 mt-[var(--mm-content-gap)] flex-1 min-h-0';
   const editFieldId = (suffix: string) =>
     `invoice-edit-${editingExpense?.id || 'current'}-${suffix}`;
   const openInvoicesForCard = (cardId: string) => {
@@ -613,38 +831,41 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
           </div>
 
           <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+              <div className="grid grid-cols-3 gap-2">
+                  <div className={`${mobileCardRadiusSm} mm-subheader-metric-card`}>
+                      <p className="mm-subheader-metric-label">Selecionado</p>
+                      <p className="mm-subheader-metric-value truncate">
                           R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                   </div>
-                  <div className={`${mobileCardRadiusSm} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+                  <div className={`${mobileCardRadiusSm} mm-subheader-metric-card`}>
+                      <p className="mm-subheader-metric-label">Itens</p>
+                      <p className="mm-subheader-metric-value truncate">
                           {selectedExpenseIds.length}
+                      </p>
+                  </div>
+                  <div className={`${mobileCardRadiusSm} mm-subheader-metric-card`}>
+                      <p className="mm-subheader-metric-label">Cartões</p>
+                      <p className="mm-subheader-metric-value truncate">
+                          {safeCreditCards.length}
                       </p>
                   </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className={isMobile ? 'flex flex-wrap items-center justify-center gap-2' : 'mm-header-actions'}>
                   {onOpenAudit && (
                       <button
                           onClick={onOpenAudit}
-                          className={`mm-btn-base mm-btn-secondary ${mobileCardRadiusSm} min-w-[168px] px-6`}
+                          className={`mm-btn-base mm-btn-secondary mm-btn-secondary-rose ${mobileCardRadiusSm}`}
                           title="Auditoria do dia"
                       >
-                          <History size={14} />
                           Auditoria
                       </button>
                   )}
                   <button
                       onClick={() => setIsPayModalOpen(true)}
                       disabled={selectedExpenseIds.length === 0}
-                      className={`mm-btn-base ${mobileCardRadius} min-w-[152px] px-5 ${
-                        selectedExpenseIds.length > 0 ? 'mm-btn-primary mm-btn-primary-rose' : 'mm-btn-secondary'
-                      }`}
+                      className={`mm-btn-base mm-btn-secondary mm-btn-secondary-rose ${mobileCardRadiusSm}`}
                   >
                       Pagar Fatura
                   </button>
@@ -652,7 +873,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                       <button
                           onClick={handleOpenNewCard}
                           data-tour-anchor="cards-new"
-                          className="mm-btn-base mm-btn-primary mm-btn-primary-rose min-w-[220px] px-8"
+                          className="mm-btn-base mm-btn-primary mm-btn-primary-rose"
                       >
                           Novo Cartão
                       </button>
@@ -663,8 +884,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
   );
 
   const summarySection = isMobile ? headerSection : (
-      <div className="w-full px-4 sm:px-6 relative z-10 pt-6">
-        <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 relative z-10 pt-6">
+        <div className="mm-subheader mm-subheader-panel">
               {headerSection}
           </div>
       </div>
@@ -674,6 +895,16 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       <section className={`bg-white dark:bg-[#151517] ${mobileCardRadius} border border-zinc-200 dark:border-zinc-800 p-3 shadow-sm`}>
           <div className="flex items-center justify-between gap-3 mb-2">
               <h2 className={`${isMobile ? 'text-sm' : 'text-sm'} font-semibold text-zinc-900 dark:text-white`}>Cartões de Crédito</h2>
+              {!isMobile && (
+                  <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+                          Soma total dos limites
+                      </p>
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                          R$ {formatCurrency(totalCardLimits)}
+                      </p>
+                  </div>
+              )}
           </div>
 
           {safeCreditCards.length === 0 ? (
@@ -691,13 +922,33 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
               </div>
           ) : (
               <div className="space-y-1">
-                  {safeCreditCards.map((card, index) => {
+                  {!isMobile && (
+                      <div
+                          className="grid items-center gap-2 px-3 py-1 text-[10px] tracking-[0.08em] text-zinc-500 dark:text-zinc-400"
+                          style={{ gridTemplateColumns: desktopCardListColumns }}
+                      >
+                          {renderCardSortButton('title', 'Título')}
+                          {renderCardSortButton('brand', 'Bandeira')}
+                          {renderCardSortButton('status', 'Status')}
+                          {renderCardSortButton('dueDay', 'Vencimento')}
+                          {renderCardSortButton('nature', 'Natureza')}
+                          {renderCardSortButton('limit', 'Limite', 'right')}
+                          <span className="text-center">Ações</span>
+                      </div>
+                  )}
+                  {sortedCreditCards.map((card, index) => {
                       const limitLabel =
                           typeof card.limit === 'number' && card.limit > 0
                               ? `R$ ${formatCurrency(card.limit)}`
                               : 'Sem limite';
                       const rowBg = index % 2 === 0 ? 'bg-white/5 dark:bg-white/5' : 'bg-transparent';
                       const isActive = card.id === selectedCardId;
+                      const monthStatus = cardStatusByViewMonth.get(card.id) || {
+                          label: 'Sem fatura',
+                          className: 'text-zinc-300 border-zinc-400/40 bg-zinc-500/10',
+                          rank: 0,
+                          title: `Sem lançamentos em ${viewMonthLabel}`
+                      };
                       return (
                           <div key={card.id}>
                               {isMobile ? (
@@ -732,7 +983,8 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                                   setSelectedCardId(card.id);
                                               }
                                           }}
-                                          className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left"
+                                          className="grid w-full items-center gap-2 px-3 py-2 text-left"
+                                          style={{ gridTemplateColumns: desktopCardListColumns }}
                                           aria-label={`Selecionar cartão ${card.name}`}
                                       >
                                           <div className="flex items-center gap-2 min-w-0">
@@ -745,14 +997,26 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                                               <span className="text-sm font-medium truncate text-zinc-900 dark:text-zinc-100">
                                                   {card.name}
                                               </span>
-                                              <span className="text-[10px] text-zinc-500 truncate">
-                                                  {card.brand || 'Cartão'}
-                                              </span>
                                           </div>
-                                          <div className="flex items-center gap-3 shrink-0">
-                                              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-300">
-                                                  {limitLabel}
-                                              </span>
+                                          <div className="min-w-0">
+                                              <CardBrandLogo brand={card.brand} />
+                                          </div>
+                                          <span
+                                              className={`inline-flex h-5 w-[88px] items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${monthStatus.className}`}
+                                              title={monthStatus.title}
+                                          >
+                                              {monthStatus.label}
+                                          </span>
+                                          <span className="text-xs text-zinc-800 dark:text-zinc-200">
+                                              Dia {card.dueDay}
+                                          </span>
+                                          <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                                              {card.nature || '-'}
+                                          </span>
+                                          <span className="text-sm font-semibold text-right text-zinc-900 dark:text-zinc-300">
+                                              {limitLabel}
+                                          </span>
+                                          <div className="flex items-center justify-center gap-1 shrink-0">
                                               <button
                                                   type="button"
                                                   onClick={(event) => {
@@ -1075,6 +1339,11 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
       setExpandedExpenseId(null);
   };
 
+  const invoiceDockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const invoiceDockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const invoiceDockMaxHeight =
+      'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
+
   const handleReopenInvoice = () => {
       if (!expandedMonthKey || expandedMonthPaidIds.length === 0) return;
       onReopenInvoice(expandedMonthPaidIds);
@@ -1231,15 +1500,21 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
               })()}
           </div>
       ) : (
-          <div className="fixed inset-0 z-[1200] flex items-end justify-center">
+          <div className="fixed inset-0 z-[1200]">
               <button
                   type="button"
                   onClick={closeExpandedMonth}
-                  className="absolute inset-0 bg-black/60 z-0"
+                  className="absolute left-0 right-0 bg-black/60 backdrop-blur-sm"
+                  style={{ top: invoiceDockTopOffset, bottom: invoiceDockBottomOffset }}
                   aria-label="Fechar fatura"
               />
-              <div className="relative w-full max-w-7xl px-4 sm:px-6 pb-6 z-10">
-                  <div className="relative bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 max-h-[80vh] flex flex-col">
+              <div
+                  className="absolute left-0 right-0 bg-white dark:bg-[#101014] text-zinc-900 dark:text-white border border-zinc-200 dark:border-zinc-800 shadow-2xl px-5 py-5 flex flex-col overflow-hidden"
+                  style={{
+                      bottom: invoiceDockBottomOffset,
+                      maxHeight: `max(320px, ${invoiceDockMaxHeight})`
+                  }}
+              >
                   <div className="flex items-center justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
                       <div>
                           <p className="text-sm font-semibold">Fatura de {expandedMonthLabel}</p>
@@ -1270,7 +1545,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                           </button>
                       </div>
                   </div>
-                  <div className="pt-3 flex-1 overflow-auto">
+                  <div className="pt-3 flex-1 min-h-0 overflow-auto">
                       <div className="space-y-3">
                           {expandedMonthExpenses.map((exp, index) => {
                               const isSelected = selectedExpenseIds.includes(exp.id);
@@ -1363,7 +1638,6 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                               );
                           })}
                       </div>
-                  </div>
                   </div>
               </div>
           </div>
@@ -1611,15 +1885,15 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                  <div className={`${mobileCardRadiusSm} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Selecionado</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+                  <div className={`${mobileCardRadiusSm} mm-subheader-metric-card mm-mobile-header-card text-center flex flex-col items-center justify-center`}>
+                      <p className="mm-subheader-metric-label">Selecionado</p>
+                      <p className="mm-subheader-metric-value">
                           R$ {selectedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                   </div>
-                  <div className={`${mobileCardRadiusSm} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2 text-center flex flex-col items-center justify-center`}>
-                      <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Itens</p>
-                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{selectedExpenseIds.length}</p>
+                  <div className={`${mobileCardRadiusSm} mm-subheader-metric-card mm-mobile-header-card text-center flex flex-col items-center justify-center`}>
+                      <p className="mm-subheader-metric-label">Itens</p>
+                      <p className="mm-subheader-metric-value">{selectedExpenseIds.length}</p>
                   </div>
               </div>
 
@@ -1627,12 +1901,7 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({
                   <button
                       type="button"
                       onClick={handleOpenNewCard}
-                      className="w-full rounded-xl mm-mobile-primary-cta text-white font-semibold py-2.5 text-sm shadow-lg transition active:scale-[0.98]"
-                      style={{
-                          borderColor: 'var(--mm-view-accent)',
-                          backgroundColor: 'var(--mm-view-accent)',
-                          boxShadow: '0 10px 20px color-mix(in oklab, var(--mm-view-accent) 25%, transparent)'
-                      }}
+                      className="w-full mm-btn-base mm-btn-primary mm-btn-primary-rose mm-mobile-primary-cta"
                   >
                       Novo cartão
                   </button>

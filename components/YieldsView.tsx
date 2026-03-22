@@ -2,7 +2,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { 
-  History,
   ChevronDown
 } from 'lucide-react';
 import { Account } from '../types';
@@ -127,7 +126,14 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   onOpenNewAccount
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingYield, setEditingYield] = useState<{ accountId: string; amount: number; date: string; notes: string } | null>(null);
+  const [editingYield, setEditingYield] = useState<{
+      id: string;
+      accountId: string;
+      amount: number;
+      date: string;
+      notes: string;
+      source: 'firestore' | 'legacy';
+  } | null>(null);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [goalInput, setGoalInput] = useState('');
   const goalInputIdMobile = 'yield-goal-input-mobile';
@@ -146,9 +152,19 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   const [chartCanvasWidth, setChartCanvasWidth] = useState(0);
   const [chartCanvasHeight, setChartCanvasHeight] = useState(0);
   const [isSummaryDockOpen, setIsSummaryDockOpen] = useState(false);
+  const [isEntriesDockOpen, setIsEntriesDockOpen] = useState(false);
+  const [entriesDockFilter, setEntriesDockFilter] = useState<{ day: number | null; accountId: string | null }>({
+      day: null,
+      accountId: null
+  });
   const recoveryLoggedRef = useRef(false);
   const isMobile = useIsMobile();
   const isCompactHeight = useIsCompactHeight();
+  const [desktopViewportWidth, setDesktopViewportWidth] = useState(() => {
+      if (typeof window === 'undefined') return 1440;
+      const viewport = window.visualViewport;
+      return Math.round(viewport?.width || window.innerWidth || 1440);
+  });
   const viewYear = viewDate.getFullYear();
   const viewMonth = viewDate.getMonth();
   const projectionHistoryWindowDays = 30;
@@ -181,15 +197,19 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   }, [isMobile]);
 
   useEffect(() => {
-      if (!isMobile || typeof window === 'undefined') return;
+      if (typeof window === 'undefined') return;
       const handleDockClick = () => {
           setIsModalOpen(false);
           setIsGoalModalOpen(false);
           setEditingYield(null);
       };
+      window.addEventListener('mm:dock-click', handleDockClick);
       window.addEventListener('mm:mobile-dock-click', handleDockClick);
-      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
-  }, [isMobile]);
+      return () => {
+          window.removeEventListener('mm:dock-click', handleDockClick);
+          window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+      };
+  }, []);
 
   useEffect(() => {
       if (isMobile) return;
@@ -215,6 +235,22 @@ const YieldsView: React.FC<YieldsViewProps> = ({
           window.removeEventListener('resize', measure);
       };
   }, [isMobile]);
+
+  useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const updateWidth = () => {
+          const viewport = window.visualViewport;
+          const nextWidth = Math.round(viewport?.width || window.innerWidth || 1440);
+          setDesktopViewportWidth((prev) => (prev === nextWidth ? prev : nextWidth));
+      };
+      updateWidth();
+      window.addEventListener('resize', updateWidth);
+      window.visualViewport?.addEventListener('resize', updateWidth);
+      return () => {
+          window.removeEventListener('resize', updateWidth);
+          window.visualViewport?.removeEventListener('resize', updateWidth);
+      };
+  }, []);
 
   // Filtra apenas contas de investimento (tratando contas sem tipo definido)
   const investmentAccounts = accounts.filter(acc => {
@@ -357,17 +393,36 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       source: 'firestore' | 'legacy';
       locked?: boolean;
       lockedReason?: 'decrypt_failed' | 'missing_salt' | 'epoch_mismatch';
+      createdAtMs?: number;
   };
 
   const normalizeNotes = (value?: string) =>
       yieldsService.normalizeNotes(value).toLowerCase();
 
+  const buildEntryCompositeKey = (entry: { accountId: string; date: string; amount: number; notes?: string }) => {
+      const amountKey = Math.round((entry.amount || 0) * 100);
+      return `${entry.accountId}|${entry.date}|${amountKey}|${normalizeNotes(entry.notes)}`;
+  };
+
+  const sortYieldEntriesDesc = (a: YieldEntry, b: YieldEntry) => {
+      const dateDiff = parseHistoryDate(b.date).getTime() - parseHistoryDate(a.date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      const createdAtDiff = (b.createdAtMs || 0) - (a.createdAtMs || 0);
+      if (createdAtDiff !== 0) return createdAtDiff;
+      if (a.id && b.id) return b.id.localeCompare(a.id);
+      if (a.id) return -1;
+      if (b.id) return 1;
+      return (b.amount || 0) - (a.amount || 0);
+  };
+
   const buildEntryKey = (entry: { accountId: string; date: string; amount: number; notes?: string; id?: string; lockedReason?: string }) => {
       if (entry.lockedReason === 'epoch_mismatch' && entry.id) {
           return `locked:${entry.id}`;
       }
-      const amountKey = Math.round((entry.amount || 0) * 100);
-      return `${entry.accountId}|${entry.date}|${amountKey}|${normalizeNotes(entry.notes)}`;
+      if (entry.id) {
+          return `id:${entry.id}`;
+      }
+      return buildEntryCompositeKey(entry);
   };
 
   const legacyYieldEntries = useMemo<YieldEntry[]>(() => {
@@ -377,6 +432,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
           history.forEach(item => {
               if (!item.date) return;
               entries.push({
+                  id: item.id,
                   accountId: account.id,
                   accountName: account.name,
                   date: item.date,
@@ -403,7 +459,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
           }
       });
 
-      return entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      return entries.sort(sortYieldEntriesDesc);
   }, [investmentAccounts]);
 
   const firestoreYieldEntries = useMemo<YieldEntry[]>(() => {
@@ -422,7 +478,10 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                   color: account?.color,
                   source: 'firestore' as const,
                   locked: item.locked,
-                  lockedReason: item.lockedReason
+                  lockedReason: item.lockedReason,
+                  createdAtMs: item.createdAt && typeof (item.createdAt as { toMillis?: () => number }).toMillis === 'function'
+                      ? (item.createdAt as { toMillis: () => number }).toMillis()
+                      : undefined
               };
           })
           .filter((entry): entry is YieldEntry => Boolean(entry));
@@ -446,16 +505,27 @@ const YieldsView: React.FC<YieldsViewProps> = ({
 
   const mergedYieldEntries = useMemo<YieldEntry[]>(() => {
       const merged = new Map<string, YieldEntry>();
+      const firestoreCompositeCounts = new Map<string, number>();
       firestoreYieldEntries.forEach(entry => {
           merged.set(buildEntryKey(entry), entry);
+          const compositeKey = buildEntryCompositeKey(entry);
+          firestoreCompositeCounts.set(compositeKey, (firestoreCompositeCounts.get(compositeKey) || 0) + 1);
       });
+      const legacyDuplicateUsage = new Map<string, number>();
       legacyYieldEntries.forEach(entry => {
+          const compositeKey = buildEntryCompositeKey(entry);
+          const firestoreCount = firestoreCompositeCounts.get(compositeKey) || 0;
+          const alreadySkipped = legacyDuplicateUsage.get(compositeKey) || 0;
+          if (alreadySkipped < firestoreCount) {
+              legacyDuplicateUsage.set(compositeKey, alreadySkipped + 1);
+              return;
+          }
           const key = buildEntryKey(entry);
           if (!merged.has(key)) {
               merged.set(key, entry);
           }
       });
-      return Array.from(merged.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      return Array.from(merged.values()).sort(sortYieldEntriesDesc);
   }, [firestoreYieldEntries, legacyYieldEntries]);
 
   useEffect(() => {
@@ -487,14 +557,16 @@ const YieldsView: React.FC<YieldsViewProps> = ({
 
   const handleSaveYield = async (data: { accountId: string, amount: number, date: string, notes: string }) => {
       const isEditing = Boolean(editingYield);
-      const yieldId = yieldsService.buildYieldId(data.accountId, data.date);
+      const yieldId = isEditing
+          ? editingYield!.id
+          : yieldsService.createYieldId(data.accountId, data.date);
       const targetAccount = accounts.find(acc => acc.id === data.accountId);
       if (targetAccount?.locked) {
           return;
       }
       const mutationId = isEditing
-          ? `yield:edit:${data.accountId}:${editingYield?.date}:${editingYield?.amount}->${data.amount}`
-          : `yield:add:${data.accountId}:${data.date}:${data.amount}`;
+          ? `yield:edit:${yieldId}:${editingYield?.amount}->${data.amount}`
+          : `yield:add:${yieldId}:${data.amount}`;
       const shouldApply = shouldApplyLegacyBalanceMutation(mutationId, {
           source: 'yields_view',
           action: isEditing ? 'edit' : 'add',
@@ -512,21 +584,38 @@ const YieldsView: React.FC<YieldsViewProps> = ({
           }
 
           const yieldHistory = acc.yieldHistory ? [...acc.yieldHistory] : [];
-          const yieldIndex = yieldHistory.findIndex(entry => entry.date === data.date);
+          const history = acc.balanceHistory ? [...acc.balanceHistory] : [];
 
           if (editingYield) {
               const diff = data.amount - editingYield.amount;
               const newBalance = acc.currentBalance + diff;
-              const history = acc.balanceHistory ? [...acc.balanceHistory] : [];
-              const entryIndex = history.findIndex(h => h.date === editingYield.date);
-              if (entryIndex >= 0) {
-                  history[entryIndex] = { ...history[entryIndex], value: history[entryIndex].value + diff };
+              const balanceEntryIndex = history.findIndex(h => h.date === editingYield.date);
+              if (balanceEntryIndex >= 0) {
+                  history[balanceEntryIndex] = { ...history[balanceEntryIndex], value: history[balanceEntryIndex].value + diff };
+              } else if (Math.abs(diff) > 0.0001) {
+                  history.push({ date: editingYield.date, value: newBalance });
+                  history.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
               }
 
+              const normalizedEditingNotes = normalizeNotes(editingYield.notes);
+              const yieldIndex = yieldHistory.findIndex((entry) => {
+                  if (entry.id && editingYield.id) return entry.id === editingYield.id;
+                  const sameDate = entry.date === editingYield.date;
+                  const sameAmount = Math.abs(Number(entry.amount || 0) - Number(editingYield.amount || 0)) < 0.009;
+                  const sameNotes = normalizeNotes(entry.notes) === normalizedEditingNotes;
+                  return sameDate && sameAmount && sameNotes;
+              });
+              const nextEntry = {
+                  ...(yieldIndex >= 0 ? yieldHistory[yieldIndex] : {}),
+                  id: yieldId,
+                  date: data.date,
+                  amount: data.amount,
+                  notes: data.notes
+              };
               if (yieldIndex >= 0) {
-                  yieldHistory[yieldIndex] = { ...yieldHistory[yieldIndex], amount: data.amount, notes: data.notes };
+                  yieldHistory[yieldIndex] = nextEntry;
               } else {
-                  yieldHistory.push({ date: data.date, amount: data.amount, notes: data.notes });
+                  yieldHistory.push(nextEntry);
               }
 
               return {
@@ -541,20 +630,18 @@ const YieldsView: React.FC<YieldsViewProps> = ({
           }
 
           const newBalance = acc.currentBalance + data.amount;
-          const history = acc.balanceHistory ? [...acc.balanceHistory] : [];
-          const entryIndex = history.findIndex(h => h.date === data.date);
-          if (entryIndex >= 0) {
-              history[entryIndex].value += data.amount; 
+          const balanceEntryIndex = history.findIndex(h => h.date === data.date);
+          if (balanceEntryIndex >= 0) {
+              history[balanceEntryIndex] = {
+                  ...history[balanceEntryIndex],
+                  value: history[balanceEntryIndex].value + data.amount
+              };
           } else {
               history.push({ date: data.date, value: newBalance });
               history.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
           }
 
-          if (yieldIndex >= 0) {
-              yieldHistory[yieldIndex] = { ...yieldHistory[yieldIndex], amount: data.amount, notes: data.notes };
-          } else {
-              yieldHistory.push({ date: data.date, amount: data.amount, notes: data.notes });
-          }
+          yieldHistory.push({ id: yieldId, date: data.date, amount: data.amount, notes: data.notes });
 
           return {
               ...acc,
@@ -575,16 +662,20 @@ const YieldsView: React.FC<YieldsViewProps> = ({
 
       if (licenseId && licenseCryptoEpoch) {
           try {
-              await yieldsService.addYield(licenseId, {
+              const persistedYieldId = await yieldsService.addYield(licenseId, {
                   accountId: data.accountId,
                   amount: data.amount,
                   date: data.date,
-                  notes: data.notes
+                  notes: data.notes,
+                  yieldId
               }, licenseCryptoEpoch);
+              if (!persistedYieldId) {
+                  throw new Error('yield_not_saved');
+              }
               if (isEditing && isMobile) {
                   console.info('[yields][mobile] edit_save_ok', {
                       accountId: data.accountId,
-                      yieldId
+                      yieldId: persistedYieldId
                   });
               }
               if (onAuditLog) {
@@ -594,7 +685,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                       actionType: 'yield_added',
                       description: `Rendimento lançado em ${accountName}: ${formatCurrency(data.amount)} (${new Date(`${data.date}T12:00:00`).toLocaleDateString('pt-BR')}).`,
                       entityType: 'yield',
-                      entityId: yieldId,
+                      entityId: persistedYieldId,
                       metadata: {
                           accountId: data.accountId,
                           accountName,
@@ -698,7 +789,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
           }
       });
       entriesByAccount.forEach(list => {
-          list.sort((a, b) => parseHistoryDate(b.date).getTime() - parseHistoryDate(a.date).getTime());
+          list.sort(sortYieldEntriesDesc);
       });
       return investmentAccounts.map(account => {
           const entries = entriesByAccount.get(account.id) ?? [];
@@ -720,6 +811,40 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       });
       return map;
   }, [monthlySummary]);
+
+  const monthlyEntriesForReview = useMemo(
+      () =>
+          monthlySummary
+              .flatMap(item => item.entries)
+              .sort(sortYieldEntriesDesc),
+      [monthlySummary]
+  );
+
+  const entriesDockItems = useMemo(() => {
+      return monthlyEntriesForReview.filter((entry) => {
+          if (entriesDockFilter.accountId && entry.accountId !== entriesDockFilter.accountId) return false;
+          if (entriesDockFilter.day !== null) {
+              const day = parseHistoryDate(entry.date).getDate();
+              if (day !== entriesDockFilter.day) return false;
+          }
+          return true;
+      });
+  }, [monthlyEntriesForReview, entriesDockFilter]);
+
+  const entriesDockAccountName = useMemo(() => {
+      if (!entriesDockFilter.accountId) return null;
+      return investmentAccounts.find((account) => account.id === entriesDockFilter.accountId)?.name || 'Conta';
+  }, [entriesDockFilter.accountId, investmentAccounts]);
+
+  const entriesDockTitle = entriesDockFilter.day !== null
+      ? `Lançamentos do dia ${String(entriesDockFilter.day).padStart(2, '0')}`
+      : 'Lançamentos do mês';
+
+  const entriesDockSubtitle = [
+      monthLabel,
+      entriesDockAccountName || 'Todas as contas',
+      `${entriesDockItems.length} ${entriesDockItems.length === 1 ? 'item' : 'itens'}`
+  ].join(' • ');
 
   const monthlyEntriesCount = useMemo(
       () => monthlySummary.reduce((sum, item) => sum + item.count, 0),
@@ -1213,11 +1338,14 @@ const YieldsView: React.FC<YieldsViewProps> = ({
   };
 
   const handleEditYield = (entry: YieldEntry) => {
+      const resolvedId = entry.id || yieldsService.buildYieldId(entry.accountId, entry.date);
       setEditingYield({
+          id: resolvedId,
           accountId: entry.accountId,
           amount: entry.amount,
           date: entry.date,
-          notes: entry.notes || ''
+          notes: entry.notes || '',
+          source: entry.source
       });
       setIsModalOpen(true);
   };
@@ -1226,6 +1354,16 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       setGoalInput(metaGoal.toString());
       setIsGoalModalOpen(true);
   };
+
+  const openEntriesDock = (filter?: { day?: number; accountId?: string }) => {
+      setEntriesDockFilter({
+          day: filter?.day ?? null,
+          accountId: filter?.accountId ?? null
+      });
+      setIsSummaryDockOpen(false);
+      setIsEntriesDockOpen(true);
+  };
+
   const handleOpenNewAccountFromSummary = () => {
       if (onOpenNewAccount) {
           onOpenNewAccount();
@@ -1233,8 +1371,10 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       }
       onBack();
   };
+  const isNarrowDesktopLayout = !isMobile && (isCompactHeight || desktopViewportWidth <= 1600);
+  const useStackedProjectionLayout = !isMobile && (isCompactHeight || desktopViewportWidth <= 1680);
   const weekLabels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
-  const summarySlotCount = 4;
+  const summarySlotCount = isNarrowDesktopLayout ? 3 : 4;
   const hasSummaryOverflow = investmentAccounts.length > summarySlotCount;
   const visibleSummaryAccounts = hasSummaryOverflow
       ? investmentAccounts.slice(0, summarySlotCount - 1)
@@ -1874,18 +2014,32 @@ const YieldsView: React.FC<YieldsViewProps> = ({
       );
   }
 
-  const blockLabelClass = 'text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400';
-  const blockValueClass = 'text-[12px] font-semibold text-zinc-900 dark:text-white';
-  const topBlockTitleClass = 'text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400';
-  const blockMetaClass = 'text-[10px] font-semibold text-zinc-300';
-  const calculatorActionButtonClass =
-      'inline-flex items-center justify-center h-8 w-[136px] rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-semibold shadow-lg shadow-indigo-900/20 transition';
+  const blockLabelClass = isNarrowDesktopLayout
+      ? 'text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400'
+      : 'text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400';
+  const blockValueClass = isNarrowDesktopLayout
+      ? 'text-[13px] font-semibold text-zinc-900 dark:text-white'
+      : 'text-[12px] font-semibold text-zinc-900 dark:text-white';
+  const topBlockTitleClass = isNarrowDesktopLayout
+      ? 'text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400'
+      : 'text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400';
+  const blockMetaClass = isNarrowDesktopLayout
+      ? 'text-[11px] font-semibold text-zinc-300'
+      : 'text-[10px] font-semibold text-zinc-300';
+  const calculatorActionButtonClass = isNarrowDesktopLayout
+      ? 'inline-flex items-center justify-center h-9 w-[152px] rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-semibold shadow-lg shadow-indigo-900/20 transition'
+      : 'inline-flex items-center justify-center h-8 w-[136px] rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[12px] font-semibold shadow-lg shadow-indigo-900/20 transition';
+  const calculatorActionPaddingClass = isNarrowDesktopLayout ? 'pr-[162px]' : 'pr-[146px]';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockMaxHeight =
+      'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
 
   return (
-    <div className="min-h-full mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 flex flex-col">
+    <div className="h-full min-h-0 mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 flex flex-col">
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-6 relative z-10">
         <div
-            className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4"
+            className="mm-subheader mm-subheader-panel w-full"
             data-tour-anchor="yields-summary"
         >
           <div className="space-y-2">
@@ -1893,27 +2047,28 @@ const YieldsView: React.FC<YieldsViewProps> = ({
               <div className="h-8 w-8" aria-hidden="true" />
               <div className="min-w-0 text-center">
                 <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Rendimentos</p>
+                <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">Visão consolidada do período</p>
               </div>
               <div className="min-w-[32px]" />
             </div>
 
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Patrimônio</p>
-                <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Patrimônio</p>
+                <p className="mm-subheader-metric-value truncate">
                   {formatCurrency(totalInvested)}
                 </p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Mês</p>
-                <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Mês</p>
+                <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400 truncate">
                   {formatCurrency(monthlyTotalYield)}
                 </p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Variação</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Variação</p>
                 <p
-                  className={`text-[12px] font-semibold truncate ${
+                  className={`mm-subheader-metric-value truncate ${
                     monthlyDelta > 0
                       ? 'text-emerald-600 dark:text-emerald-400'
                       : monthlyDelta < 0
@@ -1927,21 +2082,20 @@ const YieldsView: React.FC<YieldsViewProps> = ({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-2">
+            <div className={isMobile ? 'flex flex-wrap items-center justify-center gap-2' : 'mm-header-actions'}>
               {onOpenAudit && (
                 <button
                   type="button"
                   onClick={onOpenAudit}
-                  className="mm-btn-base mm-btn-secondary mm-btn-secondary-indigo min-w-[168px] px-6"
+                  className="mm-btn-base mm-btn-secondary mm-btn-secondary-indigo mm-mobile-primary-cta"
                 >
-                  <History size={14} />
                   Auditoria
                 </button>
               )}
               <button
                 type="button"
                 onClick={handleOpenYieldModal}
-                className={`${isMobile ? 'w-full' : 'inline-flex min-w-[220px] px-8'} mm-btn-base mm-btn-primary mm-btn-primary-indigo`}
+                className={`${isMobile ? 'w-full' : ''} mm-btn-base mm-btn-primary mm-btn-primary-indigo mm-mobile-primary-cta`}
               >
                 Novo Rendimento
               </button>
@@ -1951,10 +2105,10 @@ const YieldsView: React.FC<YieldsViewProps> = ({
         </div>
       </div>
       <main
-          className="max-w-7xl mx-auto w-full px-3 sm:px-5 mt-[var(--mm-content-gap)] animate-in fade-in slide-in-from-bottom-4 duration-500 flex-1 min-h-0"
+          className="max-w-7xl mx-auto w-full px-4 sm:px-6 mt-[var(--mm-content-gap)] animate-in fade-in slide-in-from-bottom-4 duration-500 flex-1 min-h-0 flex flex-col gap-2"
       >
           <section className="yield-density rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 backdrop-blur-xl shadow-sm p-3 gap-3 flex flex-col">
-              <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_1fr] gap-2">
+              <div className={`grid grid-cols-1 gap-2 ${isNarrowDesktopLayout ? '' : 'xl:grid-cols-[1.15fr_1fr]'}`}>
                   <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-2.5 py-1.5 min-h-[78px] flex flex-col justify-center">
                       <p className={topBlockTitleClass}>Patrimônio em aplicações</p>
                       <div className="relative mt-0.5">
@@ -1975,7 +2129,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                       >
                           Definir meta
                       </button>
-                      <div className="flex items-center justify-between gap-2 pr-[146px]">
+                      <div className={`flex items-center justify-between gap-2 ${calculatorActionPaddingClass}`}>
                           <p className={topBlockTitleClass}>Calculadora de Juros Compostos</p>
                           <span className="text-[10px] font-semibold text-indigo-500 whitespace-nowrap">{progressLabel}</span>
                       </div>
@@ -2008,8 +2162,8 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                       >
                           Abrir calculadora
                       </button>
-                      <p className={`${blockLabelClass} pr-[146px]`}>Última simulação</p>
-                      <p className={`${blockValueClass} truncate pr-[146px]`} title={paceProjectionText}>
+                      <p className={`${blockLabelClass} ${calculatorActionPaddingClass}`}>Última simulação</p>
+                      <p className={`${blockValueClass} truncate ${calculatorActionPaddingClass}`} title={paceProjectionText}>
                           {calculatorProjectionText}
                       </p>
                   </div>
@@ -2022,6 +2176,13 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                           <span className={`text-[10px] font-semibold whitespace-nowrap ${monthlyDelta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                               {monthlyDeltaText}
                           </span>
+                          <button
+                              type="button"
+                              onClick={() => openEntriesDock()}
+                              className="h-6 px-2 rounded-md border border-zinc-300/80 dark:border-zinc-700 text-[10px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition whitespace-nowrap"
+                          >
+                              Lançamentos
+                          </button>
                       </div>
                       <h3 className="absolute left-1/2 -translate-x-1/2 text-base font-bold text-white">Resumo do mês</h3>
                       <div className="text-right shrink-0">
@@ -2065,13 +2226,20 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                                   const amount = dayTotals?.get(day) || 0;
                                                   const hasYield = amount > 0;
                                                   return (
-                                                      <span
+                                                      <button
+                                                          type="button"
                                                           key={`${account.id}-day-${day}`}
-                                                          title={hasYield ? `Dia ${String(day).padStart(2, '0')}: ${formatCurrency(amount)}` : `Dia ${String(day).padStart(2, '0')}`}
+                                                          onClick={() => hasYield && openEntriesDock({ day, accountId: account.id })}
+                                                          disabled={!hasYield}
+                                                          title={
+                                                              hasYield
+                                                                  ? `Dia ${String(day).padStart(2, '0')}: ${formatCurrency(amount)} (clique para ver)`
+                                                                  : `Dia ${String(day).padStart(2, '0')}`
+                                                          }
                                                           className={`rounded-md border flex items-center justify-center text-[9px] font-semibold min-h-0 ${
                                                               hasYield
-                                                                  ? 'text-white'
-                                                                  : 'border-zinc-700 text-zinc-500'
+                                                                  ? 'text-white cursor-pointer hover:brightness-110'
+                                                                  : 'border-zinc-700 text-zinc-500 cursor-default'
                                                           }`}
                                                           style={
                                                               hasYield
@@ -2083,7 +2251,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                                           }
                                                       >
                                                           {day}
-                                                      </span>
+                                                      </button>
                                                   );
                                               })}
                                           </div>
@@ -2135,9 +2303,11 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                       ))}
                   </div>
               </div>
+          </section>
 
-              <div className="mt-2 flex flex-col lg:flex-row gap-2">
-                  <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] px-3 pt-3 pb-4 flex flex-col min-h-0 lg:flex-1 lg:min-w-0">
+          <section className={`yield-density rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 backdrop-blur-xl shadow-sm p-3 ${useStackedProjectionLayout ? '' : 'flex-1 min-h-0'}`}>
+              <div className={`flex min-h-0 ${useStackedProjectionLayout ? 'h-auto flex-col' : 'h-full flex-col xl:flex-row'} gap-2`}>
+                  <div className={`rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] px-3 pt-3 pb-4 flex flex-col min-h-[240px] ${useStackedProjectionLayout ? 'shrink-0' : 'xl:flex-1 xl:min-w-0 xl:h-full'}`}>
                       <div className="relative flex items-center justify-between mb-1.5">
                           <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Evolução diária acumulada no mês.</p>
                           <h3 className="absolute left-1/2 -translate-x-1/2 text-base font-bold text-white">Curva de crescimento</h3>
@@ -2149,9 +2319,9 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                       <div className="flex-1 min-h-0">{renderLineChart()}</div>
                   </div>
 
-                  <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] px-2.5 pt-3 pb-3 flex flex-col min-h-0 lg:flex-none lg:w-[220px]">
+                  <div className={`rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] px-2.5 pt-3 pb-3 flex flex-col min-h-0 ${useStackedProjectionLayout ? 'shrink-0' : 'xl:flex-none xl:w-[220px] xl:h-full'}`}>
                       <h3 className="text-base font-bold text-white text-center">Contas</h3>
-                      <div className="mt-2 grid grid-cols-2 gap-2 lg:grid-cols-1">
+                      <div className={`mt-2 grid gap-2 ${useStackedProjectionLayout ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2 xl:grid-cols-1'}`}>
                           {projectionSelectorButtons.map(option => {
                               const isActive = projectionSelection === option.id;
                               const selectorColor = projectionSelectorColorMap.get(option.id) || '#6366f1';
@@ -2176,7 +2346,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                       </div>
                   </div>
 
-                  <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] px-3 pt-3 pb-4 flex flex-col min-h-0 lg:flex-none lg:w-fit lg:min-w-[430px]">
+                  <div className={`rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1a1a1a] px-3 pt-3 pb-4 flex flex-col min-h-0 ${useStackedProjectionLayout ? 'w-full min-h-[220px] shrink-0' : 'xl:flex-none xl:w-fit xl:min-w-[430px] xl:h-full'}`}>
                       <div className="mb-2">
                           <h3 className="text-base font-bold text-white text-center">Quanto deve render</h3>
                       </div>
@@ -2211,6 +2381,82 @@ const YieldsView: React.FC<YieldsViewProps> = ({
               </div>
           </section>
       </main>
+      {isEntriesDockOpen && (
+          <div className="fixed inset-0 z-[1200]">
+              <button
+                  type="button"
+                  onClick={() => setIsEntriesDockOpen(false)}
+                  className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+                  style={{ top: dockTopOffset, bottom: dockBottomOffset }}
+                  aria-label="Fechar lançamentos"
+              />
+              <div
+                  className="absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl"
+                  style={{
+                      bottom: dockBottomOffset,
+                      maxHeight: `max(320px, ${dockMaxHeight})`
+                  }}
+              >
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="min-w-0">
+                          <p className="text-sm font-bold text-zinc-900 dark:text-white">{entriesDockTitle}</p>
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{entriesDockSubtitle}</p>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => setIsEntriesDockOpen(false)}
+                          className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
+                          aria-label="Fechar lançamentos"
+                      >
+                          <ChevronDown size={16} />
+                      </button>
+                  </div>
+                  {entriesDockItems.length === 0 ? (
+                      <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                          <p className="text-[12px] text-zinc-500 dark:text-zinc-400">Nenhum lançamento para este filtro.</p>
+                      </div>
+                  ) : (
+                      <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-2 pr-1">
+                          {entriesDockItems.map((entry) => (
+                              <div
+                                  key={entry.id || `${entry.accountId}-${entry.date}-${entry.amount}-${entry.notes || ''}`}
+                                  className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-900/40 px-3 py-2 flex items-center justify-between gap-3"
+                              >
+                                  <div className="min-w-0">
+                                      <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+                                          {entry.accountName} • {new Date(`${entry.date}T12:00:00`).toLocaleDateString('pt-BR')}
+                                      </p>
+                                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                                          {entry.notes ? entry.notes : 'Sem observações'}
+                                      </p>
+                                  </div>
+                                  <div className="shrink-0 text-right">
+                                      <p className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400">
+                                          +{formatCurrency(entry.amount)}
+                                      </p>
+                                      <button
+                                          type="button"
+                                          onClick={() => {
+                                              setIsEntriesDockOpen(false);
+                                              handleEditYield(entry);
+                                          }}
+                                          disabled={Boolean(entry.locked)}
+                                          className={`text-[10px] font-semibold ${
+                                              entry.locked
+                                                  ? 'text-zinc-400 cursor-not-allowed'
+                                                  : 'text-indigo-600 dark:text-indigo-300 hover:text-indigo-500'
+                                          }`}
+                                      >
+                                          {entry.locked ? 'Bloqueado' : 'Editar'}
+                                      </button>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+              </div>
+          </div>
+      )}
       {isSummaryDockOpen && (
           <div className="fixed inset-0 z-[1200]">
               <button
@@ -2269,12 +2515,15 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                                   const amount = dayTotals?.get(day) || 0;
                                                   const hasYield = amount > 0;
                                                   return (
-                                                      <span
+                                                      <button
+                                                          type="button"
                                                           key={`dock-${account.id}-day-${day}`}
+                                                          onClick={() => hasYield && openEntriesDock({ day, accountId: account.id })}
+                                                          disabled={!hasYield}
                                                           className={`h-3.5 rounded border flex items-center justify-center text-[7px] font-semibold ${
                                                               hasYield
-                                                                  ? 'text-white'
-                                                                  : 'border-zinc-700 text-zinc-500'
+                                                                  ? 'text-white cursor-pointer hover:brightness-110'
+                                                                  : 'border-zinc-700 text-zinc-500 cursor-default'
                                                           }`}
                                                           style={
                                                               hasYield
@@ -2286,7 +2535,7 @@ const YieldsView: React.FC<YieldsViewProps> = ({
                                                           }
                                                       >
                                                           {day}
-                                                      </span>
+                                                      </button>
                                                   );
                                               })}
                                           </div>

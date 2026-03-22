@@ -5,7 +5,6 @@ import {
   Wallet,
   TrendingUp,
   DollarSign,
-  ArrowRightLeft,
   Trash2,
   X,
   Edit2,
@@ -211,7 +210,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   }, [subHeaderHeight, topAdjust]);
 
   useEffect(() => {
-      if (!isMobile || typeof window === 'undefined') return;
+      if (typeof window === 'undefined') return;
       const handleDockClick = () => {
           setDrawerAccount(null);
           setInlineNewOpen(false);
@@ -226,9 +225,13 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           setAuditAccountId(null);
           setIsModalOpen(false);
       };
+      window.addEventListener('mm:dock-click', handleDockClick);
       window.addEventListener('mm:mobile-dock-click', handleDockClick);
-      return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
-  }, [isMobile]);
+      return () => {
+          window.removeEventListener('mm:dock-click', handleDockClick);
+          window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+      };
+  }, []);
 
   useEffect(() => {
       console.info('[ui][accounts] mount', { count: accounts.length });
@@ -515,7 +518,24 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           .filter(transfer => transfer.fromAccountId && transfer.toAccountId)
           .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [transfers]);
-  const recentTransfers = transfersSorted.slice(0, isMobile ? 8 : 10);
+  const getTransferStatusMeta = (status: Transfer['status']) => {
+      if (status === 'completed') {
+          return {
+              label: 'Concluída',
+              className: 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/30'
+          };
+      }
+      if (status === 'pending') {
+          return {
+              label: 'Pendente',
+              className: 'bg-amber-500/20 text-amber-200 border border-amber-400/30'
+          };
+      }
+      return {
+          label: 'Cancelada',
+          className: 'bg-rose-500/20 text-rose-200 border border-rose-400/30'
+      };
+  };
 
   const formatTransferDate = (value?: string) => {
       if (!value) return '--';
@@ -1116,7 +1136,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const headerCardRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
   const headerSecondaryRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
-  const headerPrimaryRadius = isMobile ? 'rounded-xl' : 'rounded-2xl';
+  const headerPrimaryRadius = 'rounded-xl';
 
   const accountsHeader = (
       <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
@@ -1130,19 +1150,19 @@ const AccountsView: React.FC<AccountsViewProps> = ({
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-              <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Contas</p>
-                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{displayCount}</p>
+              <div className={`${headerCardRadius} mm-subheader-metric-card mm-mobile-header-card ${isMobile ? 'text-center' : 'text-left'}`}>
+                  <p className="mm-subheader-metric-label">Contas</p>
+                  <p className="mm-subheader-metric-value">{displayCount}</p>
               </div>
-              <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo total</p>
-                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+              <div className={`${headerCardRadius} mm-subheader-metric-card mm-mobile-header-card ${isMobile ? 'text-center' : 'text-left'}`}>
+                  <p className="mm-subheader-metric-label">Saldo total</p>
+                  <p className="mm-subheader-metric-value">
                       {formatCurrency(headerTotalBalance)}
                   </p>
               </div>
-              <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center`}>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Saldo atual</p>
-                  <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">
+              <div className={`${headerCardRadius} mm-subheader-metric-card mm-mobile-header-card ${isMobile ? 'text-center' : 'text-left'}`}>
+                  <p className="mm-subheader-metric-label">Saldo atual</p>
+                  <p className="mm-subheader-metric-value">
                       {formatCurrency(displayBalance)}
                   </p>
               </div>
@@ -1157,7 +1177,6 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           className={`w-full mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius}`}
                           title="Auditoria do dia"
                       >
-                          <History size={14} />
                           Auditoria
                       </button>
                   )}
@@ -1174,7 +1193,6 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                                   : 'Transferência entre contas'
                           }
                       >
-                          <ArrowRightLeft size={14} />
                           Transferir
                       </button>
                       <button
@@ -1188,22 +1206,21 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                   </div>
               </div>
           ) : (
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="mm-header-actions">
                   {(onOpenAudit || tourAccountAuditEntries.length > 0) && (
                       <button
                           onClick={handleAccountsAuditClick}
                           data-tour-anchor="accounts-audit-button"
-                          className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7`}
+                          className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius}`}
                           title="Auditoria do dia"
                       >
-                          <History size={14} />
                           Auditoria
                       </button>
                   )}
                   <button
                       onClick={openTransferSheet}
                       disabled={!onCreateTransfer || eligibleTransferAccounts.length < 2}
-                      className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} min-w-[172px] px-7 ${
+                      className={`mm-mobile-primary-cta mm-btn-base mm-btn-secondary mm-btn-secondary-indigo ${headerSecondaryRadius} ${
                           !onCreateTransfer || eligibleTransferAccounts.length < 2 ? 'opacity-60 cursor-not-allowed' : ''
                       }`}
                       title={
@@ -1212,14 +1229,13 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                               : 'Transferência entre contas'
                       }
                   >
-                      <ArrowRightLeft size={14} />
                       Transferir
                   </button>
                   <button
                       onClick={handleOpenNew}
                       data-tour-anchor="accounts-new"
                       disabled={tourSimulatedAccounts.length > 0}
-                      className={`inline-flex min-w-[236px] px-8 mm-mobile-primary-cta mm-btn-base mm-btn-primary mm-btn-primary-blue ${headerPrimaryRadius}`}
+                      className={`mm-mobile-primary-cta mm-btn-base mm-btn-primary mm-btn-primary-blue ${headerPrimaryRadius}`}
                   >
                       Nova Conta
                   </button>
@@ -1230,7 +1246,7 @@ const AccountsView: React.FC<AccountsViewProps> = ({
 
   const summarySection = (
       <div className={summaryWrapperClass}>
-          <div className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+          <div className="mm-subheader mm-subheader-panel">
               {accountsHeader}
           </div>
       </div>
@@ -1901,94 +1917,158 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       );
   };
 
-  const transferSection = (
-      <section className="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/80 dark:bg-[#111114]/70 backdrop-blur px-3 py-3">
-          <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">Transferências</p>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                      Movimentações entre contas sem impactar Entradas/Saídas.
-                  </p>
-              </div>
-              <button
-                  type="button"
-                  onClick={openTransferSheet}
-                  disabled={!onCreateTransfer || eligibleTransferAccounts.length < 2}
-                  className={`inline-flex items-center gap-1 rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 ${
-                      !onCreateTransfer || eligibleTransferAccounts.length < 2
-                          ? 'opacity-60 cursor-not-allowed'
-                          : 'hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
-                  }`}
-              >
-                  <ArrowRightLeft size={12} />
-                  Nova
-              </button>
-          </div>
-
-          {recentTransfers.length === 0 ? (
+  const transferRowsInModal = transfersSorted;
+  const transferGridColumns =
+      'minmax(110px,0.9fr) 8px minmax(180px,1.5fr) 8px minmax(180px,1.5fr) 8px minmax(116px,0.95fr) 8px minmax(220px,1.8fr) 8px minmax(120px,0.95fr) 8px 74px';
+  const renderTransferRows = (rows: Transfer[]) => {
+      if (rows.length === 0) {
+          return (
               <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-[11px] text-zinc-500 dark:text-zinc-400">
                   Nenhuma transferência registrada.
               </div>
-          ) : (
-              <div className="space-y-2">
-                  {recentTransfers.map(transfer => {
+          );
+      }
+
+      return (
+          <>
+              {!isMobile && (
+                  <div
+                      className="grid items-center gap-2 px-2 text-[10px] tracking-[0.08em] text-zinc-500 dark:text-zinc-400"
+                      style={{ gridTemplateColumns: transferGridColumns }}
+                  >
+                      <span>Data</span>
+                      <span className="text-zinc-500/70">|</span>
+                      <span>Conta de origem</span>
+                      <span className="text-zinc-500/70">|</span>
+                      <span>Conta de destino</span>
+                      <span className="text-zinc-500/70">|</span>
+                      <span>Status</span>
+                      <span className="text-zinc-500/70">|</span>
+                      <span>Descrição</span>
+                      <span className="text-zinc-500/70">|</span>
+                      <span className="text-right">Valor</span>
+                      <span className="text-zinc-500/70">|</span>
+                      <span>Ações</span>
+                  </div>
+              )}
+
+              <div className="space-y-1.5">
+                  {rows.map((transfer, index) => {
                       const fromName = accountNameById.get(transfer.fromAccountId) || 'Conta removida';
                       const toName = accountNameById.get(transfer.toAccountId) || 'Conta removida';
                       const locked = Boolean(transfer.locked);
+                      const transferStatus = getTransferStatusMeta(transfer.status);
+                      const notesLabel = transfer.notes?.trim() || '-';
+                      const rowBg = index % 2 === 0 ? 'bg-indigo-500/10' : 'bg-transparent';
+
+                      if (isMobile) {
+                          return (
+                              <div key={transfer.id} className={`rounded-md px-2 py-2 ${rowBg}`}>
+                                  <div className="flex items-center justify-between gap-2">
+                                      <p className="truncate text-[11px] font-semibold text-zinc-900 dark:text-zinc-100">
+                                          {fromName} <span className="text-zinc-400">→</span> {toName}
+                                      </p>
+                                      <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-300">
+                                          {formatCurrency(transfer.amount)}
+                                      </span>
+                                  </div>
+                                  <div className="mt-1 flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-1.5 min-w-0 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                          <span>{formatTransferDate(transfer.date)}</span>
+                                          <span className="text-zinc-500/70">|</span>
+                                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${transferStatus.className}`}>
+                                              {transferStatus.label}
+                                          </span>
+                                      </div>
+                                      {onDeleteTransfer && !locked ? (
+                                          <button
+                                              type="button"
+                                              onClick={() => setTransferDeleteTarget(transfer)}
+                                              className="mm-btn-icon"
+                                              aria-label={`Excluir transferência de ${fromName} para ${toName}`}
+                                          >
+                                              <Trash2 size={13} />
+                                          </button>
+                                      ) : null}
+                                  </div>
+                                  {notesLabel !== '-' ? (
+                                      <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400 truncate" title={notesLabel}>
+                                          {notesLabel}
+                                      </p>
+                                  ) : null}
+                              </div>
+                          );
+                      }
+
                       return (
                           <div
                               key={transfer.id}
-                              className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 px-3 py-2"
+                              className={`grid items-center gap-2 px-2 py-2 text-[11px] md:text-xs rounded-md ${rowBg}`}
+                              style={{ gridTemplateColumns: transferGridColumns }}
                           >
-                              <div className="flex items-center justify-between gap-2">
-                                  <p className="text-[12px] font-semibold text-zinc-800 dark:text-zinc-100 truncate">
-                                      {fromName} <span className="text-zinc-400">→</span> {toName}
-                                  </p>
-                                  <span className="text-[12px] font-semibold text-indigo-600 dark:text-indigo-300">
-                                      {formatCurrency(transfer.amount)}
-                                  </span>
-                              </div>
-                              <div className="mt-1 flex items-center justify-between gap-2">
-                                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-                                      <span>{formatTransferDate(transfer.date)}</span>
-                                      <span className="text-zinc-300 dark:text-zinc-600">•</span>
-                                      <span className="uppercase tracking-wide">
-                                          {transfer.status === 'completed'
-                                              ? 'Concluída'
-                                              : transfer.status === 'pending'
-                                                  ? 'Pendente'
-                                                  : 'Cancelada'}
-                                      </span>
-                                      {transfer.notes ? (
-                                          <>
-                                              <span className="text-zinc-300 dark:text-zinc-600">•</span>
-                                              <span className="truncate max-w-[220px]">{transfer.notes}</span>
-                                          </>
-                                      ) : null}
-                                  </div>
-                                  {onDeleteTransfer && !locked && (
+                              <span className="text-zinc-800 dark:text-zinc-200">{formatTransferDate(transfer.date)}</span>
+                              <span className="text-zinc-500/70">|</span>
+                              <span className="truncate text-zinc-900 dark:text-zinc-100" title={fromName}>
+                                  {fromName}
+                              </span>
+                              <span className="text-zinc-500/70">|</span>
+                              <span className="truncate text-zinc-900 dark:text-zinc-100" title={toName}>
+                                  {toName}
+                              </span>
+                              <span className="text-zinc-500/70">|</span>
+                              <span className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${transferStatus.className}`}>
+                                  {transferStatus.label}
+                              </span>
+                              <span className="text-zinc-500/70">|</span>
+                              <span className="truncate text-zinc-800 dark:text-zinc-200" title={notesLabel}>
+                                  {notesLabel}
+                              </span>
+                              <span className="text-zinc-500/70">|</span>
+                              <span className="text-right font-semibold text-indigo-600 dark:text-indigo-300">
+                                  {formatCurrency(transfer.amount)}
+                              </span>
+                              <span className="text-zinc-500/70">|</span>
+                              <span className="flex justify-center">
+                                  {onDeleteTransfer && !locked ? (
                                       <button
                                           type="button"
                                           onClick={() => setTransferDeleteTarget(transfer)}
-                                          className="inline-flex items-center gap-1 rounded-md border border-rose-300/40 px-2 py-1 text-[10px] font-semibold text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                                          className="mm-btn-icon"
+                                          aria-label={`Excluir transferência de ${fromName} para ${toName}`}
                                       >
-                                          <Trash2 size={11} />
-                                          Excluir
+                                          <Trash2 size={13} />
                                       </button>
+                                  ) : (
+                                      <span className="text-zinc-400 dark:text-zinc-600">-</span>
                                   )}
-                              </div>
+                              </span>
                           </div>
                       );
                   })}
               </div>
-          )}
+          </>
+      );
+  };
+  const transferSectionInModal = (
+      <section className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">Transferências recentes</p>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Histórico dentro do fluxo de transferência.
+                  </p>
+              </div>
+              <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                  {transferRowsInModal.length} {transferRowsInModal.length === 1 ? 'registro' : 'registros'}
+              </span>
+          </div>
+          {renderTransferRows(transferRowsInModal)}
       </section>
   );
 
   const listSection = (
       <main className={listWrapperClass}>
           <div className="space-y-3">
-              {transferSection}
               {isInlineAllowed ? inlineNewCard : null}
 
               {!isMobile || !inlineNewOpen ? (
@@ -2215,6 +2295,10 @@ const AccountsView: React.FC<AccountsViewProps> = ({
       transferDraft.fromAccountId === transferDraft.toAccountId ||
       !transferAmountParsed ||
       transferAmountParsed <= 0;
+  const transferDockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const transferDockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const transferDockMaxHeight =
+      'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
   const modals = (
       <>
           <NewAccountModal 
@@ -2235,14 +2319,23 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                   <button
                       type="button"
                       onClick={closeTransferSheet}
-                      className={`absolute inset-0 ${isMobile ? 'bg-black/55' : 'bg-black/60 backdrop-blur-sm'}`}
+                      className={isMobile ? 'absolute inset-0 bg-black/55' : 'absolute left-0 right-0 bg-black/60 backdrop-blur-sm'}
+                      style={isMobile ? undefined : { top: transferDockTopOffset, bottom: transferDockBottomOffset }}
                       aria-label="Fechar transferência"
                   />
                   <div
                       className={
                           isMobile
                               ? 'absolute left-0 right-0 bottom-[var(--mm-mobile-dock-height,68px)] rounded-t-3xl bg-white dark:bg-[#111114] border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4'
-                              : 'absolute left-1/2 top-1/2 w-[min(560px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] shadow-2xl p-5'
+                              : 'absolute left-0 right-0 bg-white dark:bg-[#101014] border border-zinc-200 dark:border-zinc-800 shadow-2xl px-5 py-5 flex flex-col overflow-hidden'
+                      }
+                      style={
+                          isMobile
+                              ? undefined
+                              : {
+                                    bottom: transferDockBottomOffset,
+                                    maxHeight: `max(320px, ${transferDockMaxHeight})`
+                                }
                       }
                   >
                       <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/70 dark:border-zinc-800/70">
@@ -2262,106 +2355,109 @@ const AccountsView: React.FC<AccountsViewProps> = ({
                           </button>
                       </div>
 
-                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Conta origem
-                              </label>
-                              <SelectDropdown
-                                  value={transferDraft.fromAccountId}
-                                  onChange={(value) =>
-                                      setTransferDraft(prev => ({
-                                          ...prev,
-                                          fromAccountId: value,
-                                          toAccountId: value === prev.toAccountId
-                                              ? (eligibleTransferAccounts.find(account => account.id !== value)?.id || '')
-                                              : prev.toAccountId
-                                      }))
-                                  }
-                                  placeholder="Selecione"
-                                  options={eligibleTransferAccounts.map(account => ({ value: account.id, label: account.name }))}
-                                  buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                                  listClassName="max-h-48"
-                              />
+                      <div className={`mt-3 ${isMobile ? '' : 'flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1'} space-y-4`}>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Conta origem
+                                  </label>
+                                  <SelectDropdown
+                                      value={transferDraft.fromAccountId}
+                                      onChange={(value) =>
+                                          setTransferDraft(prev => ({
+                                              ...prev,
+                                              fromAccountId: value,
+                                              toAccountId: value === prev.toAccountId
+                                                  ? (eligibleTransferAccounts.find(account => account.id !== value)?.id || '')
+                                                  : prev.toAccountId
+                                          }))
+                                      }
+                                      placeholder="Selecione"
+                                      options={eligibleTransferAccounts.map(account => ({ value: account.id, label: account.name }))}
+                                      buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
+                                      listClassName="max-h-48"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Conta destino
+                                  </label>
+                                  <SelectDropdown
+                                      value={transferDraft.toAccountId}
+                                      onChange={(value) => setTransferDraft(prev => ({ ...prev, toAccountId: value }))}
+                                      placeholder="Selecione"
+                                      options={eligibleTransferAccounts
+                                          .filter(account => account.id !== transferDraft.fromAccountId)
+                                          .map(account => ({ value: account.id, label: account.name }))}
+                                      buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
+                                      listClassName="max-h-48"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Valor
+                                  </label>
+                                  <input
+                                      type="text"
+                                      value={transferDraft.amount}
+                                      onChange={(event) => setTransferDraft(prev => ({ ...prev, amount: event.target.value }))}
+                                      placeholder="Ex.: 3.708,05"
+                                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Data
+                                  </label>
+                                  <input
+                                      type="date"
+                                      value={transferDraft.date}
+                                      onChange={(event) => setTransferDraft(prev => ({ ...prev, date: event.target.value }))}
+                                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                                  />
+                              </div>
+                              <div className="sm:col-span-2">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Status
+                                  </label>
+                                  <SelectDropdown
+                                      value={transferDraft.status}
+                                      onChange={(value) =>
+                                          setTransferDraft(prev => ({
+                                              ...prev,
+                                              status:
+                                                  value === 'pending' || value === 'canceled'
+                                                      ? value
+                                                      : 'completed'
+                                          }))
+                                      }
+                                      placeholder="Selecione"
+                                      options={[
+                                          { value: 'completed', label: 'Concluída' },
+                                          { value: 'pending', label: 'Pendente' },
+                                          { value: 'canceled', label: 'Cancelada' }
+                                      ]}
+                                      buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
+                                      listClassName="max-h-48"
+                                  />
+                              </div>
+                              <div className="sm:col-span-2">
+                                  <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
+                                      Observações
+                                  </label>
+                                  <textarea
+                                      value={transferDraft.notes}
+                                      onChange={(event) => setTransferDraft(prev => ({ ...prev, notes: event.target.value }))}
+                                      rows={3}
+                                      placeholder="Opcional"
+                                      className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
+                                  />
+                              </div>
                           </div>
-                          <div>
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Conta destino
-                              </label>
-                              <SelectDropdown
-                                  value={transferDraft.toAccountId}
-                                  onChange={(value) => setTransferDraft(prev => ({ ...prev, toAccountId: value }))}
-                                  placeholder="Selecione"
-                                  options={eligibleTransferAccounts
-                                      .filter(account => account.id !== transferDraft.fromAccountId)
-                                      .map(account => ({ value: account.id, label: account.name }))}
-                                  buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                                  listClassName="max-h-48"
-                              />
-                          </div>
-                          <div>
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Valor
-                              </label>
-                              <input
-                                  type="text"
-                                  value={transferDraft.amount}
-                                  onChange={(event) => setTransferDraft(prev => ({ ...prev, amount: event.target.value }))}
-                                  placeholder="Ex.: 3.708,05"
-                                  className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                              />
-                          </div>
-                          <div>
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Data
-                              </label>
-                              <input
-                                  type="date"
-                                  value={transferDraft.date}
-                                  onChange={(event) => setTransferDraft(prev => ({ ...prev, date: event.target.value }))}
-                                  className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
-                              />
-                          </div>
-                          <div className="sm:col-span-2">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Status
-                              </label>
-                              <SelectDropdown
-                                  value={transferDraft.status}
-                                  onChange={(value) =>
-                                      setTransferDraft(prev => ({
-                                          ...prev,
-                                          status:
-                                              value === 'pending' || value === 'canceled'
-                                                  ? value
-                                                  : 'completed'
-                                      }))
-                                  }
-                                  placeholder="Selecione"
-                                  options={[
-                                      { value: 'completed', label: 'Concluída' },
-                                      { value: 'pending', label: 'Pendente' },
-                                      { value: 'canceled', label: 'Cancelada' }
-                                  ]}
-                                  buttonClassName="mt-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                                  listClassName="max-h-48"
-                              />
-                          </div>
-                          <div className="sm:col-span-2">
-                              <label className="text-[10px] uppercase tracking-[0.12em] font-semibold text-zinc-500 dark:text-zinc-400">
-                                  Observações
-                              </label>
-                              <textarea
-                                  value={transferDraft.notes}
-                                  onChange={(event) => setTransferDraft(prev => ({ ...prev, notes: event.target.value }))}
-                                  rows={3}
-                                  placeholder="Opcional"
-                                  className="mt-1 w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none"
-                              />
-                          </div>
+                          {!isMobile && transferSectionInModal}
                       </div>
 
-                      <div className="mt-4 grid grid-cols-2 gap-2">
+                      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-zinc-200/70 dark:border-zinc-800/70 pt-4">
                           <button
                               type="button"
                               onClick={closeTransferSheet}
@@ -2700,7 +2796,6 @@ const AccountsView: React.FC<AccountsViewProps> = ({
   if (isMobile) {
       const mobileList = (
           <div className="space-y-3">
-              {transferSection}
               {!inlineNewOpen ? (
               visibleAccounts.length > 0 ? (
                   <>

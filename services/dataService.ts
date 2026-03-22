@@ -18,6 +18,11 @@ import {
 import { db } from './firebase';
 import { Account, Expense, Income, CreditCard, CompanyInfo, LicenseRecord, LockedReason, AgendaItem, Transfer } from '../types';
 import { normalizeExpenseStatus, normalizeIncomeStatus } from '../utils/statusUtils';
+import {
+    inferIncomeFiscalNature,
+    normalizeIncomeFiscalNature,
+    resolveIncomeFiscalNature
+} from '../utils/incomeFiscalNature';
 import { logPermissionDenied } from '../utils/firestoreLogger';
 import { guardUserPath } from '../utils/pathGuard';
 import { supportAccessService } from './supportAccessService';
@@ -460,10 +465,16 @@ const decryptIncomeDoc = async (
         logEpochMismatch({ entity: 'income', id: docSnap.id, itemEpoch, licenseEpoch });
         const { amountEncrypted: _ae, ...rest } = data;
         const normalizedStatus = normalizeIncomeStatus(rest.status);
+        const naturezaFiscal = resolveIncomeFiscalNature({
+            naturezaFiscal: rest.naturezaFiscal,
+            description: typeof rest.description === 'string' ? rest.description : '',
+            category: typeof rest.category === 'string' ? rest.category : ''
+        });
         return {
             id: docSnap.id,
             ...(rest as Income),
             status: normalizedStatus,
+            naturezaFiscal,
             amount: 0,
             locked: true,
             lockedReason: 'epoch_mismatch'
@@ -504,17 +515,23 @@ const decryptIncomeDoc = async (
 
     const { amountEncrypted: _ae, ...rest } = data;
     const normalizedStatus = normalizeIncomeStatus(rest.status);
+    const naturezaFiscal = resolveIncomeFiscalNature({
+        naturezaFiscal: rest.naturezaFiscal,
+        description: typeof rest.description === 'string' ? rest.description : '',
+        category: typeof rest.category === 'string' ? rest.category : ''
+    });
     if (lockedReason) {
         return {
             id: docSnap.id,
             ...(rest as Income),
             status: normalizedStatus,
+            naturezaFiscal,
             amount,
             locked: true,
             lockedReason
         };
     }
-    return { id: docSnap.id, ...(rest as Income), status: normalizedStatus, amount };
+    return { id: docSnap.id, ...(rest as Income), status: normalizedStatus, naturezaFiscal, amount };
 };
 
 const decryptTransferDoc = async (
@@ -703,6 +720,11 @@ const buildIncomePayload = async (licenseId: string, licenseEpoch: number, inc: 
     delete payload.lockedReason;
     payload.cryptoEpoch = licenseEpoch;
     payload.status = normalizeIncomeStatus(inc.status);
+    payload.naturezaFiscal = resolveIncomeFiscalNature({
+        naturezaFiscal: inc.naturezaFiscal,
+        description: inc.description,
+        category: inc.category
+    });
     const amount = toNumber(inc.amount);
     if (amount !== null) {
         const encryptedResult = await encryptNumberSafe(licenseId, amount, 'incomes.amount');
@@ -1405,6 +1427,48 @@ export const dataService = {
         logReadOk(COLLECTIONS.INCOMES, docs.length);
         void supportAccessService.logSupportRead(licenseId, { collection: COLLECTIONS.INCOMES, count: docs.length });
         return Promise.all(docs.map(docSnap => decryptIncomeDoc(licenseId, licenseEpoch, docSnap)));
+    },
+
+    async migrateIncomeFiscalNature(licenseId: string): Promise<number> {
+        const path = `users/${licenseId}/${COLLECTIONS.INCOMES}`;
+        if (!guardUserPath(licenseId, path, 'incomes_migrate_fiscal_nature')) return 0;
+        let snapshot;
+        try {
+            snapshot = await getDocs(getIncomesCollectionRef(licenseId));
+        } catch (error: any) {
+            logPermissionDenied({
+                step: 'incomes_migrate_fiscal_nature',
+                path,
+                operation: 'getDocs',
+                error,
+                licenseId
+            });
+            return 0;
+        }
+
+        const batch = writeBatch(db);
+        let updates = 0;
+        snapshot.docs.forEach((docSnap) => {
+            const data = docSnap.data() as Record<string, any>;
+            if (normalizeIncomeFiscalNature(data?.naturezaFiscal)) return;
+            const inferred = inferIncomeFiscalNature({
+                description: typeof data?.description === 'string' ? data.description : '',
+                category: typeof data?.category === 'string' ? data.category : ''
+            });
+            batch.set(
+                docSnap.ref,
+                sanitizeData({
+                    naturezaFiscal: inferred,
+                    updatedAt: serverTimestamp()
+                }),
+                { merge: true }
+            );
+            updates += 1;
+        });
+
+        if (updates === 0) return 0;
+        await batch.commit();
+        return updates;
     },
 
     async upsertIncome(inc: Income, licenseId: string, licenseEpoch: number): Promise<void> {

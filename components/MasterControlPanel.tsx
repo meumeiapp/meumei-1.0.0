@@ -179,7 +179,7 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({
   const actionButtonBase =
     'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition h-10 w-full sm:w-48 whitespace-nowrap';
   const summarySectionClass =
-    'mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4';
+    'mm-subheader mm-subheader-panel';
 
   const stats = useMemo(() => {
     return [
@@ -1981,36 +1981,36 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({
             </div>
 
             <div className="grid grid-cols-4 gap-[5px]">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Vendas</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Vendas</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : metrics ? metrics.totalSales : '—'}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Receita</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Receita</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : formatCurrency(metrics?.revenueEstimateCents ?? null)}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Empresas</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Empresas</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : metrics ? metrics.companies : '—'}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Usuários mês</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Usuários mês</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : metrics ? metrics.activeUsersThisMonth : '—'}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Entitlements ativos</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Entitlements ativos</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : metrics ? metrics.entitlementsActive : '—'}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Entitlements expir.</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Entitlements expir.</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : metrics ? metrics.entitlementsExpired : '—'}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Chaves criadas</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Chaves criadas</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : metrics ? metrics.betaKeysCreated : '—'}</p>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2.5 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Chaves usadas</p>
+              <div className="mm-subheader-metric-card">
+                <p className="mm-subheader-metric-label">Chaves usadas</p>
                 <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">{metricsLoading ? '...' : metrics ? metrics.betaKeysUsed : '—'}</p>
               </div>
             </div>
@@ -2225,19 +2225,19 @@ const MasterControlPanel: React.FC<MasterControlPanelProps> = ({
 
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div className="rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/70 dark:bg-white/5 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Novos no período</p>
+                  <p className="mm-subheader-metric-label">Novos no período</p>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white">
                     {formatCount(growthSeriesTotals.totalNewUsers)}
                   </p>
                 </div>
                 <div className="rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/70 dark:bg-white/5 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Último período</p>
+                  <p className="mm-subheader-metric-label">Último período</p>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white">
                     {growthSeriesTotals.latest ? `+${formatCount(growthSeriesTotals.latest.newUsers)}` : '—'}
                   </p>
                 </div>
                 <div className="rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/70 dark:bg-white/5 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Base acumulada</p>
+                  <p className="mm-subheader-metric-label">Base acumulada</p>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-white">
                     {growthSeriesTotals.latest
                       ? formatCount(growthSeriesTotals.latest.cumulativeUsers)

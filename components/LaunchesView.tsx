@@ -199,7 +199,7 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
   }, [selectableIds.join('|')]);
 
   useEffect(() => {
-      if (!isMobile || typeof window === 'undefined') return;
+      if (typeof window === 'undefined') return;
       const handleDockClick = () => {
       setDrawerItem(null);
       setDeleteTarget(null);
@@ -208,9 +208,13 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
       setFilter('all');
       setIsFiltersOpen(false);
     };
+    window.addEventListener('mm:dock-click', handleDockClick);
     window.addEventListener('mm:mobile-dock-click', handleDockClick);
-    return () => window.removeEventListener('mm:mobile-dock-click', handleDockClick);
-  }, [isMobile]);
+    return () => {
+      window.removeEventListener('mm:dock-click', handleDockClick);
+      window.removeEventListener('mm:mobile-dock-click', handleDockClick);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const headerNode = subHeaderRef.current;
@@ -381,8 +385,8 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
         <div className="h-8 w-8" aria-hidden="true" />
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-[#101014]/70 px-3 py-2">
-          <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Visão Caixa</p>
+        <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+          <p className="text-[10px] tracking-[0.2em] text-zinc-400">Visão Caixa</p>
           <div className="mt-2 flex items-center justify-between text-[11px]">
             <span className="text-zinc-500 dark:text-zinc-400">Entrou</span>
             <span className="font-semibold text-emerald-600 dark:text-emerald-400">
@@ -396,8 +400,8 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
             </span>
           </div>
         </div>
-        <div className="rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-[#101014]/70 px-3 py-2">
-          <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Visão Competência</p>
+        <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card">
+          <p className="text-[10px] tracking-[0.2em] text-zinc-400">Visão Competência</p>
           <div className="mt-2 flex items-center justify-between text-[11px]">
             <span className="text-zinc-500 dark:text-zinc-400">Entrou</span>
             <span className="font-semibold text-emerald-600 dark:text-emerald-400">
@@ -531,7 +535,7 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
                   </button>
                 )}
                 <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-zinc-400">
+                  <div className="flex items-center gap-2 text-[10px] tracking-[0.25em] text-zinc-400">
                     <ArrowDownUp size={12} />
                     Lançamentos
                   </div>
@@ -705,7 +709,7 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
 
             <div className="mt-3 space-y-3">
               <div>
-                <label className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Buscar</label>
+                <label className="text-[10px] tracking-[0.2em] text-zinc-400">Buscar</label>
                 <input
                   type="text"
                   value={searchText}
@@ -716,7 +720,7 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
               </div>
 
               <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Tipo</p>
+                <p className="text-[10px] tracking-[0.2em] text-zinc-400">Tipo</p>
                 <div className="mt-1 grid grid-cols-3 gap-2">
                   {([
                     { key: 'all', label: 'Todos' },
@@ -743,7 +747,7 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
               </div>
 
               <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Tipo de despesa</p>
+                <p className="text-[10px] tracking-[0.2em] text-zinc-400">Tipo de despesa</p>
                 <div className="mt-1 grid grid-cols-2 gap-2">
                   {([
                     { key: 'all', label: 'Todas' },
@@ -771,7 +775,7 @@ const LaunchesView: React.FC<LaunchesViewProps> = ({
               </div>
 
               <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Ordenação</p>
+                <p className="text-[10px] tracking-[0.2em] text-zinc-400">Ordenação</p>
                 <div className="mt-1 grid grid-cols-3 gap-2">
                   {([
                     { key: 'date_desc', label: 'Recentes' },

@@ -144,12 +144,14 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
   };
 
   const headerWrapperClass = isMobile
-    ? 'space-y-4'
-    : 'max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6 relative z-10 -mt-6';
+    ? 'space-y-0'
+    : 'max-w-7xl mx-auto px-4 sm:px-6 pt-6 relative z-10';
 
   const tableWrapperClass = isMobile
     ? ''
     : 'max-w-7xl mx-auto px-4 sm:px-6';
+
+  const periodLabel = viewDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
   const headerSection = (
         <div className={headerWrapperClass}>
@@ -162,19 +164,47 @@ const VariableExpensesView: React.FC<VariableExpensesViewProps> = ({
                 </button>
             )}
 
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white dark:bg-[#151517] p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
-                <div>
-                    <h1 className="text-2xl font-bold mb-1">Despesas Variáveis</h1>
-                    <p className="text-sm text-zinc-500">
-                        {filteredExpenses.length} despesas • Total: <strong className="text-zinc-900 dark:text-white">R$ {totalAmount.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</strong> • Pago: <span className="text-emerald-600">R$ {totalPaid.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
-                    </p>
+            <div className="mm-subheader mm-subheader-panel">
+                <div className="space-y-2 mm-subheader-stack">
+                    <div className="grid grid-cols-[auto,1fr,auto] items-center gap-2">
+                        <div className="h-8 w-8" aria-hidden="true" />
+                        <div className="min-w-0 text-center">
+                            <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">Despesas Variáveis</p>
+                            <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">
+                                {periodLabel} • {filteredExpenses.length} registros
+                            </p>
+                        </div>
+                        <div className="min-w-[32px]" />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                        <div className="mm-subheader-metric-card">
+                            <p className="mm-subheader-metric-label">Registros</p>
+                            <p className="mm-subheader-metric-value">{filteredExpenses.length}</p>
+                        </div>
+                        <div className="mm-subheader-metric-card">
+                            <p className="mm-subheader-metric-label">Total</p>
+                            <p className="mm-subheader-metric-value">
+                                R$ {totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </p>
+                        </div>
+                        <div className="mm-subheader-metric-card">
+                            <p className="mm-subheader-metric-label">Pago</p>
+                            <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">
+                                R$ {totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className={isMobile ? 'grid grid-cols-1 gap-2' : 'mm-header-actions'}>
+                        <button
+                            onClick={handleNew}
+                            className={`${isMobile ? 'w-full' : ''} mm-btn-base mm-btn-primary mm-btn-primary-rose mm-mobile-primary-cta`}
+                        >
+                            <Plus size={16} /> Nova Despesa Variável
+                        </button>
+                    </div>
                 </div>
-                <button 
-                    onClick={handleNew}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/20"
-                >
-                    <Plus size={20} /> Nova Despesa Variável
-                </button>
             </div>
         </div>
   );

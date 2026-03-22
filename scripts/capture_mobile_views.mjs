@@ -12,12 +12,17 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const safeClickDock = async (page, labelRegex) => {
+const safeClickDock = async (page, { id, labelRegex }) => {
   const dock = page.locator('.mobile-quick-access-footer');
   await dock.waitFor({ state: 'visible', timeout: 15000 });
-  const btn = dock.getByRole('button', { name: labelRegex }).first();
-  await btn.waitFor({ state: 'visible', timeout: 10000 });
-  await btn.click();
+  const byLabel = dock.getByRole('button', { name: labelRegex }).first();
+  if (await byLabel.isVisible().catch(() => false)) {
+    await byLabel.click({ force: true });
+    return;
+  }
+  const byId = dock.locator(`button[data-dock-item-id="${id}"]`).first();
+  await byId.waitFor({ state: 'visible', timeout: 10000 });
+  await byId.click({ force: true });
 };
 
 const waitForView = async (page, view) => {
@@ -107,20 +112,25 @@ try {
     await dock.waitFor({ state: 'visible', timeout: 30000 });
   }
 
-  await safeClickDock(page, /Início/i);
+  await safeClickDock(page, { id: 'home', labelRegex: /Início/i });
   await page.getByText(/Seu dinheiro agora/i).first().waitFor({ state: 'visible', timeout: 30000 });
 
   await sleep(1200);
 
   for (const view of views) {
-    await safeClickDock(page, view.labelRegex);
-    await waitForView(page, view);
-    await sleep(900);
-    const filePath = path.join(outDir, view.file);
-    await page.screenshot({ path: filePath, fullPage: false });
-    const metrics = await measure(page);
-    manifest.items.push({ ...view, filePath, metrics });
-    console.log(`captured ${view.id}: ${view.file}`);
+    try {
+      await safeClickDock(page, { id: view.id, labelRegex: view.labelRegex });
+      await waitForView(page, view);
+      await sleep(900);
+      const filePath = path.join(outDir, view.file);
+      await page.screenshot({ path: filePath, fullPage: false });
+      const metrics = await measure(page);
+      manifest.items.push({ ...view, filePath, metrics });
+      console.log(`captured ${view.id}: ${view.file}`);
+    } catch (error) {
+      console.warn(`warn: capture failed for ${view.id}`);
+      console.warn(error?.message || error);
+    }
   }
 
   fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');

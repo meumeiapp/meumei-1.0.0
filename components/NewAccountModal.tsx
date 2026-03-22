@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, PiggyBank } from 'lucide-react';
+import { ChevronDown, Edit2, PiggyBank, Plus, Trash2, X } from 'lucide-react';
 import { Account } from '../types';
 import { getAccountColor } from '../services/cardColorUtils';
 import { getPrimaryActionLabel } from '../utils/formLabels';
@@ -80,7 +80,8 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
   // UI States
   const [isTypeManagerOpen, setIsTypeManagerOpen] = useState(false);
   const [newTypeInputValue, setNewTypeInputValue] = useState('');
-  const [pendingDeleteType, setPendingDeleteType] = useState<string | null>(null);
+  const [editingType, setEditingType] = useState<string | null>(null);
+  const [editingTypeName, setEditingTypeName] = useState('');
   const [typeManagerError, setTypeManagerError] = useState('');
   const [isTourSimulationSession, setIsTourSimulationSession] = useState(false);
   const tourAutoFillTimersRef = useRef<number[]>([]);
@@ -173,7 +174,8 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
     } else {
         setIsTypeManagerOpen(false);
         setNewTypeInputValue('');
-        setPendingDeleteType(null);
+        setEditingType(null);
+        setEditingTypeName('');
         setTypeManagerError('');
         setYieldRate('');
         setHasYield(false);
@@ -192,7 +194,6 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
         setIsTypeManagerOpen(false);
         return;
       }
-      setPendingDeleteType(null);
       onClose();
     };
     document.addEventListener('keydown', handleKeyDown);
@@ -224,17 +225,21 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
     if (selectedType === typeToDelete) {
       setSelectedType('');
     }
-    setPendingDeleteType(null);
+    if (editingType === typeToDelete) {
+      setEditingType(null);
+      setEditingTypeName('');
+    }
+    setTypeManagerError('');
   };
 
   const handleAddType = () => {
-    const normalized = newTypeInputValue.trim();
+    const normalized = newTypeInputValue.trim().replace(/\s+/g, ' ');
     if (!normalized) {
       setTypeManagerError('Informe um nome para o tipo.');
       return;
     }
     if (resolvedAccountTypes.length >= 20) {
-      setTypeManagerError('Limite de categorias atingido.');
+      setTypeManagerError('Limite de 20 tipos atingido.');
       return;
     }
     if (resolvedAccountTypes.some((type) => type.toLowerCase() === normalized.toLowerCase())) {
@@ -250,11 +255,71 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
     setTypeManagerError('');
   };
 
-  const closeTypeManager = () => {
-    setIsTypeManagerOpen(false);
-    setPendingDeleteType(null);
+  const handleStartTypeEditing = (type: string) => {
+    setEditingType(type);
+    setEditingTypeName(type);
     setTypeManagerError('');
   };
+
+  const handleCancelTypeEditing = () => {
+    setEditingType(null);
+    setEditingTypeName('');
+    setTypeManagerError('');
+  };
+
+  const handleSaveTypeEditing = (originalType: string) => {
+    const normalizedName = editingTypeName.trim().replace(/\s+/g, ' ');
+    const originalComparable = originalType.toLowerCase();
+    const nextComparable = normalizedName.toLowerCase();
+    if (!normalizedName) {
+      setTypeManagerError('Informe um nome para o tipo.');
+      return;
+    }
+    if (nextComparable === originalComparable) {
+      handleCancelTypeEditing();
+      return;
+    }
+    const alreadyExists = resolvedAccountTypes.some((type) => {
+      const comparable = type.toLowerCase();
+      return comparable !== originalComparable && comparable === nextComparable;
+    });
+    if (alreadyExists) {
+      setTypeManagerError('Tipo já existe.');
+      return;
+    }
+    const updatedTypes = resolvedAccountTypes.map((type) => (type === originalType ? normalizedName : type));
+    if (isTourSimulationSession) {
+      setTourAccountTypes(updatedTypes);
+    } else {
+      onUpdateAccountTypes(updatedTypes);
+    }
+    if (selectedType === originalType) {
+      setSelectedType(normalizedName);
+    }
+    handleCancelTypeEditing();
+  };
+
+  const closeTypeManager = () => {
+    setIsTypeManagerOpen(false);
+    setEditingType(null);
+    setEditingTypeName('');
+    setTypeManagerError('');
+  };
+
+  useEffect(() => {
+    if (isTypeManagerOpen) return;
+    setEditingType(null);
+    setEditingTypeName('');
+    setTypeManagerError('');
+    setNewTypeInputValue('');
+  }, [isTypeManagerOpen]);
+
+  useEffect(() => {
+    if (!editingType) return;
+    if (resolvedAccountTypes.includes(editingType)) return;
+    setEditingType(null);
+    setEditingTypeName('');
+  }, [editingType, resolvedAccountTypes]);
 
   const handleSave = () => {
     if (!accountName || !selectedType || !accountNature) return;
@@ -395,10 +460,14 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
   const dockFieldClass = isMobile
     ? 'w-full min-h-[38px] rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-white/95 dark:bg-zinc-900/60 px-3 py-2 text-[13px] font-medium leading-5 text-zinc-900 dark:text-zinc-100 outline-none transition-all focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/30 placeholder:text-[11px] placeholder:font-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-500'
-    : 'w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40';
+    : 'w-full min-h-[38px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#151517] px-3 py-2 text-[13px] leading-5 text-zinc-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/40';
   const dockTextareaClass = `${dockFieldClass} min-h-[90px] resize-none`;
   const labelClass = isMobile ? 'text-[10px] uppercase tracking-[0.12em] font-semibold text-white/65' : modalLabelClass;
   const modalBodyClass = isMobile ? 'px-3 py-2.5 space-y-2' : 'px-4 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockMaxHeight =
+    'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
   const saveButtonLabel = isTourSimulationSession ? 'Salvar' : primaryLabel;
   const canSave = Boolean(accountName && selectedType && accountNature && (!hasYield || yieldRate));
   const modalSupportText = isTourSimulationSession
@@ -410,10 +479,12 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
             
             {/* Account Name */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-5 items-start">
-              <div className="space-y-2 md:col-span-1">
-                <label htmlFor={fieldId('name')} className={labelClass}>
-                  Nome da Conta
-                </label>
+              <div className="space-y-0.5 md:col-span-1">
+                <div className="flex items-center min-h-[18px]">
+                  <label htmlFor={fieldId('name')} className={labelClass}>
+                    Nome da Conta
+                  </label>
+                </div>
                 <input 
                   id={fieldId('name')}
                   name="accountName"
@@ -426,10 +497,12 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                 />
               </div>
               <div
-                className="space-y-2 md:col-span-1"
+                className="space-y-0.5 md:col-span-1"
                 data-tour-anchor={isTourSimulationSession ? 'accounts-field-nature' : undefined}
               >
-                <label className={labelClass}>Natureza fiscal</label>
+                <div className="flex items-center min-h-[18px]">
+                  <label className={labelClass}>Natureza fiscal</label>
+                </div>
                 <SelectDropdown
                   value={accountNature}
                   onChange={(value) => setAccountNature(value as 'PJ' | 'PF')}
@@ -443,8 +516,15 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                   placeholderClassName="text-sm font-light"
                 />
               </div>
-              <div className="space-y-2 md:col-span-1">
-                <label className={labelClass}>Tipo de conta</label>
+              <div className="space-y-0.5 md:col-span-1">
+                <div className="flex items-center justify-between min-h-[18px]">
+                  <label className={labelClass}>Tipo de conta</label>
+                  {!isMobile && (
+                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                      {resolvedAccountTypes.length}/20
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -454,7 +534,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                   data-tour-anchor={isTourSimulationSession ? 'accounts-field-type' : undefined}
                   className={`${dockFieldClass} flex items-center justify-between text-left`}
                 >
-                  <span className={selectedType ? 'text-zinc-900 dark:text-white' : 'text-zinc-400'}>
+                  <span className={selectedType ? 'text-zinc-900 dark:text-white' : 'text-[11px] font-normal text-zinc-400'}>
                     {selectedType || 'Selecione'}
                   </span>
                   <ChevronDown size={16} className="text-zinc-400" />
@@ -620,33 +700,57 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
   const typeManagerModal = isTypeManagerOpen ? (
       <div className="fixed inset-0 z-[1400]">
+          {/*
+            Dock desktop segue o mesmo padrão full-width do seletor de categorias.
+            Fora do dock (ex.: onboarding), mantemos modal centralizado.
+          */}
           <button
               type="button"
               onClick={closeTypeManager}
-              className="absolute inset-0 bg-black/60"
+              className={
+                  isMobile
+                      ? 'absolute inset-0 bg-black/60'
+                      : variant === 'dock' || forceDock
+                          ? 'absolute left-0 right-0 bg-black/70 backdrop-blur-sm'
+                          : 'absolute inset-0 bg-black/60'
+              }
+              style={
+                  isMobile
+                      ? undefined
+                      : variant === 'dock' || forceDock
+                          ? { top: dockTopOffset, bottom: dockBottomOffset }
+                          : undefined
+              }
               aria-label="Fechar tipos de conta"
           />
           <div
               className={
                   isMobile
                       ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
-                      : 'absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+                      : variant === 'dock' || forceDock
+                          ? 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl'
+                          : 'absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 flex flex-col w-[min(920px,calc(100%-48px))] max-w-[min(920px,calc(100%-48px))]'
               }
               style={
                   isMobile
                       ? undefined
-                      : {
-                            bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)',
-                            maxHeight:
-                                'max(320px, calc(var(--mm-content-available-height, 720px) - 20px))'
-                        }
+                      : variant === 'dock' || forceDock
+                          ? {
+                                bottom: dockBottomOffset,
+                                maxHeight: `max(320px, ${dockMaxHeight})`
+                            }
+                          : {
+                                top: '50%',
+                                transform: 'translate(-50%, -50%)',
+                                maxHeight: 'min(80dvh, 820px)'
+                            }
               }
           >
               <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
                   <div className="min-w-0">
                       <p className="text-sm font-semibold truncate">Tipos de Conta</p>
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                          Gerencie e personalize os tipos das contas (até 20).
+                          Selecione, adicione, edite ou exclua (até 20).
                       </p>
                   </div>
                   <button
@@ -655,97 +759,146 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                       className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300 flex items-center justify-center"
                       aria-label="Fechar tipos de conta"
                   >
-                      <ChevronDown size={16} />
+                      <X size={16} />
                   </button>
               </div>
 
-              <div className="pt-3 flex-1 overflow-auto space-y-4">
-                  <div className="space-y-2">
-                      <label htmlFor={fieldId('type-new')} className={labelClass}>
-                          Novo tipo
-                      </label>
-                      <div className="flex items-center gap-2">
+              <div className="pt-3 flex-1 min-h-0 flex flex-col overflow-hidden">
+                  <div className="flex-1 overflow-y-auto overscroll-contain pr-0.5">
+                      {resolvedAccountTypes.length === 0 ? (
+                          <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">
+                              Nenhum tipo cadastrado.
+                          </div>
+                      ) : (
+                          <div className={`grid ${isMobile ? 'grid-cols-2' : 'grid-cols-8'} gap-2`}>
+                              {resolvedAccountTypes.map((type) => {
+                                  const isSelected = selectedType === type;
+                                  const canDelete = resolvedAccountTypes.length > 1;
+                                  const isEditingCard = editingType === type;
+                                  return (
+                                      <div
+                                          key={type}
+                                          className={`h-20 rounded-lg border p-2 transition ${
+                                              isSelected
+                                                  ? 'border-indigo-400/60 bg-indigo-500/10'
+                                                  : 'border-zinc-200/70 dark:border-zinc-800 bg-transparent'
+                                          }`}
+                                      >
+                                          {isEditingCard ? (
+                                              <div className="h-full flex flex-col gap-1.5">
+                                                  <input
+                                                      type="text"
+                                                      value={editingTypeName}
+                                                      onChange={(event) => {
+                                                          setEditingTypeName(event.target.value);
+                                                          setTypeManagerError('');
+                                                      }}
+                                                      onKeyDown={(event) => {
+                                                          if (event.key === 'Enter') handleSaveTypeEditing(type);
+                                                          if (event.key === 'Escape') handleCancelTypeEditing();
+                                                      }}
+                                                      className={`${dockFieldClass} h-8 text-[11px]`}
+                                                      aria-label={`Editar tipo ${type}`}
+                                                  />
+                                                  <div className="grid grid-cols-2 gap-1.5 h-8">
+                                                      <button
+                                                          type="button"
+                                                          onClick={() => handleSaveTypeEditing(type)}
+                                                          className="rounded-md border border-indigo-500/40 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/10"
+                                                      >
+                                                          Salvar
+                                                      </button>
+                                                      <button
+                                                          type="button"
+                                                          onClick={handleCancelTypeEditing}
+                                                          className="rounded-md border border-zinc-300 dark:border-zinc-700 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/50"
+                                                      >
+                                                          Cancelar
+                                                      </button>
+                                                  </div>
+                                              </div>
+                                          ) : (
+                                              <div className="h-full relative">
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                          setSelectedType(type);
+                                                          closeTypeManager();
+                                                      }}
+                                                      className="absolute inset-0 rounded-md text-left px-1 py-1.5 pr-16 text-[12px] font-semibold leading-tight break-words line-clamp-2 hover:text-zinc-900 dark:hover:text-white"
+                                                  >
+                                                      {type}
+                                                  </button>
+                                                  <div className="absolute right-0 bottom-0 flex items-center justify-end gap-1.5 z-10">
+                                                      <button
+                                                          type="button"
+                                                          onClick={(event) => {
+                                                              event.stopPropagation();
+                                                              handleStartTypeEditing(type);
+                                                          }}
+                                                          className="h-7 w-7 rounded-md border border-zinc-300/80 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900/60 flex items-center justify-center"
+                                                          aria-label={`Editar tipo ${type}`}
+                                                      >
+                                                          <Edit2 size={12} />
+                                                      </button>
+                                                      <button
+                                                          type="button"
+                                                          onClick={(event) => {
+                                                              event.stopPropagation();
+                                                              if (!canDelete) return;
+                                                              const confirmed = window.confirm(`Excluir o tipo "${type}"?`);
+                                                              if (confirmed) handleDeleteType(type);
+                                                          }}
+                                                          disabled={!canDelete}
+                                                          className={`h-7 w-7 rounded-md border flex items-center justify-center ${
+                                                              canDelete
+                                                                  ? 'border-red-400/40 text-red-500 hover:bg-red-500/10'
+                                                                  : 'border-zinc-300/60 dark:border-zinc-700 text-zinc-400 cursor-not-allowed opacity-50'
+                                                          }`}
+                                                          aria-label={`Excluir tipo ${type}`}
+                                                      >
+                                                          <Trash2 size={12} />
+                                                      </button>
+                                                  </div>
+                                              </div>
+                                          )}
+                                      </div>
+                                  );
+                              })}
+                          </div>
+                      )}
+                  </div>
+
+                  <div className="shrink-0 mt-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60">
+                      {typeManagerError && (
+                          <p className="text-[11px] text-rose-500 px-0.5 mb-1.5">{typeManagerError}</p>
+                      )}
+                      <div className={isMobile ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-12 gap-2 items-center'}>
                           <input
                               id={fieldId('type-new')}
                               name="accountTypeNew"
                               type="text"
-                              placeholder="Ex: Conta corrente"
+                              placeholder={resolvedAccountTypes.length >= 20 ? 'Limite de 20 tipos atingido.' : 'Novo tipo...'}
                               value={newTypeInputValue}
-                              onChange={(e) => setNewTypeInputValue(e.target.value)}
+                              onChange={(e) => {
+                                  setNewTypeInputValue(e.target.value);
+                                  setTypeManagerError('');
+                              }}
                               onKeyDown={(e) => {
                                   if (e.key === 'Enter') handleAddType();
                               }}
-                              className={dockFieldClass}
+                              className={`${dockFieldClass} ${isMobile ? '' : 'col-span-9'} ${
+                                  typeManagerError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''
+                              }`}
                           />
                           <button
                               type="button"
                               onClick={handleAddType}
-                              className="h-9 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm shadow-indigo-500/30"
+                              className={`${isMobile ? '' : 'col-span-3'} h-9 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm shadow-indigo-500/30 flex items-center justify-center gap-1.5`}
                           >
+                              <Plus size={14} />
                               Adicionar
                           </button>
-                      </div>
-                      {typeManagerError && (
-                          <p className="text-[11px] text-rose-500">{typeManagerError}</p>
-                      )}
-                  </div>
-
-                  <div className="space-y-2">
-                          <p className="text-[10px] uppercase tracking-[0.35em] text-zinc-400">Tipos cadastrados</p>
-                      <div className="space-y-2">
-                          {resolvedAccountTypes.map((type) => {
-                              const isPending = pendingDeleteType === type;
-                              const canDelete = resolvedAccountTypes.length > 1;
-                              const isSelected = selectedType === type;
-                              return (
-                                  <div key={type} className={`flex items-center justify-between rounded-xl border px-3 py-2 transition ${
-                                      isSelected ? 'border-indigo-400/60 bg-indigo-500/10' : 'border-zinc-200/80 dark:border-white/10 bg-white/60 dark:bg-black/20'
-                                  }`}>
-                                      <button
-                                          type="button"
-                                          onClick={() => {
-                                              setSelectedType(type);
-                                              closeTypeManager();
-                                          }}
-                                          className="text-left flex-1 text-sm font-medium text-zinc-800 dark:text-white/90"
-                                      >
-                                          {type}
-                                      </button>
-                                      {isPending ? (
-                                          <div className="flex items-center gap-2">
-                                              <span className="text-[11px] text-zinc-400">Excluir?</span>
-                                              <button
-                                                  type="button"
-                                                  onClick={() => handleDeleteType(type)}
-                                                  disabled={!canDelete}
-                                                  className="text-[11px] font-semibold text-rose-500 hover:text-rose-400 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                                              >
-                                                  Excluir
-                                              </button>
-                                              <button
-                                                  type="button"
-                                                  onClick={() => setPendingDeleteType(null)}
-                                                  className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-600 dark:hover:text-white transition"
-                                              >
-                                                  Cancelar
-                                              </button>
-                                          </div>
-                                      ) : (
-                                          <button
-                                              type="button"
-                                              onClick={() => setPendingDeleteType(type)}
-                                              disabled={!canDelete}
-                                              className="text-[11px] font-semibold text-zinc-400 hover:text-rose-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                                          >
-                                              Excluir
-                                          </button>
-                                      )}
-                                  </div>
-                              );
-                          })}
-                          {!resolvedAccountTypes.length && (
-                              <p className="text-xs text-zinc-500">Nenhum tipo cadastrado.</p>
-                          )}
                       </div>
                   </div>
               </div>
@@ -761,7 +914,8 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                   <button
                       type="button"
                       onClick={onClose}
-                      className="absolute inset-0 bg-black/60"
+                      className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+                      style={isMobile ? undefined : { top: dockTopOffset, bottom: dockBottomOffset }}
                       aria-label="Fechar conta"
                   />
                   <div
@@ -769,15 +923,14 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                       className={
                           isMobile
                               ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] flex flex-col'
-                              : 'absolute left-1/2 -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+                              : 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl'
                       }
                       style={
                           isMobile
                               ? undefined
                               : {
-                                    bottom: 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 10px)',
-                                    maxHeight:
-                                        'max(320px, calc(var(--mm-content-available-height, 720px) - 20px))'
+                                    bottom: dockBottomOffset,
+                                    maxHeight: `max(320px, ${dockMaxHeight})`
                                 }
                       }
                   >
@@ -800,7 +953,7 @@ const NewAccountModal: React.FC<NewAccountModalProps> = ({
                               <ChevronDown size={16} />
                           </button>
                       </div>
-                      <div className="pt-3 flex-1 overflow-auto">{modalBody}</div>
+                      <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">{modalBody}</div>
                       {modalFooter}
                   </div>
               </div>

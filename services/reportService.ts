@@ -2,6 +2,7 @@ import { CreditCard, Expense, Income } from '../types';
 import { getCreditCardInvoiceTotalForMonth } from './invoiceUtils';
 import { getCardColor } from './cardColorUtils';
 import { computeCategoryTotals } from '../utils/categoryTotals';
+import { isIncomeOperationalForMei } from '../utils/incomeFiscalNature';
 
 export type TaxFilter = 'all' | 'PJ' | 'PF';
 export type ViewMode = 'caixa' | 'competencia';
@@ -210,7 +211,9 @@ export const getMeiAnnualReport = (
     const start = new Date(year, 0, 1);
     const end = new Date(year, 11, 31, 23, 59, 59);
 
-    const incomes = filterIncomes(context, { ...filters, taxFilter: 'PJ' }, start, end);
+    const incomes = filterIncomes(context, { ...filters, taxFilter: 'PJ' }, start, end).filter((income) =>
+        isIncomeOperationalForMei(income)
+    );
     const totalAnual = incomes.reduce((acc, inc) => acc + inc.amount, 0);
     const mediaMensal = totalAnual / 12;
     const projecaoAnual = mediaMensal * 12;

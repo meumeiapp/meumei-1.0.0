@@ -842,7 +842,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
       >
         <div className="px-4 pt-0 pb-[calc(env(safe-area-inset-bottom)+88px)]">
                 <div className="flex flex-col gap-2 mm-mobile-header-stack">
-                    <div className="-mx-4 rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-6 text-center">
+                    <div className="-mx-4 rounded-xl mm-subheader-metric-card mm-mobile-header-card text-center">
                         <div className="flex items-center justify-center gap-2">
                             <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-400">Seu dinheiro agora</p>
                             <button
@@ -860,7 +860,7 @@ const DashboardMobileV2: React.FC<DashboardProps> = ({
                         </p>
                     </div>
 
-                    <div className="-mx-4 rounded-xl mm-mobile-header-card border border-zinc-200/70 dark:border-zinc-800/70 bg-white/90 dark:bg-[#151517]/90 px-4 py-3 text-sm">
+                    <div className="-mx-4 rounded-xl mm-subheader-metric-card mm-mobile-header-card text-sm">
                         <div className="flex items-start justify-between gap-2">
                             <button
                                 type="button"

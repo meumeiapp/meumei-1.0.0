@@ -19,10 +19,8 @@ import AuditLogModal from './components/AuditLogModal';
 import MasterControlPanel from './components/MasterControlPanel';
 import FaturasErrorBoundary from './components/FaturasErrorBoundary';
 import InstallAppModal from './components/InstallAppModal';
-import TourDecisionModal from './components/TourDecisionModal';
 import MobileQuickAccessFooter from './components/mobile/MobileQuickAccessFooter';
 import DesktopQuickAccessFooter from './components/desktop/DesktopQuickAccessFooter';
-import DesktopFirstAccessTour from './components/DesktopFirstAccessTour';
 import ProfileEditorModal from './components/ProfileEditorModal';
 import ProfilePhotoCaptureRoute from './components/ProfilePhotoCaptureRoute';
 import Landing from './Pages/Landing';
@@ -80,11 +78,16 @@ import useIsMobile from './hooks/useIsMobile';
 import useIsCompactHeight from './hooks/useIsCompactHeight';
 import useMobileTopOffset from './hooks/useMobileTopOffset';
 import useIsMobileLandscape from './hooks/useIsMobileLandscape';
+import useDateInputMouseWheel from './hooks/useDateInputMouseWheel';
 import APP_VERSION from './appVersion';
 import type { AuditEntityType } from './services/auditService';
 import { APP_VERSION as LOGIN_APP_VERSION, BUILD_TIME } from './version';
 import { BUILD_ID } from './utils/buildInfo';
 import { buildDefaultPermissionsForRole, canAccessView } from './utils/memberAccess';
+import {
+  isIncomeOperationalForMei,
+  resolveIncomeFiscalNature
+} from './utils/incomeFiscalNature';
 
 const roundToCents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -117,6 +120,7 @@ const hasIncomeCoreChanges = (previous: Income, next: Income) => {
   if (normalizeText(previous.accountId) !== normalizeText(next.accountId)) return true;
   if (normalizeText(previous.status) !== normalizeText(next.status)) return true;
   if (normalizeText(previous.notes) !== normalizeText(next.notes)) return true;
+  if (resolveIncomeFiscalNature(previous) !== resolveIncomeFiscalNature(next)) return true;
   return false;
 };
 
@@ -150,7 +154,6 @@ const RESOLVE_TIMEOUT_MS = 12_000;
 const LEGACY_ACCOUNT_TYPES_STORAGE_KEY = 'meumei_account_types';
 const getScopedAccountTypesStorageKey = (uid: string) => `meumei_account_types:${uid}`;
 const FIRST_ACCESS_INSTALL_DECISION_PREFIX = 'meumei_first_access_install_decision_v1';
-const FIRST_ACCESS_TOUR_DECISION_PREFIX = 'meumei_first_access_tour_decision_v1';
 const getScopedFirstAccessKey = (prefix: string, scopeId?: string | null) =>
   `${prefix}:${String(scopeId || 'default').trim() || 'default'}`;
 
@@ -494,9 +497,6 @@ const AppInner: React.FC = () => {
       return email || null;
   }, [authUser?.email, authUser?.uid]);
   const [installDecisionCompleted, setInstallDecisionCompleted] = useState(false);
-  const [tourDecision, setTourDecision] = useState<'pending' | 'accepted' | 'declined'>('pending');
-  const [isTourDecisionOpen, setIsTourDecisionOpen] = useState(false);
-  const [tourRestartToken, setTourRestartToken] = useState(0);
   const [currentPath, setCurrentPath] = useState(
       typeof window !== 'undefined' ? window.location.pathname : '/'
   );
@@ -541,6 +541,7 @@ const AppInner: React.FC = () => {
   const isCompactHeight = useIsCompactHeight();
   const isMobileLandscape = useIsMobileLandscape();
   useMobileTopOffset();
+  useDateInputMouseWheel();
   const [isQuickExpenseOpen, setIsQuickExpenseOpen] = useState(false);
   const [quickExpenseType, setQuickExpenseType] = useState<ExpenseType>('variable');
   const [autoOpenIncome, setAutoOpenIncome] = useState(false);
@@ -723,6 +724,9 @@ const AppInner: React.FC = () => {
           const dockShellTopVisual = Math.round(
               dockNode?.getBoundingClientRect().top || viewportHeight
           );
+          const dockBarTopVisual = dockBarNode
+              ? Math.round(dockBarNode.getBoundingClientRect().top)
+              : dockShellTopVisual;
           const dockHeightVisual = Math.max(0, dockBarOffsetVisual, dockShellHeightVisual);
           const subheaderHeightVisual = Math.max(0, Math.round(subheaderNode?.getBoundingClientRect().height || 0));
           const mainTopVisual = Math.round(
@@ -737,11 +741,13 @@ const AppInner: React.FC = () => {
           const headerHeightCss = Math.max(0, Math.round(headerHeight * cssScaleFactor));
           const dockHeightCss = Math.max(0, Math.round(dockHeight * cssScaleFactor));
           const subheaderHeightCss = Math.max(0, Math.round(subheaderHeight * cssScaleFactor));
-          // A altura útil deve terminar exatamente no topo visual do shell da dock.
+          // Folga padronizada entre conteúdo e dock.
+          const dockReserveVisual = 5;
+          // A altura útil deve terminar exatamente no topo visual da barra da dock.
           // Isso evita "corte" entre conteúdo e dock em qualquer resolução.
           const contentAvailableHeightVisual = Math.max(
               0,
-              dockShellTopVisual - mainTopVisual
+              dockBarTopVisual - mainTopVisual - dockReserveVisual
           );
           const contentAvailableHeight = Math.max(
               0,
@@ -762,9 +768,7 @@ const AppInner: React.FC = () => {
           // Usa overflow real como fonte principal para evitar falso negativo em telas menores.
           const hasRealOverflow = mainScrollHeight - mainClientHeight > 1;
           const scrollNeeded = hasRealOverflow || mainContentHeight - visibleContentHeight > 2;
-          // Folga mínima apenas para não "colar" no limite inferior.
-          const dockReserveVisual = 6;
-          const dockReserve = Math.max(4, Math.round(dockReserveVisual * cssScaleFactor));
+          const dockReserve = Math.max(5, Math.round(dockReserveVisual * cssScaleFactor));
 
           if (mainNode) {
               if (mainNode.style.overflowY !== 'auto') {
@@ -1083,27 +1087,6 @@ const AppInner: React.FC = () => {
     }
   };
 
-  const readFirstAccessTourDecision = (scopeId?: string | null) => {
-    try {
-      const raw = localStorage.getItem(getScopedFirstAccessKey(FIRST_ACCESS_TOUR_DECISION_PREFIX, scopeId));
-      if (raw === 'accepted' || raw === 'declined') return raw;
-      return 'pending';
-    } catch {
-      return 'pending';
-    }
-  };
-
-  const persistFirstAccessTourDecision = (
-    value: 'accepted' | 'declined',
-    scopeId?: string | null
-  ) => {
-    try {
-      localStorage.setItem(getScopedFirstAccessKey(FIRST_ACCESS_TOUR_DECISION_PREFIX, scopeId), value);
-    } catch {
-      // no-op
-    }
-  };
-
   const completeInstallDecisionStep = (reason: string) => {
     if (installDecisionCompleted) return;
     setInstallDecisionCompleted(true);
@@ -1111,18 +1094,6 @@ const AppInner: React.FC = () => {
     console.log('[first-access]', {
       step: 'install',
       status: 'completed',
-      reason,
-      scopeId: firstAccessScopeId || 'default'
-    });
-  };
-
-  const applyTourDecision = (value: 'accepted' | 'declined', reason: string) => {
-    setTourDecision(value);
-    persistFirstAccessTourDecision(value, firstAccessScopeId);
-    setIsTourDecisionOpen(false);
-    console.log('[first-access]', {
-      step: 'tour_decision',
-      status: value,
       reason,
       scopeId: firstAccessScopeId || 'default'
     });
@@ -2182,6 +2153,8 @@ const AppInner: React.FC = () => {
   const [licenseMeta, setLicenseMeta] = useState<LicenseRecord | null>(null);
   const [licenseCryptoEpoch, setLicenseCryptoEpoch] = useState<number | null>(null);
   const balanceRepairInFlightRef = useRef(false);
+  const incomeFiscalMigrationInFlightRef = useRef(false);
+  const incomeFiscalMigrationLicenseRef = useRef<string | null>(null);
 
   const applyExpenses = (next: Expense[] | ((prev: Expense[]) => Expense[])) => {
     setExpenses(prev => {
@@ -2435,9 +2408,9 @@ const AppInner: React.FC = () => {
       ViewState.YIELDS,
       ViewState.INVOICES,
       ViewState.REPORTS,
-      ViewState.AUDIT,
       ViewState.DAS,
-      ViewState.AGENDA
+      ViewState.AGENDA,
+      ViewState.AUDIT
     ],
     []
   );
@@ -2488,8 +2461,11 @@ const AppInner: React.FC = () => {
       if (auditModalState.isOpen) {
         setAuditModalState(prev => ({ ...prev, isOpen: false }));
       }
-      if (isMobile && options?.source === 'swipe' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('mm:mobile-dock-click'));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('mm:dock-click'));
+        if (isMobile && options?.source === 'swipe') {
+          window.dispatchEvent(new CustomEvent('mm:mobile-dock-click'));
+        }
       }
 
       setCurrentView(nextView);
@@ -2740,7 +2716,6 @@ const AppInner: React.FC = () => {
   const isInstallStepModalVisible =
     isPwaInstallOpen &&
     onboardingCompleted &&
-    !isTourDecisionOpen &&
     !isLoginRoute &&
     !isOnboardingRoute;
 
@@ -2854,21 +2829,14 @@ const AppInner: React.FC = () => {
   useEffect(() => {
     if (!firstAccessScopeId) {
       setInstallDecisionCompleted(false);
-      setTourDecision('pending');
-      setIsTourDecisionOpen(false);
-      setTourRestartToken(0);
       return;
     }
     const installDone = readFirstAccessInstallDecision(firstAccessScopeId);
-    const storedTourDecision = readFirstAccessTourDecision(firstAccessScopeId);
     setInstallDecisionCompleted(installDone);
-    setTourDecision(storedTourDecision);
-    setIsTourDecisionOpen(false);
     console.log('[first-access]', {
       step: 'hydrate',
       scopeId: firstAccessScopeId,
-      installDone,
-      tourDecision: storedTourDecision
+      installDone
     });
   }, [firstAccessScopeId]);
 
@@ -2919,85 +2887,6 @@ const AppInner: React.FC = () => {
     isUpgradeRoute,
     onboardingCompleted,
     openModalManual
-  ]);
-
-  useEffect(() => {
-    if (isMobile) {
-      setIsTourDecisionOpen(false);
-      return;
-    }
-    if (!authUser || !onboardingCompleted) {
-      setIsTourDecisionOpen(false);
-      return;
-    }
-    if (!installDecisionCompleted) {
-      setIsTourDecisionOpen(false);
-      return;
-    }
-    if (tourDecision !== 'pending') {
-      setIsTourDecisionOpen(false);
-      return;
-    }
-    if (isInstallStepModalVisible) {
-      setIsTourDecisionOpen(false);
-      return;
-    }
-    if (isOnboardingRoute || isLoginRoute || isUpgradeRoute || isTermsRoute || isPrivacyRoute || isRefundRoute) {
-      setIsTourDecisionOpen(false);
-      return;
-    }
-    setIsTourDecisionOpen(true);
-    console.log('[first-access]', {
-      step: 'tour_decision',
-      status: 'open',
-      company: companyInfo?.name || null
-    });
-  }, [
-    authUser,
-    companyInfo?.name,
-    installDecisionCompleted,
-    isLoginRoute,
-    isInstallStepModalVisible,
-    isMobile,
-    isOnboardingRoute,
-    isPrivacyRoute,
-    isRefundRoute,
-    isTermsRoute,
-    isUpgradeRoute,
-    onboardingCompleted,
-    tourDecision
-  ]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const handleTourRestart = () => {
-      if (!authUser || !onboardingCompleted || isMobile) return;
-      if (!installDecisionCompleted) {
-        completeInstallDecisionStep('tour_restart');
-      }
-      setIsTourDecisionOpen(false);
-      setTourDecision('accepted');
-      persistFirstAccessTourDecision('accepted', firstAccessScopeId);
-      setCurrentView(ViewState.DASHBOARD);
-      setTourRestartToken(prev => prev + 1);
-      console.log('[first-access]', {
-        step: 'tour_restart',
-        status: 'forced_start',
-        scopeId: firstAccessScopeId || 'default'
-      });
-    };
-
-    window.addEventListener('mm:first-access-tour-restart', handleTourRestart as EventListener);
-    return () => {
-      window.removeEventListener('mm:first-access-tour-restart', handleTourRestart as EventListener);
-    };
-  }, [
-    authUser,
-    firstAccessScopeId,
-    installDecisionCompleted,
-    isMobile,
-    onboardingCompleted
   ]);
 
   const isIosDevice = useMemo(() => {
@@ -3852,39 +3741,88 @@ const AppInner: React.FC = () => {
       setExpenseCategories(payload.expenses);
   };
 
-  const reloadUserCategories = async (uid: string) => {
-      const data = await categoryService.getUserCategories(uid);
-      applyUserCategories(data);
-      return data;
+  const resolveCategoriesScopeId = () => {
+      if (currentUser?.licenseId) return currentUser.licenseId;
+      if (authUser?.uid) return authUser.uid;
+      return null;
+  };
+
+  const mergeCategoryLists = (primary: string[], secondary: string[]) => {
+      const merged: string[] = [];
+      const seen = new Set<string>();
+      [...primary, ...secondary].forEach((item) => {
+          const normalized = categoryService.normalizeCategoryName(item || '');
+          if (!normalized) return;
+          const key = normalized.toLowerCase();
+          if (seen.has(key)) return;
+          seen.add(key);
+          merged.push(normalized);
+      });
+      return merged;
+  };
+
+  const hasCategoryDiff = (current: string[], next: string[]) => {
+      if (current.length !== next.length) return true;
+      const currentNormalized = current.map((item) => categoryService.normalizeCategoryName(item || '').toLowerCase());
+      const nextNormalized = next.map((item) => categoryService.normalizeCategoryName(item || '').toLowerCase());
+      return currentNormalized.some((value, index) => value !== nextNormalized[index]);
+  };
+
+  const reloadUserCategories = async (scopeId: string, fallbackUid?: string | null) => {
+      const scopeData = await categoryService.getUserCategories(scopeId);
+      let finalData = scopeData;
+
+      if (fallbackUid && fallbackUid !== scopeId) {
+          const fallbackData = await categoryService.getUserCategories(fallbackUid);
+          const mergedIncomes = mergeCategoryLists(scopeData.incomes, fallbackData.incomes);
+          const mergedExpenses = mergeCategoryLists(scopeData.expenses, fallbackData.expenses);
+
+          if (
+              hasCategoryDiff(scopeData.incomes, mergedIncomes) ||
+              hasCategoryDiff(scopeData.expenses, mergedExpenses)
+          ) {
+              await categoryService.setUserCategories(scopeId, mergedIncomes, mergedExpenses);
+              finalData = { incomes: mergedIncomes, expenses: mergedExpenses };
+              console.info('[categories] migrated_to_scope', {
+                  scopeId,
+                  fallbackUid,
+                  incomesLen: mergedIncomes.length,
+                  expensesLen: mergedExpenses.length
+              });
+          }
+      }
+
+      applyUserCategories(finalData);
+      return finalData;
   };
 
   const handleAddCategory = async (type: CategoryType, name: string) => {
-      const uid = authUser?.uid || null;
-      if (!uid) {
-          console.warn('[categories] add_skipped', { type, reason: 'uid_missing' });
+      const scopeId = resolveCategoriesScopeId();
+      if (!scopeId) {
+          console.warn('[categories] add_skipped', { type, reason: 'scope_missing' });
           throw new Error('Usuário não resolvido.');
       }
-      await categoryService.addCategory(uid, type, name);
-      await reloadUserCategories(uid);
+      await categoryService.addCategory(scopeId, type, name);
+      await reloadUserCategories(scopeId, authUser?.uid || null);
   };
 
   const handleRemoveCategory = async (type: CategoryType, name: string) => {
-      const uid = authUser?.uid || null;
-      if (!uid) {
-          console.warn('[categories] remove_skipped', { type, reason: 'uid_missing' });
+      const scopeId = resolveCategoriesScopeId();
+      if (!scopeId) {
+          console.warn('[categories] remove_skipped', { type, reason: 'scope_missing' });
           throw new Error('Usuário não resolvido.');
       }
-      await categoryService.removeCategory(uid, type, name);
-      await reloadUserCategories(uid);
+      await categoryService.removeCategory(scopeId, type, name);
+      await reloadUserCategories(scopeId, authUser?.uid || null);
   };
 
   const handleResetCategories = async () => {
-      const uid = authUser?.uid || null;
-      if (!uid) {
-          console.warn('[categories] reset_skipped', { reason: 'uid_missing' });
+      const scopeId = resolveCategoriesScopeId();
+      if (!scopeId) {
+          console.warn('[categories] reset_skipped', { reason: 'scope_missing' });
           throw new Error('Usuário não resolvido.');
       }
-      await categoryService.resetUserCategories(uid);
+      await categoryService.resetUserCategories(scopeId);
       applyUserCategories({ incomes: [], expenses: [] });
   };
 
@@ -4162,6 +4100,36 @@ const AppInner: React.FC = () => {
 
   useEffect(() => {
       const licenseId = currentUser?.licenseId;
+      if (!licenseId) return;
+      if (incomeFiscalMigrationLicenseRef.current === licenseId) return;
+      if (incomeFiscalMigrationInFlightRef.current) return;
+
+      incomeFiscalMigrationInFlightRef.current = true;
+      incomeFiscalMigrationLicenseRef.current = licenseId;
+      console.info('[fiscal][migrate] incomes_naturezaFiscal_start', { licenseId });
+
+      dataService
+          .migrateIncomeFiscalNature(licenseId)
+          .then((count) => {
+              console.info('[fiscal][migrate] incomes_naturezaFiscal_done', {
+                  count,
+                  licenseId
+              });
+          })
+          .catch((error) => {
+              incomeFiscalMigrationLicenseRef.current = null;
+              console.error('[fiscal][migrate] incomes_naturezaFiscal_failed', {
+                  licenseId,
+                  message: (error as Error)?.message || error
+              });
+          })
+          .finally(() => {
+              incomeFiscalMigrationInFlightRef.current = false;
+          });
+  }, [currentUser?.licenseId]);
+
+  useEffect(() => {
+      const licenseId = currentUser?.licenseId;
       if (!licenseId || !licenseCryptoEpoch || !needsTransfers) return;
       console.info('[realtime][transfers] subscribe_start', { licenseId, view: currentView });
       const unsubscribe = dataService.subscribeTransfers(
@@ -4292,25 +4260,20 @@ const AppInner: React.FC = () => {
   }, [agendaItems, currentUser?.licenseId]);
 
   useEffect(() => {
-      const uid = authUser?.uid;
-      if (!uid) {
+      const scopeId = resolveCategoriesScopeId();
+      if (!scopeId) {
           console.info('[load] skipped:no-auth', { scope: 'categories' });
           return;
       }
-      let isActive = true;
       const run = async () => {
-          const data = await categoryService.getUserCategories(uid);
-          if (isActive) applyUserCategories(data);
+          await reloadUserCategories(scopeId, authUser?.uid || null);
       };
       if (isStandalone) {
           void run().catch(error => console.error('[pwa][boot]', error));
       } else {
           void run();
       }
-      return () => {
-          isActive = false;
-      };
-  }, [authUser?.uid, isStandalone]);
+  }, [authUser?.uid, currentUser?.licenseId, isStandalone]);
 
   useEffect(() => {
       const uid = authUser?.uid;
@@ -5818,14 +5781,77 @@ const AppInner: React.FC = () => {
       }),
       [totalIncome, totalExpenses]
   );
+  const currentUserRoleLabel =
+    currentUserRole === 'owner'
+      ? 'Proprietário'
+      : currentUserRole === 'admin'
+        ? 'Administrador'
+        : 'Funcionário';
   
-  // PJ Annual Revenue (MEI Limit Check)
-  const annualMeiRevenue = incomes
-      .filter(inc => {
-          const d = new Date(inc.date + 'T12:00:00');
-          return d.getFullYear() === viewDate.getFullYear() && inc.taxStatus !== 'PF';
-      })
-      .reduce((acc, curr) => acc + curr.amount, 0);
+  // Faturamento fiscal MEI: considera somente entradas RECEBIDAS + RECEITA_OPERACIONAL
+  const meiFiscalDebug = useMemo(() => {
+      const considered: Array<{
+          id: string;
+          descricao: string;
+          categoria: string;
+          data: string;
+          valor: number;
+          naturezaFiscal: string;
+      }> = [];
+      const ignored: Array<{
+          id: string;
+          descricao: string;
+          categoria: string;
+          data: string;
+          valor: number;
+          naturezaFiscal: string;
+          motivo: string;
+      }> = [];
+      let total = 0;
+
+      incomes.forEach((income) => {
+          const d = new Date(`${income.date}T12:00:00`);
+          if (Number.isNaN(d.getTime()) || d.getFullYear() !== viewDate.getFullYear()) {
+              return;
+          }
+
+          const naturezaFiscal = resolveIncomeFiscalNature(income);
+          const isOperational = isIncomeOperationalForMei(income);
+          if (isOperational) {
+              total += Number(income.amount || 0);
+              considered.push({
+                  id: income.id,
+                  descricao: income.description,
+                  categoria: income.category,
+                  data: income.date,
+                  valor: Number(income.amount || 0),
+                  naturezaFiscal
+              });
+          } else {
+              ignored.push({
+                  id: income.id,
+                  descricao: income.description,
+                  categoria: income.category,
+                  data: income.date,
+                  valor: Number(income.amount || 0),
+                  naturezaFiscal,
+                  motivo: income.status !== 'received' ? 'status_nao_recebido' : 'natureza_fiscal_nao_operacional'
+              });
+          }
+      });
+
+      return {
+          total: roundToCents(total),
+          considered,
+          ignored
+      };
+  }, [incomes, viewDate]);
+  const annualMeiRevenue = meiFiscalDebug.total;
+
+  useEffect(() => {
+      console.log('Entradas consideradas no faturamento', meiFiscalDebug.considered);
+      console.log('Entradas ignoradas', meiFiscalDebug.ignored);
+  }, [meiFiscalDebug]);
 
   useEffect(() => {
       if (!realBalances) return;
@@ -6164,6 +6190,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                 <GlobalHeader 
                     companyName={companyInfo.name}
                     username={currentUser?.username || currentUser?.email || ''}
+                    userRoleLabel={currentUserRoleLabel}
                     viewDate={viewDate}
                     summary={headerSummary}
                     onMonthChange={handleMonthChange}
@@ -6250,7 +6277,9 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
                                 </div>
                             </div>
                         )}
-                        {content}
+                        <div className={isMobile ? '' : 'mm-content-screen-host'}>
+                            {content}
+                        </div>
                     </div>
                     {!isMobile && companySheetOpen && (
                         <div
@@ -6931,7 +6960,7 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
   return (
       <>
         {currentView === ViewState.DASHBOARD && renderLayout(
-            <div data-tour-anchor="tour-view-dashboard" data-tour-screen="dashboard">
+            <div className="h-full min-h-0" data-tour-anchor="tour-view-dashboard" data-tour-screen="dashboard">
             <Dashboard 
                 onOpenAccounts={() => setCurrentView(ViewState.ACCOUNTS)}
                 onOpenVariableExpenses={() => {
@@ -7009,6 +7038,8 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
              creditCards={creditCards}
              licenseId={currentUser?.licenseId}
              expenseTypeOptions={expenseTypeOptions}
+             canExportReports={currentUserRole === 'owner'}
+             dashboardBalance={totalBalance}
           />
           </div>,
           { skipMobileOffset: true }
@@ -7048,6 +7079,24 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
               onBack={() => setCurrentView(ViewState.DASHBOARD)}
               company={companyInfo}
               onOpenCompany={() => setCurrentView(ViewState.SETTINGS)}
+              viewDate={viewDate}
+              expenses={expenses}
+              accounts={accounts}
+              onUpdateExpenses={handleUpdateExpenses}
+              onDeleteExpense={handleDeleteExpense}
+              onEditExpense={(id, subtype) => {
+                  setAutoOpenExpenseEditId(id);
+                  setMobileExpensesScope('all');
+                  if (subtype === 'fixed') {
+                      setCurrentView(ViewState.FIXED_EXPENSES);
+                      return;
+                  }
+                  if (subtype === 'personal') {
+                      setCurrentView(ViewState.PERSONAL_EXPENSES);
+                      return;
+                  }
+                  setCurrentView(ViewState.VARIABLE_EXPENSES);
+              }}
           />
           </div>,
           { skipMobileOffset: true }
@@ -7505,21 +7554,6 @@ const renderLayout = (content: React.ReactNode, options?: { skipMobileOffset?: b
           onInstall={handleInstallStepInstall}
           onClose={handleInstallStepClose}
       />
-      <TourDecisionModal
-          isOpen={isTourDecisionOpen}
-          companyName={companyInfo?.name || ''}
-          onAccept={() => applyTourDecision('accepted', 'manual_accept')}
-          onDecline={() => applyTourDecision('declined', 'manual_decline')}
-      />
-      {!isMobile && (
-          <DesktopFirstAccessTour
-              scopeId={authUser?.uid || undefined}
-              enabled={onboardingCompleted && installDecisionCompleted && tourDecision === 'accepted'}
-              restartToken={tourRestartToken}
-              currentView={currentView}
-              onSetView={setCurrentView}
-          />
-      )}
       {isMobile && (
           <MobileQuickAccessFooter items={mobileQuickAccessItems} />
       )}

@@ -139,7 +139,7 @@ const DesktopQuickAccessFooter: React.FC<DesktopQuickAccessFooterProps> = ({
   if (visibleItems.length === 0) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[60]" data-mm-desktop-dock-shell="true" ref={shellRef}>
+    <div className="fixed bottom-0 left-0 right-0 z-[3000]" data-mm-desktop-dock-shell="true" ref={shellRef}>
       <div className="quick-access-shell relative w-full bg-transparent">
         <div className="mx-auto w-full max-w-7xl" style={shellStyle}>
           <div
@@ -164,6 +164,9 @@ const DesktopQuickAccessFooter: React.FC<DesktopQuickAccessFooterProps> = ({
                 type="button"
                 onClick={(event) => {
                   (event.currentTarget as HTMLButtonElement).blur();
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('mm:dock-click'));
+                  }
                   item.onClick();
                 }}
                 data-dock-item-id={item.id}

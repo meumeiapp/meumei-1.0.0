@@ -89,6 +89,7 @@ export default defineConfig(({ mode, command }) => {
           workbox: {
             clientsClaim: true,
             skipWaiting: true,
+            maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
             importScripts: ['firebase-messaging-sw.js'],
             globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
             navigateFallback: '/index.html',

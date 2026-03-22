@@ -10,6 +10,7 @@ interface YieldEntry {
   date: string;
   amount: number;
   notes?: string;
+  locked?: boolean;
 }
 
 interface MonthlySummaryItem {
@@ -177,6 +178,9 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
   };
 
   const handleEditEntry = (entry: YieldEntry) => {
+    if (entry.locked) {
+      return;
+    }
     const yieldId = entry.id ?? `${entry.accountId.replace(/\//g, '_')}_${entry.date}`;
     console.info('[yields][mobile] edit_open', { accountId: entry.accountId, yieldId });
     onEditYield(entry);
@@ -199,22 +203,22 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
       </div>
 
       <div className="grid grid-cols-3 gap-2">
-        <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
-          <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Patrimônio</p>
-          <p className="text-[12px] font-semibold text-zinc-900 dark:text-white truncate">
+        <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card text-center">
+          <p className="mm-subheader-metric-label">Patrimônio</p>
+          <p className="mm-subheader-metric-value truncate">
             {formatCurrency(totalInvested)}
           </p>
         </div>
-        <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
-          <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Mês</p>
-          <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
+        <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card text-center">
+          <p className="mm-subheader-metric-label">Mês</p>
+          <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400 truncate">
             {formatCurrency(monthlyTotal)}
           </p>
         </div>
-        <div className="rounded-xl mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-2 py-1.5 text-center">
-          <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Variação</p>
+        <div className="rounded-xl mm-subheader-metric-card mm-mobile-header-card text-center">
+          <p className="mm-subheader-metric-label">Variação</p>
           <p
-            className={`text-[12px] font-semibold truncate ${
+            className={`mm-subheader-metric-value truncate ${
               monthlyDelta > 0
                 ? 'text-emerald-600 dark:text-emerald-400'
                 : monthlyDelta < 0
@@ -233,7 +237,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
           <button
             type="button"
             onClick={onOpenAudit}
-            className="flex items-center justify-center gap-2 mm-mobile-primary-cta rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] py-3 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-200 dark:hover:border-indigo-700 transition"
+            className="w-full mm-btn-base mm-btn-secondary mm-btn-secondary-indigo mm-mobile-primary-cta"
           >
             <History size={14} />
             Auditoria
@@ -242,7 +246,7 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
         <button
           type="button"
           onClick={onAddYield}
-          className="w-full rounded-xl mm-mobile-primary-cta bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 text-sm shadow-lg shadow-indigo-900/20 transition active:scale-[0.98] flex items-center justify-center gap-2"
+          className="w-full mm-btn-base mm-btn-primary mm-btn-primary-indigo mm-mobile-primary-cta"
         >
           Novo Rendimento
         </button>
@@ -408,10 +412,15 @@ const YieldsMobileV2: React.FC<YieldsMobileV2Props> = ({
                                       <button
                                         type="button"
                                         onClick={() => handleEditEntry(entry)}
-                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 hover:text-indigo-700"
+                                        disabled={Boolean(entry.locked)}
+                                        className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
+                                          entry.locked
+                                            ? 'text-zinc-400 cursor-not-allowed'
+                                            : 'text-indigo-600 dark:text-indigo-300 hover:text-indigo-700'
+                                        }`}
                                       >
                                         <Pencil size={12} />
-                                        Editar
+                                        {entry.locked ? 'Bloqueado' : 'Editar'}
                                       </button>
                                     </div>
                                   </div>

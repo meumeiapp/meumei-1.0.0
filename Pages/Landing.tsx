@@ -424,7 +424,7 @@ export default function Landing() {
             <div className="flex flex-col gap-4 md:gap-6 w-full">
               <p className="text-[11px] md:text-xs uppercase tracking-[0.28em] md:tracking-[0.4em] text-zinc-300 text-center">
                 App financeiro feito para MEI
-                <span className="hidden md:inline"> • versão 1.0.0</span>
+                <span className="hidden md:inline"> • versão 1.0.1 Beta</span>
               </p>
               <h1 className="order-1 md:order-1 text-[clamp(1.28rem,6.9vw,1.78rem)] tracking-[-0.018em] sm:text-5xl md:text-[3.65rem] lg:text-[4.15rem] font-bold leading-[1.06] md:leading-[1.1] text-white max-w-4xl md:max-w-none mx-auto text-center font-space-grotesk">
                 <span className="block">Organize seu MEI sem planilhas</span>

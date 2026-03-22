@@ -6,6 +6,7 @@ import Logo from './Logo';
 interface MobileHeaderProps {
   companyName: string;
   username: string;
+  userRoleLabel?: string;
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   onOpenSettings: () => void;
@@ -33,6 +34,7 @@ interface MobileHeaderProps {
 const MobileHeader: React.FC<MobileHeaderProps> = ({
   companyName,
   username,
+  userRoleLabel,
   onOpenSettings,
   onOpenAudit,
   onOpenCalculator,
@@ -96,6 +98,9 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">{username}</p>
+              {userRoleLabel && (
+                <p className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{userRoleLabel}</p>
+              )}
               <p className="text-[11px] text-cyan-600 dark:text-cyan-300">Toque para editar perfil</p>
             </div>
           </button>

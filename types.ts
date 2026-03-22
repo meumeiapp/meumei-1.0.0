@@ -163,7 +163,7 @@ export interface Account {
     deltaEncrypted?: string;
     source?: string;
   }[];
-  yieldHistory?: { date: string; amount: number; notes?: string }[];
+  yieldHistory?: { id?: string; date: string; amount: number; notes?: string }[];
   lastYield?: number;
   lastYieldDate?: string;
   lastYieldNote?: string;
@@ -238,6 +238,14 @@ export interface Income {
   amount: number;
   amountEncrypted?: string;
   category: string;
+  naturezaFiscal?:
+    | 'RECEITA_OPERACIONAL'
+    | 'EMPRESTIMO'
+    | 'TRANSFERENCIA'
+    | 'DISTRIBUICAO_LUCROS'
+    | 'APORTE'
+    | 'RENDIMENTO'
+    | 'OUTROS';
   date: string;
   competenceDate?: string;
   accountId: string;

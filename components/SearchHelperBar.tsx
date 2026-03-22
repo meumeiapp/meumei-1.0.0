@@ -313,14 +313,6 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
     setAssistantCollapsed(false);
   };
 
-  const handleRestartFirstAccessTour = () => {
-    if (typeof window === 'undefined') return;
-    window.dispatchEvent(new CustomEvent('mm:first-access-tour-restart'));
-    setAssistantError('');
-    setAssistantAnswer('Guia de primeiro acesso reiniciado com sucesso.');
-    setAssistantSuggestions([]);
-  };
-
   return (
     <div className="space-y-3">
       <div className="relative">
@@ -578,15 +570,6 @@ const SearchHelperBar: React.FC<SearchHelperBarProps> = ({
                           {assistantAnswer && <p className="whitespace-pre-line">{assistantAnswer}</p>}
                         </div>
                       )}
-                      <div className="mt-3">
-                        <button
-                          type="button"
-                          onClick={handleRestartFirstAccessTour}
-                          className="w-full rounded-full border border-cyan-300/40 bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-500/20 dark:border-cyan-400/30 dark:text-cyan-300"
-                        >
-                          Reiniciar guia de primeiro acesso
-                        </button>
-                      </div>
                     </div>
                   </div>
                 )}

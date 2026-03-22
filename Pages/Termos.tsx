@@ -20,7 +20,7 @@ export default function Termos() {
       <main className="max-w-4xl mx-auto px-4 py-12 space-y-8">
         <header className="space-y-1">
           <h1 className="text-2xl font-bold">TERMOS DE USO</h1>
-          <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">MEUMEI 1.0.0</p>
+          <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">MEUMEI 1.0.1 BETA</p>
           <p className="text-sm text-zinc-500">Última atualização: 06/02/2026</p>
         </header>
 

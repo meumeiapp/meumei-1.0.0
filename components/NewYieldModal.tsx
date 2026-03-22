@@ -97,6 +97,10 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
     : `${mobileModalTextareaClass} min-h-[84px]`;
   const fieldStackClass = isMobile ? 'space-y-1.5' : 'space-y-0.5';
   const fieldsGridClass = isMobile ? 'gap-2' : 'gap-0.5 sm:gap-3';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockMaxHeight =
+    'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
 
   const handleSave = async () => {
     const uid = authUser?.uid || '';
@@ -196,6 +200,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
           <WheelDatePicker
             value={date}
             onChange={setDate}
+            desktopMode={isDockDesktop ? 'modal' : 'native'}
             buttonClassName={inputBaseClass}
             disabled={isEditing}
             ariaLabel="Selecionar data do rendimento"
@@ -305,18 +310,19 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
     const headerTitle = isEditing ? 'Editar Rendimento' : 'Novo Rendimento';
     const mobilePrimaryLabel = 'Salvar';
     const dockOffset = 'var(--mm-mobile-dock-height, 68px)';
+    const mobileTopOffset = 'var(--mm-header-height, 64px)';
     return (
       <div className="fixed inset-0 z-[1200]" data-modal-root="true">
         <button
           type="button"
           onClick={onClose}
           className="absolute left-0 right-0 top-0 bg-black/70"
-          style={{ bottom: dockOffset }}
+          style={{ top: mobileTopOffset, bottom: dockOffset }}
           aria-label="Fechar rendimento"
         />
         <div
           className="absolute left-0 right-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col"
-          style={{ top: 0, bottom: dockOffset }}
+          style={{ top: mobileTopOffset, bottom: dockOffset }}
         >
           <div className="px-3 pt-2.5 pb-2.5 bg-[#0b0b10] border-b border-white/10">
             <div className="flex items-start justify-between gap-3">
@@ -369,11 +375,24 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="absolute inset-0 bg-black/60"
+          className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+          style={isMobile ? undefined : { top: dockTopOffset, bottom: dockBottomOffset }}
           aria-label="Fechar rendimento"
         />
         <div
-          className="absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]"
+          className={
+            isMobile
+              ? 'absolute left-0 right-0 bottom-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col'
+              : 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl'
+          }
+          style={
+            isMobile
+              ? undefined
+              : {
+                  bottom: dockBottomOffset,
+                  maxHeight: `max(320px, ${dockMaxHeight})`
+                }
+          }
         >
           <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
             <div className="min-w-0">
@@ -389,7 +408,7 @@ const NewYieldModal: React.FC<NewYieldModalProps> = ({
               <ChevronDown size={16} />
             </button>
           </div>
-          <div className="pt-3 flex-1 overflow-auto space-y-4">{formFields}</div>
+          <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-4">{formFields}</div>
           {footerActions}
         </div>
       </div>

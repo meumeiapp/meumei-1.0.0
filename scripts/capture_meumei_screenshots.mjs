@@ -26,7 +26,20 @@ const clickDock = async (page, id) => {
   const selector = `button[data-dock-item-id="${id}"]`;
   const button = page.locator(selector).first();
   await button.waitFor({ state: 'visible', timeout: 12000 });
-  await button.click();
+  await page.keyboard.press('Escape').catch(() => {});
+  const dismissCandidates = [
+    page.getByRole('button', { name: /pular tour/i }).first(),
+    page.getByRole('button', { name: /fechar/i }).first(),
+    page.getByRole('button', { name: /entendi/i }).first(),
+    page.getByRole('button', { name: /ok/i }).first()
+  ];
+  for (const candidate of dismissCandidates) {
+    if (await candidate.isVisible().catch(() => false)) {
+      await candidate.click({ force: true }).catch(() => {});
+      await sleep(120);
+    }
+  }
+  await button.click({ force: true });
 };
 
 const fillOnboarding = async (page) => {
@@ -125,8 +138,12 @@ try {
 
   for (const view of desktopViews) {
     await clickDock(page, view.id);
-    await page.locator(`[data-tour-screen="${view.screen}"]`).waitFor({ state: 'visible', timeout: 20000 });
-    await sleep(900);
+    try {
+      await page.locator(`[data-tour-screen="${view.screen}"]`).waitFor({ state: 'visible', timeout: 8000 });
+    } catch {
+      console.warn(`warn: data-tour-screen not visible for ${view.id}, capturando mesmo assim`);
+    }
+    await sleep(1200);
     await screenshotFile(page, view.file);
   }
 

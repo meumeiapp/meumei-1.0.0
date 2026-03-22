@@ -220,11 +220,40 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
     setSelectedDayKey(targetDate);
     setActiveSheet('details');
   };
+  const closeActiveSheet = () => {
+    setActiveSheet(null);
+    resetForm();
+  };
+
+  useEffect(() => {
+    if (!activeSheet) return;
+
+    const handleDockClick = () => {
+      closeActiveSheet();
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeActiveSheet();
+    };
+
+    window.addEventListener('mm:dock-click', handleDockClick as EventListener);
+    document.addEventListener('keydown', handleEscape, true);
+    return () => {
+      window.removeEventListener('mm:dock-click', handleDockClick as EventListener);
+      document.removeEventListener('keydown', handleEscape, true);
+    };
+  }, [activeSheet]);
 
   const selectedItems = selectedDayKey ? itemsByDate.get(selectedDayKey) || [] : [];
   const headerCardRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
-  const headerActionRadius = isMobile ? 'rounded-xl' : 'rounded-2xl';
+  const headerActionRadius = 'rounded-xl';
   const dayCellRadius = isMobile ? 'rounded-xl' : 'rounded-xl';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockMaxHeight =
+    'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
 
   const headerContent = (
       <div className="space-y-2 mm-mobile-header-stack mm-mobile-header-stable mm-mobile-header-stable-tight">
@@ -240,21 +269,21 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
       </div>
 
       <div className="grid grid-cols-3 gap-[5px]">
-        <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Hoje</p>
-          <p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400">{todayCount}</p>
+        <div className={`${headerCardRadius} mm-subheader-metric-card mm-mobile-header-card`}>
+          <p className="mm-subheader-metric-label">Hoje</p>
+          <p className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">{todayCount}</p>
         </div>
-        <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Próximos 7 dias</p>
-          <p className="text-[12px] font-semibold text-indigo-600 dark:text-indigo-400">{weekCount}</p>
+        <div className={`${headerCardRadius} mm-subheader-metric-card mm-mobile-header-card`}>
+          <p className="mm-subheader-metric-label">Próximos 7 dias</p>
+          <p className="mm-subheader-metric-value text-indigo-600 dark:text-indigo-400">{weekCount}</p>
         </div>
-        <div className={`${headerCardRadius} mm-mobile-header-card border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2`}>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Total</p>
-          <p className="text-[12px] font-semibold text-zinc-900 dark:text-white">{items.length}</p>
+        <div className={`${headerCardRadius} mm-subheader-metric-card mm-mobile-header-card`}>
+          <p className="mm-subheader-metric-label">Total</p>
+          <p className="mm-subheader-metric-value">{items.length}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-[5px]">
+      <div className={isMobile ? 'grid grid-cols-1 gap-[5px]' : 'mm-header-actions'}>
         <button
           type="button"
           onClick={() => {
@@ -270,7 +299,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
   );
 
   const calendarContent = (
-    <>
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between mb-3">
         <div className="text-sm font-semibold text-zinc-900 dark:text-white">Calendário • {monthLabel}</div>
         <div className="text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Todos os dias</div>
@@ -280,10 +309,10 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
           <div key={day} className="text-center font-semibold">{day}</div>
         ))}
       </div>
-      <div className="grid grid-cols-7 gap-[5px] auto-rows-[minmax(0,1fr)] flex-1">
+      <div className="grid grid-cols-7 gap-[5px] auto-rows-[minmax(var(--mm-agenda-day-cell-min-height,52px),1fr)] flex-1 min-h-0">
         {calendarDays.map((day, index) => {
           if (!day.inMonth || !day.dateKey) {
-            return <div key={`empty-${index}`} className={`min-h-[52px] h-full ${dayCellRadius} bg-transparent`} />;
+            return <div key={`empty-${index}`} className={`min-h-[var(--mm-agenda-day-cell-min-height,52px)] h-full ${dayCellRadius} bg-transparent`} />;
           }
           const dayItems = itemsByDate.get(day.dateKey) || [];
           const hasEvents = dayItems.length > 0;
@@ -295,7 +324,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
               key={day.dateKey}
               type="button"
               onClick={() => openDetailsForDate(day.dateKey!)}
-              className={`min-h-[52px] h-full ${dayCellRadius} px-2 py-1.5 flex flex-col items-start text-left gap-1 transition ${
+              className={`min-h-[var(--mm-agenda-day-cell-min-height,52px)] h-full ${dayCellRadius} px-2 py-1.5 flex flex-col items-start text-left gap-1 transition ${
                 hasEvents
                   ? 'bg-rose-200/70 dark:bg-rose-500/20 border border-rose-400/40 text-rose-900 dark:text-rose-200'
                   : 'bg-emerald-100/80 dark:bg-emerald-500/10 border border-emerald-300/40 text-emerald-900 dark:text-emerald-200'
@@ -344,7 +373,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
           );
         })}
       </div>
-    </>
+    </div>
   );
 
   return (
@@ -386,7 +415,9 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
                     withDivider={false}
                     backgroundClassName="bg-emerald-50/60 dark:bg-emerald-500/10"
                   >
-                    <div className="flex flex-col">{calendarContent}</div>
+                    <div className="flex flex-col" data-mm-measure-target="agenda-calendario">
+                      {calendarContent}
+                    </div>
                   </MobileFullWidthSection>
                 </div>
               </div>
@@ -396,13 +427,16 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
       ) : (
         <div className="mm-mobile-shell bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-white font-inter transition-colors duration-300 h-full min-h-0 flex flex-col">
           <div className="w-full px-4 sm:px-6 pt-6 relative z-10">
-            <div className="mm-subheader w-full rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4">
+            <div className="mm-subheader mm-subheader-panel w-full">
               {headerContent}
             </div>
           </div>
           <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 mt-[var(--mm-content-gap)] flex-1 min-h-0">
             <div className="h-full min-h-0">
-              <div className="w-full h-full min-h-0 rounded-3xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/60 dark:bg-emerald-500/10 p-4 flex flex-col">
+              <div
+                className="w-full h-full min-h-0 rounded-3xl border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/60 dark:bg-emerald-500/10 p-4 flex flex-col"
+                data-mm-measure-target="agenda-calendario"
+              >
                 {calendarContent}
               </div>
             </div>
@@ -411,19 +445,31 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
       )}
 
       {activeSheet && (
-        <div className="fixed inset-0 z-[1300]">
+        <div className="fixed inset-0 z-[1300] pointer-events-none" data-modal-root="true">
           <button
             type="button"
-            onClick={() => {
-              setActiveSheet(null);
-              resetForm();
-            }}
-            className="absolute inset-0 bg-black/40"
+            onClick={closeActiveSheet}
+            className={isMobile ? 'absolute inset-0 bg-black/40 pointer-events-auto' : 'absolute left-0 right-0 bg-black/70 backdrop-blur-sm pointer-events-auto'}
+            style={isMobile ? undefined : { top: dockTopOffset, bottom: dockBottomOffset }}
             aria-label="Fechar agenda"
           />
-          <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-none border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] overflow-y-auto md:left-1/2 md:right-auto md:bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] md:w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] md:max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] md:-translate-x-1/2 md:rounded-[26px] md:border md:border-black/10 md:dark:border-white/20 md:bg-white/80 md:dark:bg-white/5 md:backdrop-blur-2xl md:shadow-[0_10px_24px_rgba(0,0,0,0.35)] md:p-5 md:max-h-[80vh] md:pb-6">
+          <div
+            className={
+              isMobile
+                ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-none border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4 max-h-[calc(100dvh-24px)] overflow-y-auto pointer-events-auto'
+                : 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 shadow-2xl overflow-y-auto pointer-events-auto'
+            }
+            style={
+              isMobile
+                ? undefined
+                : {
+                    bottom: dockBottomOffset,
+                    maxHeight: `max(320px, ${dockMaxHeight})`
+                  }
+            }
+          >
             {activeSheet === 'details' && (
-              <div className="space-y-4 pb-[calc(env(safe-area-inset-bottom)+88px)]">
+              <div className={isMobile ? 'space-y-4 pb-[calc(env(safe-area-inset-bottom)+88px)]' : 'space-y-4 pb-2'}>
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
                     <CalendarDays size={16} />
@@ -482,7 +528,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
             )}
 
             {activeSheet === 'form' && (
-              <div className="space-y-2 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+72px)]">
+              <div className={isMobile ? 'space-y-2 pb-[calc(env(safe-area-inset-bottom)+var(--mm-mobile-dock-height,68px)+72px)]' : 'space-y-2 pb-2'}>
                 <div className="flex items-center justify-between">
                   <div className="text-[15px] font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
                     <CalendarDays size={16} />
@@ -553,10 +599,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
                     <div className="grid grid-cols-2 gap-3 w-full">
                       <button
                         type="button"
-                        onClick={() => {
-                          setActiveSheet(null);
-                          resetForm();
-                        }}
+                        onClick={closeActiveSheet}
                         className={modalSecondaryButtonClass}
                       >
                         Cancelar
@@ -585,10 +628,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ items, onSave, onDelete, onBack
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setActiveSheet(null);
-                  resetForm();
-                }}
+                onClick={closeActiveSheet}
                 className="rounded-xl border border-zinc-200 dark:border-zinc-800 py-3 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition"
               >
                 Cancelar

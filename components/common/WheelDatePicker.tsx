@@ -16,6 +16,7 @@ interface WheelDatePickerProps {
   ariaLabel?: string;
   sheetTitle?: string;
   sheetSubtitle?: string;
+  desktopMode?: 'native' | 'modal';
 }
 
 const pad2 = (value: number | string) => String(value).padStart(2, '0');
@@ -52,7 +53,8 @@ const WheelDatePicker: React.FC<WheelDatePickerProps> = ({
   emptyText = 'SELECIONE',
   ariaLabel = 'Selecionar data',
   sheetTitle = 'Selecionar Data',
-  sheetSubtitle = 'Role para ajustar.'
+  sheetSubtitle = 'Role para ajustar.',
+  desktopMode = 'native'
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [pickerValue, setPickerValue] = useState<DateFieldValue>({
@@ -111,7 +113,7 @@ const WheelDatePicker: React.FC<WheelDatePickerProps> = ({
     setIsOpen(false);
   };
 
-  if (!isMobile) {
+  if (!isMobile && desktopMode === 'native') {
     return (
       <input
         type="date"
@@ -127,6 +129,11 @@ const WheelDatePicker: React.FC<WheelDatePickerProps> = ({
       />
     );
   }
+
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockMaxHeight =
+    'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
 
   return (
     <>
@@ -145,10 +152,25 @@ const WheelDatePicker: React.FC<WheelDatePickerProps> = ({
           <button
             type="button"
             onClick={() => setIsOpen(false)}
-            className="absolute inset-0 bg-black/40"
+            className={isMobile ? 'absolute inset-0 bg-black/40' : 'absolute left-0 right-0 bg-black/70 backdrop-blur-sm'}
+            style={isMobile ? undefined : { top: dockTopOffset, bottom: dockBottomOffset }}
             aria-label="Fechar seletor de data"
           />
-          <div className="absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4">
+          <div
+            className={
+              isMobile
+                ? 'absolute left-0 right-0 bottom-0 bg-white dark:bg-[#111114] text-zinc-900 dark:text-white rounded-t-3xl border-t border-zinc-200 dark:border-zinc-800 shadow-2xl p-4'
+                : 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl'
+            }
+            style={
+              isMobile
+                ? undefined
+                : {
+                    bottom: dockBottomOffset,
+                    maxHeight: `max(320px, ${dockMaxHeight})`
+                  }
+            }
+          >
             <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
               <div className="min-w-0">
                 <p className="text-sm font-semibold truncate">{sheetTitle}</p>
@@ -163,11 +185,12 @@ const WheelDatePicker: React.FC<WheelDatePickerProps> = ({
                 <X size={16} />
               </button>
             </div>
-            <div className="py-4">
+            <div className={`py-4 ${isMobile ? '' : 'flex-1 overflow-y-auto overscroll-contain'}`}>
               <Picker
                 value={pickerValue}
                 onChange={setPickerValue}
                 className="flex justify-center gap-6"
+                wheelMode="natural"
               >
                 <Picker.Column name="day">
                   {dayOptions.map((day) => (

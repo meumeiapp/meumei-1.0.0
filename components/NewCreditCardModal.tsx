@@ -105,6 +105,10 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
   const gridGap = isMobile ? 'gap-2' : 'gap-3 sm:gap-6';
   const gridGapTight = isMobile ? 'gap-2' : 'gap-3 sm:gap-5';
   const modalBodyClass = isMobile ? 'px-3 py-2.5 space-y-2' : 'px-4 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6';
+  const dockTopOffset = 'calc(var(--mm-header-height, 120px) + var(--mm-content-gap, 16px))';
+  const dockBottomOffset = 'calc(var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) + 12px)';
+  const dockMaxHeight =
+    'calc(100dvh - var(--mm-header-height, 120px) - var(--mm-content-gap, 16px) - var(--mm-dock-height, var(--mm-desktop-dock-height, 84px)) - 24px)';
 
   const handleSave = () => {
     if (!canSave) {
@@ -341,14 +345,23 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="absolute inset-0 bg-black/60"
+          className="absolute left-0 right-0 bg-black/70 backdrop-blur-sm"
+          style={isMobile ? undefined : { top: dockTopOffset, bottom: dockBottomOffset }}
           aria-label="Fechar cartão"
         />
         <div
           className={
             isMobile
               ? 'absolute inset-0 bg-[#0b0b10] text-zinc-900 dark:text-white rounded-none border-0 shadow-none flex flex-col'
-              : 'absolute left-1/2 bottom-[var(--mm-desktop-dock-bar-offset,var(--mm-desktop-dock-height,84px))] -translate-x-1/2 px-6 bg-white/80 dark:bg-white/5 text-zinc-900 dark:text-white rounded-[26px] border border-black/10 dark:border-white/20 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl p-5 max-h-[80vh] flex flex-col w-[var(--mm-desktop-dock-width,calc(100%_-_48px))] max-w-[var(--mm-desktop-dock-width,calc(100%_-_48px))]'
+              : 'absolute left-0 right-0 bg-white dark:bg-[#0d0d10] text-zinc-900 dark:text-white px-5 py-5 flex flex-col overflow-hidden shadow-2xl'
+          }
+          style={
+            isMobile
+              ? undefined
+              : {
+                  bottom: dockBottomOffset,
+                  maxHeight: `max(320px, ${dockMaxHeight})`
+                }
           }
         >
           {isMobile ? (
@@ -397,7 +410,7 @@ const NewCreditCardModal: React.FC<NewCreditCardModalProps> = ({
                   <ChevronDown size={16} />
                 </button>
               </div>
-              <div className="pt-3 flex-1 overflow-auto">{modalBody}</div>
+              <div className="pt-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">{modalBody}</div>
               {modalFooter}
             </>
           )}

@@ -39,6 +39,7 @@ import { getCardGradient, withAlpha, getBrandIcon } from '../services/cardColorU
 import { useGlobalActions, EntityType } from '../contexts/GlobalActionsContext';
 import { computeCategoryTotals } from '../utils/categoryTotals';
 import { expenseStatusLabel, normalizeExpenseStatus } from '../utils/statusUtils';
+import { isIncomeOperationalForMei } from '../utils/incomeFiscalNature';
 import { useDashboardLayout, DashboardBlockId } from '../hooks/useDashboardLayout';
 import SearchHelperBar from './SearchHelperBar';
 import useIsCompactHeight from '../hooks/useIsCompactHeight';
@@ -1289,7 +1290,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               return (
                   d.getFullYear() === viewDate.getFullYear() &&
                   d.getMonth() === viewDate.getMonth() &&
-                  inc.taxStatus !== 'PF'
+                  isIncomeOperationalForMei(inc)
               );
           })
           .reduce((acc, curr) => acc + curr.amount, 0);
@@ -1938,7 +1939,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
       })();
       return (
           <section
-              className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300 flex flex-col"
+              className="bg-white dark:bg-[#151517] rounded-2xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors duration-300 flex flex-col h-full min-h-0"
               data-tour-anchor="dashboard-spend-ranking"
           >
               <div className="grid grid-cols-1 xl:grid-cols-[auto_1fr] items-start gap-3 mb-2">
@@ -2007,8 +2008,8 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
               {activeTotalSum > 0 && categoryButtons.length > 0 ? (
                   <>
                       <div className="mt-2 flex flex-col lg:flex-row gap-2 flex-1 min-h-0">
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#1a1a1a] p-2.5 flex-1 min-w-0 min-h-0">
-                              <div ref={expenseChartHostRef} className="relative h-full min-h-[304px]">
+                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#1a1a1a] p-2.5 flex-1 min-w-0 min-h-[var(--mm-dashboard-chart-min-height,332px)]">
+                              <div ref={expenseChartHostRef} className="relative h-full min-h-[var(--mm-dashboard-chart-min-height,332px)]">
                               <svg
                                   width={chartWidth}
                                   height={chartHeight}
@@ -2588,7 +2589,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
                 id="expense_breakdown"
                 label={blockLabels.expense_breakdown}
                 disabled={layoutLoading}
-                style={{ order: orderMap.expense_breakdown }}
+                style={{ order: orderMap.expense_breakdown, flex: 1, minHeight: 0 }}
             >
                   {renderExpenseBreakdownSection(categoryTotals.displayItems)}
           </SortableBlock>
@@ -2621,7 +2622,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
   const dashboardSubheader = (
       <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 relative z-10 pt-6">
           <div
-              className="mm-subheader rounded-3xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/85 dark:bg-[#151517]/85 backdrop-blur-xl shadow-sm px-4 py-4"
+              className="mm-subheader mm-subheader-panel"
               data-tour-anchor="dashboard-summary"
           >
               <div className="space-y-2">
@@ -2711,40 +2712,40 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       {canViewBalances ? (
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-                              <div className="text-[9px] uppercase tracking-[0.25em] text-emerald-500 dark:text-emerald-400">
+                          <div className="mm-subheader-metric-card">
+                              <div className="mm-subheader-metric-label text-emerald-500 dark:text-emerald-400">
                                   {balancePeriodLabel}
                               </div>
-                              <div className="text-[14px] font-semibold mt-1 text-emerald-600 dark:text-emerald-400">
+                              <div className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">
                                   R$ {financialData.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </div>
                           </div>
                       ) : (
                           <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 px-3 py-2">
-                              <div className="text-[9px] uppercase tracking-[0.25em] text-zinc-400">
+                              <div className="mm-subheader-metric-label text-zinc-400">
                                   {balancePeriodLabel}
                               </div>
-                              <div className="text-[12px] font-semibold mt-1 text-zinc-500">
+                              <div className="mm-subheader-metric-value text-zinc-500">
                                   Saldo oculto
                               </div>
                           </div>
                       )}
                       {canManageIncomes && (
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-                              <div className="text-[9px] uppercase tracking-[0.25em] text-emerald-500 dark:text-emerald-400">
+                          <div className="mm-subheader-metric-card">
+                              <div className="mm-subheader-metric-label text-emerald-500 dark:text-emerald-400">
                                   Entradas do mês
                               </div>
-                              <div className="text-[14px] font-semibold mt-1 text-emerald-600 dark:text-emerald-400">
+                              <div className="mm-subheader-metric-value text-emerald-600 dark:text-emerald-400">
                                   R$ {financialData.income.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </div>
                           </div>
                       )}
                       {canManageExpenses && (
-                          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#101014] px-3 py-2">
-                              <div className="text-[9px] uppercase tracking-[0.25em]" style={{ color: expenseAccent }}>
+                          <div className="mm-subheader-metric-card">
+                              <div className="mm-subheader-metric-label" style={{ color: expenseAccent }}>
                                   Saídas do mês
                               </div>
-                              <div className="text-[14px] font-semibold mt-1" style={{ color: expenseAccent }}>
+                              <div className="mm-subheader-metric-value" style={{ color: expenseAccent }}>
                                   R$ {financialData.expenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </div>
                           </div>
@@ -2808,7 +2809,7 @@ const DashboardDesktop: React.FC<DashboardProps> = ({
             <div className="dashboard-desktop flex h-full min-h-0 flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
                     <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>
-                        <div className="flex min-h-0 flex-col gap-3">
+                        <div className="flex h-full min-h-0 flex-col gap-3">
                             {visibleOrder.map((blockId) => renderDashboardBlock(blockId))}
                         </div>
                     </SortableContext>

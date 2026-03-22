@@ -11,7 +11,7 @@ import { guardUserPath } from '../utils/pathGuard';
 
 export type CategoryType = 'incomes' | 'expenses';
 
-const MAX_CATEGORIES = 20;
+const MAX_CATEGORIES = 40;
 
 const buildCategoryRef = (uid: string, type: CategoryType) =>
   doc(db, 'users', uid, 'categories', type);
@@ -187,7 +187,7 @@ export const categoryService = {
     }
     if (target.length >= MAX_CATEGORIES) {
       console.warn('[categories] add_err', { uid, type, reason: 'limit_reached' });
-      throw new Error('Limite de categorias atingido.');
+      throw new Error('Limite de 40 categorias atingido.');
     }
     const next = [...target, normalized];
     const nextIncomes = type === 'incomes' ? next : current.incomes;
